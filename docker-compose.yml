@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-laminarflow}
+      POSTGRES_USER: ${POSTGRES_USER:-laminarflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Host path is configurable so this file works on the Pi (USB HDD), the
+      # eventual home server, and a laptop without edits.
+      - ${PGDATA_HOST:-./pgdata}:/var/lib/postgresql/data
+    # Tuned for modest, non-dedicated hardware sharing RAM with everything else.
+    # Postgres defaults would overshoot the 100-200MB footprint we want here.
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=512MB
+      -c max_connections=20
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+    # Silently ignored on Raspberry Pi OS unless /boot/firmware/cmdline.txt has
+    # cgroup_enable=memory cgroup_memory=1 (verify with `docker info`).
+    mem_limit: 512m
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-laminarflow} -d ${POSTGRES_DB:-laminarflow}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
