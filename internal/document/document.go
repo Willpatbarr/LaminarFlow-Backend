@@ -99,3 +99,65 @@ func (s *Service) Save(ctx context.Context, id string, body map[string]any) (str
 	return id, nil
 }
 
+// indexedDoc is one document's ID paired with its decoded body.
+type indexedDoc struct {
+	id   string
+	body map[string]any
+}
+
+// RebuildIndex discards every search_index row and regenerates the entire table
+// from the document body blobs. Because the blobs are the source of truth this
+// is always safe to run: if it ever produces a different index than the live
+// one, the live one was wrong. Returns the number of documents reindexed.
+func (s *Service) RebuildIndex(ctx context.Context) (int, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM search_index`); err != nil {
+		return 0, fmt.Errorf("clear index: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, `SELECT id::text, body::text FROM document`)
+	if err != nil {
+		return 0, fmt.Errorf("read documents: %w", err)
+	}
+
+	// Every document is read into memory before any insert runs. A pgx
+	// connection can only have one query in flight, so writing inside the
+	// rows.Next() loop would fail on the same transaction.
+	docs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (indexedDoc, error) {
+		var d indexedDoc
+		var raw string
+		if err := row.Scan(&d.id, &raw); err != nil {
+			return indexedDoc{}, err
+		}
+		if err := json.Unmarshal([]byte(raw), &d.body); err != nil {
+			return indexedDoc{}, fmt.Errorf("decode body %s: %w", d.id, err)
+		}
+		return d, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("read documents: %w", err)
+	}
+
+	for _, d := range docs {
+		for fieldID, value := range d.body {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO search_index (document_id, field_id, content)
+				 VALUES ($1::uuid, $2, $3)`,
+				d.id, fieldID, FieldText(value),
+			); err != nil {
+				return 0, fmt.Errorf("index %s field %q: %w", d.id, fieldID, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+
+	return len(docs), nil
+}
