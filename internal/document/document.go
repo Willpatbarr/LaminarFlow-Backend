@@ -25,12 +25,17 @@ func NewService(pool *pgxpool.Pool) *Service {
 }
 
 // Save writes a document's body and regenerates that document's search_index
-// rows in one transaction. An empty id inserts a new document; otherwise the
-// existing document's body is replaced. It returns the document's ID.
+// rows in one transaction. An empty id inserts a new document into workspaceID;
+// otherwise the existing document's body is replaced. It returns the document's
+// ID.
+//
+// Every write is scoped to workspaceID. Updating a document owned by a different
+// workspace returns ErrNotFound rather than a distinct error, so a caller
+// outside the owning workspace learns nothing about whether it exists.
 //
 // This is the single write path required by LAM-3: the blob and the index move
 // together or not at all.
-func (s *Service) Save(ctx context.Context, id string, body map[string]any) (string, error) {
+func (s *Service) Save(ctx context.Context, workspaceID, id string, body map[string]any) (string, error) {
 	// Round-trip the body through JSON before extracting text. The rebuild
 	// reads values back out of Postgres as decoded JSON, so normalizing here
 	// guarantees both paths extract from identical Go values - an int 42 from a
@@ -55,14 +60,16 @@ func (s *Service) Save(ctx context.Context, id string, body map[string]any) (str
 
 	if id == "" {
 		err = tx.QueryRow(ctx,
-			`INSERT INTO document (body) VALUES ($1::jsonb) RETURNING id::text`,
-			string(raw),
+			`INSERT INTO document (workspace_id, body)
+			 VALUES ($1::uuid, $2::jsonb) RETURNING id::text`,
+			workspaceID, string(raw),
 		).Scan(&id)
 	} else {
 		err = tx.QueryRow(ctx,
 			`UPDATE document SET body = $1::jsonb, updated_at = now()
-			 WHERE id = $2::uuid RETURNING id::text`,
-			string(raw), id,
+			 WHERE id = $2::uuid AND workspace_id = $3::uuid
+			 RETURNING id::text`,
+			string(raw), id, workspaceID,
 		).Scan(&id)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -109,6 +116,13 @@ type indexedDoc struct {
 // from the document body blobs. Because the blobs are the source of truth this
 // is always safe to run: if it ever produces a different index than the live
 // one, the live one was wrong. Returns the number of documents reindexed.
+//
+// Unlike Save, this takes no workspace ID and is deliberately instance-wide: it
+// rebuilds every workspace's rows in one pass. That is the correct scope for an
+// operator repairing a derived table, but it means this is an admin operation,
+// not something to expose to a caller acting within one workspace. A
+// per-workspace variant is deferred until an instance actually has more than
+// one workspace to rebuild.
 func (s *Service) RebuildIndex(ctx context.Context) (int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
