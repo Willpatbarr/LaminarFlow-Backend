@@ -36,6 +36,23 @@ func testPool(t *testing.T) *pgxpool.Pool {
 }
 
 
+// defaultWorkspace returns the ID of the workspace the tests write into.
+// Migration 0003 seeds exactly one row, and testPool's DELETE FROM document
+// leaves workspace rows untouched, so this is stable across runs.
+func defaultWorkspace(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+
+	var id string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT id::text FROM workspace WHERE name = 'Default'`,
+	).Scan(&id); err != nil {
+		t.Fatalf("read default workspace: %v", err)
+	}
+
+	return id
+}
+
+
 // indexSnapshot reads the whole search_index into a comparable map keyed by
 // "documentID|fieldID".
 func indexSnapshot(t *testing.T, pool *pgxpool.Pool) map[string]string {
@@ -68,8 +85,9 @@ func TestSaveWritesBlobAndIndex(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
 	svc := NewService(pool)
+	ws := defaultWorkspace(t, pool)
 
-	id, err := svc.Save(ctx, "", map[string]any{
+	id, err := svc.Save(ctx, ws, "", map[string]any{
 		"f_title": "Quarterly Report",
 		"f_year":  2026,
 		"f_tags":  []any{"alpha", "beta"},
@@ -111,12 +129,14 @@ func TestSaveRemovesStaleIndexRows(t *testing.T) {
 	pool := testPool(t)
 	svc := NewService(pool)
 
-	id, err := svc.Save(ctx, "", map[string]any{"f_title": "Notes", "f_note": "draft"})
+	ws := defaultWorkspace(t, pool)
+
+	id, err := svc.Save(ctx, ws, "", map[string]any{"f_title": "Notes", "f_note": "draft"})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
-	if _, err := svc.Save(ctx, id, map[string]any{"f_title": "Notes"}); err != nil {
+	if _, err := svc.Save(ctx, ws, id, map[string]any{"f_title": "Notes"}); err != nil {
 		t.Fatalf("resave: %v", err)
 	}
 
@@ -135,12 +155,14 @@ func TestRebuildMatchesLiveIndex(t *testing.T) {
 	pool := testPool(t)
 	svc := NewService(pool)
 
+	ws := defaultWorkspace(t, pool)
+
 	for _, body := range []map[string]any{
 		{"f_title": "Quarterly Report", "f_year": 2026, "f_draft": false},
 		{"f_title": "Notes", "f_tags": []any{"alpha", "beta"}},
 		{"f_title": "Nested", "f_meta": map[string]any{"b": "second", "a": "first"}},
 	} {
-		if _, err := svc.Save(ctx, "", body); err != nil {
+		if _, err := svc.Save(ctx, ws, "", body); err != nil {
 			t.Fatalf("save: %v", err)
 		}
 	}
