@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    # TestMain creates and drops a throwaway database per run, so the service
+    # only has to provide a server and a database to bootstrap from. The
+    # POSTGRES_USER is a superuser, which is what makes CREATE DATABASE work.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: laminarflow_test
+          POSTGRES_USER: laminarflow
+          POSTGRES_PASSWORD: laminarflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U laminarflow -d laminarflow_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Pinned, not @latest: a new staticcheck release must not be able to turn
+      # a passing branch red without a deliberate change here. v0.8.1 is the
+      # module version of the release staticcheck reports as 2026.2.1.
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+
+      # The same script developers run locally, so the two cannot drift. It
+      # applies every migration to an empty database, which also makes each run
+      # a check that the fresh-install path still works.
+      - name: Run checks
+        run: ./scripts/test.sh
+        env:
+          TEST_DATABASE_URL: postgres://laminarflow:laminarflow@localhost:5432/laminarflow_test?sslmode=disable

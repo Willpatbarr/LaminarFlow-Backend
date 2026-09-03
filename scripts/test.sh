@@ -10,20 +10,21 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-if [ ! -f .env ]; then
-    echo "✗ No .env in $(pwd)." >&2
-    echo "  Copy .env.example to .env and fill in real values." >&2
-    exit 1
+# .env is how a developer supplies these. CI sets them in the environment
+# instead and has no .env, so its absence is only fatal if the vars are missing
+# too - checked below. This lets CI run this exact script rather than a
+# reimplementation of it in YAML that could drift.
+if [ -f .env ]; then
+    set -a
+    . ./.env
+    set +a
 fi
 
-set -a
-. ./.env
-set +a
-
 if [ -z "$TEST_DATABASE_URL" ]; then
-    echo "✗ TEST_DATABASE_URL is not set in .env." >&2
+    echo "✗ TEST_DATABASE_URL is not set." >&2
     echo "  Without it every database test skips and the run proves nothing." >&2
-    echo "  See .env.example, and COMMANDS.md to create the test database." >&2
+    echo "  Locally: copy .env.example to .env (see COMMANDS.md for the" >&2
+    echo "  bootstrap database). In CI: set it in the job environment." >&2
     exit 1
 fi
 
@@ -57,7 +58,7 @@ go vet ./...
 echo "==> staticcheck ./..."
 if ! command -v staticcheck >/dev/null 2>&1; then
     echo "✗ staticcheck is not installed." >&2
-    echo "  Run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.1" >&2
+    echo "  Run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.1" >&2
     exit 1
 fi
 staticcheck ./...
