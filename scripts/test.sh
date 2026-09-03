@@ -36,11 +36,30 @@ if [ "$TEST_DATABASE_URL" = "$DATABASE_URL" ]; then
     exit 1
 fi
 
+# gofmt -l prints offending filenames but exits 0 either way, so a bare
+# `gofmt -l .` under `set -e` would pass silently. Test the output instead.
+echo "==> gofmt"
+unformatted=$(gofmt -l .)
+if [ -n "$unformatted" ]; then
+    echo "✗ These files are not gofmt-clean:" >&2
+    echo "$unformatted" | sed 's/^/      /' >&2
+    echo "  Run: gofmt -w ." >&2
+    exit 1
+fi
+
 echo "==> go build ./..."
 go build ./...
 
 echo "==> go vet ./..."
 go vet ./...
+
+echo "==> staticcheck ./..."
+if ! command -v staticcheck >/dev/null 2>&1; then
+    echo "✗ staticcheck is not installed." >&2
+    echo "  Run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.1" >&2
+    exit 1
+fi
+staticcheck ./...
 
 echo "==> go test ./..."
 go test ./...

@@ -1,4 +1,5 @@
 package document
+
 import (
 	"context"
 	"encoding/json"
@@ -8,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
 
 // testPool connects to the database named by TEST_DATABASE_URL and empties it.
 // The test is skipped rather than failed when that variable is unset, so
@@ -35,7 +35,6 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-
 // defaultWorkspace returns the ID of the workspace the tests write into.
 // Migration 0003 seeds exactly one row, and testPool's DELETE FROM document
 // leaves workspace rows untouched, so this is stable across runs.
@@ -51,7 +50,6 @@ func defaultWorkspace(t *testing.T, pool *pgxpool.Pool) string {
 
 	return id
 }
-
 
 // indexSnapshot reads the whole search_index into a comparable map keyed by
 // "documentID|fieldID".
@@ -79,7 +77,6 @@ func indexSnapshot(t *testing.T, pool *pgxpool.Pool) map[string]string {
 
 	return out
 }
-
 
 func TestSaveWritesBlobAndIndex(t *testing.T) {
 	ctx := context.Background()
@@ -121,7 +118,6 @@ func TestSaveWritesBlobAndIndex(t *testing.T) {
 	}
 }
 
-
 // A field removed from the body must lose its index row. This is the test that
 // fails if Save is ever changed from delete-then-insert to a bare upsert.
 func TestSaveRemovesStaleIndexRows(t *testing.T) {
@@ -145,7 +141,6 @@ func TestSaveRemovesStaleIndexRows(t *testing.T) {
 		t.Errorf("index = %v, want %v", got, want)
 	}
 }
-
 
 // The safety net named in LAM-3: an index rebuilt from the blobs must be
 // byte-identical to the index the live write path produced. If these ever
