@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build, vet, and run the test suite against the test database.
+# Build, vet, lint, and run the test suite against a throwaway database.
 #
 # Go does not read .env, so a bare `go test ./...` leaves TEST_DATABASE_URL
 # unset, silently SKIPS every database test, and still prints PASS. This script
@@ -27,12 +27,13 @@ if [ -z "$TEST_DATABASE_URL" ]; then
     exit 1
 fi
 
-# The fixture opens each run with DELETE FROM document. Pointed at the real
-# database that silently destroys data, which is the whole reason these are
-# two separate variables.
+# TEST_DATABASE_URL is only a bootstrap connection: TestMain creates and drops a
+# throwaway database per run, so the tests never write to whatever this names.
+# The guard stays as defence in depth - if that ever regresses, aiming it at the
+# real database is the mistake with the worst blast radius.
 if [ "$TEST_DATABASE_URL" = "$DATABASE_URL" ]; then
     echo "✗ TEST_DATABASE_URL and DATABASE_URL name the same database." >&2
-    echo "  The tests delete every document in whatever they point at." >&2
+    echo "  Tests must never bootstrap from the real database." >&2
     exit 1
 fi
 
@@ -61,5 +62,7 @@ if ! command -v staticcheck >/dev/null 2>&1; then
 fi
 staticcheck ./...
 
+# -count=1 disables Go's test cache. These tests only mean anything when they
+# actually reach Postgres, and a cached pass never opens a connection.
 echo "==> go test ./..."
-go test ./...
+go test -count=1 ./...

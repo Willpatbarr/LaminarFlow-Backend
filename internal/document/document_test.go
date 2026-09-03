@@ -3,8 +3,8 @@ package document
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,12 +16,11 @@ import (
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
+	if testDatabaseURL == "" {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
 
-	pool, err := pgxpool.New(context.Background(), url)
+	pool, err := pgxpool.New(context.Background(), testDatabaseURL)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -174,5 +173,50 @@ func TestRebuildMatchesLiveIndex(t *testing.T) {
 
 	if rebuilt := indexSnapshot(t, pool); !maps.Equal(live, rebuilt) {
 		t.Errorf("rebuilt index differs from live index:\n live     = %v\n rebuilt  = %v", live, rebuilt)
+	}
+}
+
+// The tenancy boundary LAM-4 introduced. Without the workspace clause in Save's
+// UPDATE, anyone holding a document ID could overwrite it regardless of which
+// workspace owns it - and no other test would notice.
+func TestSaveRejectsCrossWorkspaceUpdate(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	svc := NewService(pool)
+
+	owner := defaultWorkspace(t, pool)
+
+	var intruder string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO workspace (name) VALUES ('Other') RETURNING id::text`,
+	).Scan(&intruder); err != nil {
+		t.Fatalf("create second workspace: %v", err)
+	}
+
+	id, err := svc.Save(ctx, owner, "", map[string]any{"f_title": "Private"})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// ErrNotFound specifically, not some distinct "wrong workspace" error: a
+	// caller outside the owning workspace must not learn the document exists.
+	if _, err := svc.Save(ctx, intruder, id, map[string]any{"f_title": "Hijacked"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-workspace update returned %v, want ErrNotFound", err)
+	}
+
+	// A rejected write that still mutated the row would be worse than no check.
+	var raw string
+	if err := pool.QueryRow(ctx,
+		`SELECT body::text FROM document WHERE id = $1::uuid`, id,
+	).Scan(&raw); err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got := body["f_title"]; got != "Private" {
+		t.Errorf("body changed after a rejected write: f_title = %v, want %q", got, "Private")
 	}
 }
