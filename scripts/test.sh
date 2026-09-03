@@ -63,7 +63,9 @@ if ! command -v staticcheck >/dev/null 2>&1; then
 fi
 staticcheck ./...
 
-# -count=1 disables Go's test cache. These tests only mean anything when they
-# actually reach Postgres, and a cached pass never opens a connection.
+# -count=1 disables Go's test cache: these tests only mean anything when they
+# actually reach Postgres, and a cached pass never opens a connection. -v is
+# what makes a pass legible - without it Go swallows a passing package's output,
+# so a run that skipped everything looks identical to one that tested it all.
 echo "==> go test ./..."
-go test -count=1 ./...
+go test -count=1 -v ./...

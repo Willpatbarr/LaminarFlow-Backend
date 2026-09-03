@@ -77,6 +77,10 @@ func run(m *testing.M) int {
 	u.Path = "/" + name
 	testDatabaseURL = u.String()
 
+	// Logged so a passing CI run visibly shows the throwaway database was
+	// really created, rather than leaving it to be inferred from the exit code.
+	log.Printf("test database: %s", name)
+
 	if err := applyMigrations(ctx, testDatabaseURL); err != nil {
 		log.Printf("%v", err)
 		return 1
