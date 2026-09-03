@@ -1,14 +1,14 @@
 package document
+
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
 
 // testPool connects to the database named by TEST_DATABASE_URL and empties it.
 // The test is skipped rather than failed when that variable is unset, so
@@ -16,12 +16,11 @@ import (
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
+	if testDatabaseURL == "" {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
 
-	pool, err := pgxpool.New(context.Background(), url)
+	pool, err := pgxpool.New(context.Background(), testDatabaseURL)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -34,7 +33,6 @@ func testPool(t *testing.T) *pgxpool.Pool {
 
 	return pool
 }
-
 
 // defaultWorkspace returns the ID of the workspace the tests write into.
 // Migration 0003 seeds exactly one row, and testPool's DELETE FROM document
@@ -51,7 +49,6 @@ func defaultWorkspace(t *testing.T, pool *pgxpool.Pool) string {
 
 	return id
 }
-
 
 // indexSnapshot reads the whole search_index into a comparable map keyed by
 // "documentID|fieldID".
@@ -79,7 +76,6 @@ func indexSnapshot(t *testing.T, pool *pgxpool.Pool) map[string]string {
 
 	return out
 }
-
 
 func TestSaveWritesBlobAndIndex(t *testing.T) {
 	ctx := context.Background()
@@ -121,7 +117,6 @@ func TestSaveWritesBlobAndIndex(t *testing.T) {
 	}
 }
 
-
 // A field removed from the body must lose its index row. This is the test that
 // fails if Save is ever changed from delete-then-insert to a bare upsert.
 func TestSaveRemovesStaleIndexRows(t *testing.T) {
@@ -145,7 +140,6 @@ func TestSaveRemovesStaleIndexRows(t *testing.T) {
 		t.Errorf("index = %v, want %v", got, want)
 	}
 }
-
 
 // The safety net named in LAM-3: an index rebuilt from the blobs must be
 // byte-identical to the index the live write path produced. If these ever
@@ -179,5 +173,50 @@ func TestRebuildMatchesLiveIndex(t *testing.T) {
 
 	if rebuilt := indexSnapshot(t, pool); !maps.Equal(live, rebuilt) {
 		t.Errorf("rebuilt index differs from live index:\n live     = %v\n rebuilt  = %v", live, rebuilt)
+	}
+}
+
+// The tenancy boundary LAM-4 introduced. Without the workspace clause in Save's
+// UPDATE, anyone holding a document ID could overwrite it regardless of which
+// workspace owns it - and no other test would notice.
+func TestSaveRejectsCrossWorkspaceUpdate(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	svc := NewService(pool)
+
+	owner := defaultWorkspace(t, pool)
+
+	var intruder string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO workspace (name) VALUES ('Other') RETURNING id::text`,
+	).Scan(&intruder); err != nil {
+		t.Fatalf("create second workspace: %v", err)
+	}
+
+	id, err := svc.Save(ctx, owner, "", map[string]any{"f_title": "Private"})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// ErrNotFound specifically, not some distinct "wrong workspace" error: a
+	// caller outside the owning workspace must not learn the document exists.
+	if _, err := svc.Save(ctx, intruder, id, map[string]any{"f_title": "Hijacked"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-workspace update returned %v, want ErrNotFound", err)
+	}
+
+	// A rejected write that still mutated the row would be worse than no check.
+	var raw string
+	if err := pool.QueryRow(ctx,
+		`SELECT body::text FROM document WHERE id = $1::uuid`, id,
+	).Scan(&raw); err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got := body["f_title"]; got != "Private" {
+		t.Errorf("body changed after a rejected write: f_title = %v, want %q", got, "Private")
 	}
 }
