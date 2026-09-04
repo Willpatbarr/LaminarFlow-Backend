@@ -3,16 +3,20 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/config"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/db"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/frontend"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/migrate"
 	"github.com/Willpatbarr/LaminarFlow-Backend/migrations"
+	"github.com/Willpatbarr/LaminarFlow-Backend/web"
 )
 
 const dbCheckTimeout = 3 * time.Second
@@ -61,6 +65,24 @@ func main() {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
+	// The API prefix is registered even though nothing lives under it yet.
+	// Without it, Go's mux would route /api/anything to the catch-all below and
+	// a typo'd endpoint would return the HTML app shell with status 200 - which
+	// a fetch() reports as a JSON parse error, three layers from the cause.
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":"not found"}`))
+	})
+
+	// Everything else is the frontend: real files where they exist, the app
+	// shell everywhere else so client-side routing survives a refresh.
+	bundle, err := frontendFS(cfg.FrontendDir)
+	if err != nil {
+		log.Fatalf("frontend: %v", err)
+	}
+	mux.Handle("/", frontend.New(bundle))
+
 	addr := ":" + cfg.Port
 	log.Printf("laminarflow backend listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
@@ -100,4 +122,22 @@ func ensureSchema(ctx context.Context, pool *pgxpool.Pool, autoApply bool) error
 
 	log.Print("schema is up to date")
 	return nil
+}
+
+// frontendFS picks the bundle the server will serve. An empty dir means the
+// bundle embedded at build time, which is what a deployed binary uses.
+func frontendFS(dir string) (fs.FS, error) {
+	if dir != "" {
+		log.Printf("serving frontend from %s", dir)
+		return os.DirFS(dir), nil
+	}
+
+	// The embedded FS is rooted at the module, so strip the directory name to
+	// make index.html sit at the root of what the handler sees.
+	sub, err := fs.Sub(web.Dist, "dist")
+	if err != nil {
+		return nil, fmt.Errorf("open embedded bundle: %w", err)
+	}
+
+	return sub, nil
 }

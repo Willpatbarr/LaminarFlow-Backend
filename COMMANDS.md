@@ -12,9 +12,22 @@ script below instead — it loads `.env` and passes `-count=1`.
 
     ./scripts/test.sh
 
-## Run the server
+## Build the frontend into this repo, then embed it
+
+Copies the frontend's `dist/` into `web/dist`, where `go:embed` picks it up on
+the next build. `FRONTEND_REPO` defaults to `../LaminarFlow-Frontend`.
+
+    ./scripts/build-frontend.sh && go build ./...
+
+## Run the server — serves the API and the frontend on one port
 
     set -a && source .env && set +a && go run .
+
+## Run the server against a frontend bundle on disk
+
+Skips the embed, so a frontend rebuild is visible without rebuilding Go.
+
+    set -a && source .env && set +a && FRONTEND_DIR=../LaminarFlow-Frontend/dist go run .
 
 ## Check the server is up and can reach Postgres
 
