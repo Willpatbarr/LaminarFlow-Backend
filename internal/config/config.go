@@ -26,6 +26,11 @@ type Config struct {
 	FrontendDir string
 }
 
+// DefaultPort is the port used when PORT is unset. Exported so the container
+// healthcheck can reach the server without loading the whole config, which
+// would need a database URL it has no business requiring.
+const DefaultPort = "8080"
+
 // ErrMissingDatabaseURL is returned when DATABASE_URL is unset. There is no
 // default on purpose: silently connecting to the wrong database is worse than
 // refusing to start.
@@ -34,7 +39,7 @@ var ErrMissingDatabaseURL = errors.New("DATABASE_URL is not set")
 // Load reads configuration from the environment.
 func Load() (Config, error) {
 	cfg := Config{
-		Port:             getenv("PORT", "8080"),
+		Port:             getenv("PORT", DefaultPort),
 		DatabaseURL:      os.Getenv("DATABASE_URL"),
 		MigrateOnStartup: os.Getenv("MIGRATE_ON_STARTUP") == "true",
 		FrontendDir:      os.Getenv("FRONTEND_DIR"),

@@ -84,6 +84,23 @@ so the bootstrap database is never touched.
 
     set -a && source .env && set +a && psql "$DATABASE_URL" -tAc "SELECT 'DROP DATABASE ' || quote_ident(datname) || ' WITH (FORCE);' FROM pg_database WHERE datname ~ '^laminarflow_test_[0-9]+_[0-9]+\$'" | psql "$DATABASE_URL"
 
+## Build the container image
+
+Reads Node from the frontend's `.nvmrc` and Go from `go.mod`, and supplies the
+frontend repo as a build context. A bare `docker build` here will not work.
+
+    ./scripts/build-image.sh
+    PLATFORMS=linux/arm64 ./scripts/build-image.sh
+    PLATFORMS=linux/amd64,linux/arm64 ./scripts/build-image.sh
+
+## Run the deployed stack
+
+    docker compose -f deploy/docker-compose.yml up -d
+
+## Adopt a hand-built database inside the container
+
+    docker compose -f deploy/docker-compose.yml run --rm app /migrate baseline
+
 ## Start and stop Postgres — run on the host that owns the database
 
     docker compose up -d

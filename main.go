@@ -19,9 +19,22 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/web"
 )
 
-const dbCheckTimeout = 3 * time.Second
+const (
+	dbCheckTimeout = 3 * time.Second
+
+	// Short on purpose: a container healthcheck that hangs is indistinguishable
+	// from one that failed, but takes the whole interval to say so.
+	healthcheckTimeout = 2 * time.Second
+)
 
 func main() {
+	// A HEALTHCHECK in a distroless image has no shell and no curl, so the
+	// binary checks itself. Handled before anything else so it never opens a
+	// database connection or reads config it does not need.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck())
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
@@ -140,4 +153,30 @@ func frontendFS(dir string) (fs.FS, error) {
 	}
 
 	return sub, nil
+}
+
+// healthcheck asks the running server whether it is alive and returns a process
+// exit code. It deliberately hits /healthz rather than /healthz/db: a database
+// blip should not make a supervisor restart a healthy process.
+func healthcheck() int {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = config.DefaultPort
+	}
+
+	client := &http.Client{Timeout: healthcheckTimeout}
+
+	resp, err := client.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "healthcheck: status %d\n", resp.StatusCode)
+		return 1
+	}
+
+	return 0
 }
