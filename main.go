@@ -52,49 +52,12 @@ func main() {
 		log.Fatalf("schema: %v", err)
 	}
 
-	mux := http.NewServeMux()
-
-	// Liveness. Deliberately does not touch Postgres: if this failed whenever
-	// the database blipped, a supervisor would restart a healthy process.
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
-	})
-
-	// Readiness. Proves the backend can still reach Postgres.
-	mux.HandleFunc("GET /healthz/db", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), dbCheckTimeout)
-		defer cancel()
-
-		w.Header().Set("Content-Type", "application/json")
-
-		if err := db.Check(ctx, pool); err != nil {
-			log.Printf("db check failed: %v", err)
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"status":"unavailable"}`))
-			return
-		}
-
-		w.Write([]byte(`{"status":"ok"}`))
-	})
-
-	// The API prefix is registered even though nothing lives under it yet.
-	// Without it, Go's mux would route /api/anything to the catch-all below and
-	// a typo'd endpoint would return the HTML app shell with status 200 - which
-	// a fetch() reports as a JSON parse error, three layers from the cause.
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"not found"}`))
-	})
-
-	// Everything else is the frontend: real files where they exist, the app
-	// shell everywhere else so client-side routing survives a refresh.
 	bundle, err := frontendFS(cfg.FrontendDir)
 	if err != nil {
 		log.Fatalf("frontend: %v", err)
 	}
-	mux.Handle("/", frontend.New(bundle))
+
+	mux := newMux(pool, bundle)
 
 	addr := ":" + cfg.Port
 	log.Printf("laminarflow backend listening on %s", addr)
@@ -179,4 +142,54 @@ func healthcheck() int {
 	}
 
 	return 0
+}
+
+// newMux wires every route the server answers.
+//
+// Split out of main so it can be tested: main itself needs a real database URL
+// and a listening socket, which is why the routing went unverified until LAM-39.
+// Deleting the /api/ registration below breaks every unknown API endpoint and,
+// before this function existed, broke no test.
+func newMux(pool *pgxpool.Pool, bundle fs.FS) *http.ServeMux {
+	mux := http.NewServeMux()
+
+	// Liveness. Deliberately does not touch Postgres: if this failed whenever
+	// the database blipped, a supervisor would restart a healthy process.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	// Readiness. Proves the backend can still reach Postgres.
+	mux.HandleFunc("GET /healthz/db", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), dbCheckTimeout)
+		defer cancel()
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := db.Check(ctx, pool); err != nil {
+			log.Printf("db check failed: %v", err)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"status":"unavailable"}`))
+			return
+		}
+
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	// The API prefix is registered even though nothing lives under it yet.
+	// Without it, Go's mux would route /api/anything to the catch-all below and
+	// a typo'd endpoint would return the HTML app shell with status 200 - which
+	// a fetch() reports as a JSON parse error, three layers from the cause.
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":"not found"}`))
+	})
+
+	// Everything else is the frontend: real files where they exist, the app
+	// shell everywhere else so client-side routing survives a refresh.
+	mux.Handle("/", frontend.New(bundle))
+
+	return mux
 }

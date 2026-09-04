@@ -136,3 +136,39 @@ func TestUnbuiltBundleExplainsItself(t *testing.T) {
 		t.Error("the not-built page should name the script that fixes it")
 	}
 }
+
+// A static bundle answers GET and HEAD only. Before LAM-39 this handler
+// answered every method with the app shell and status 200, so a POST to any
+// unrouted path - including /healthz - looked like it had succeeded.
+func TestRejectsNonReadMethods(t *testing.T) {
+	h := New(bundle)
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(method, "/projects/42", nil))
+
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Errorf("status = %d, want 405", rec.Code)
+			}
+			if strings.Contains(rec.Body.String(), "<div id=root>") {
+				t.Error("returned the app shell for a write method")
+			}
+			if got := rec.Header().Get("Allow"); got != "GET, HEAD" {
+				t.Errorf("Allow = %q, want %q", got, "GET, HEAD")
+			}
+		})
+	}
+}
+
+// HEAD must still work - it is how a client checks an asset without fetching it.
+func TestHeadIsAllowed(t *testing.T) {
+	h := New(bundle)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/index.html", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
