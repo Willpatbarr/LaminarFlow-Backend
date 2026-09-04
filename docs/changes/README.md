@@ -15,3 +15,4 @@ The HTML file is self-contained: no network, no build step. Open it directly.
 | Ticket | Documents |
 |--------|-----------|
 | LAM-29 — containerize for portable deployment | [md](LAM-29-changes.md) · [html](LAM-29-changes.html) |
+| LAM-39 — gaps found auditing E-LAM-0001 | [md](LAM-39-changes.md) · [html](LAM-39-changes.html) |
