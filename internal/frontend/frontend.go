@@ -49,6 +49,19 @@ type handler struct {
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// A bundle of static files answers GET and HEAD, and nothing else.
+	//
+	// Without this the catch-all answers every other method with the app shell
+	// and status 200 - so POST /healthz, and any write to any unrouted path,
+	// looks like it succeeded. Found by LAM-39's routing tests; the method
+	// belongs here rather than on each route because it is a property of
+	// serving static files, not of any one path.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 	if name == "" {
 		name = indexFile

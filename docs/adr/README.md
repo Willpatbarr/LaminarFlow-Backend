@@ -33,5 +33,6 @@ like this?" and the answer is not in the code:
 | # | Decision | Status |
 |---|----------|--------|
 | [1](0001-write-path-enforcement.md) | Write-path enforcement for the document blob and the search index | Accepted |
+| [2](0002-deployment-packaging.md) | Deployment packaging: one image, no shell, frontend embedded | Accepted |
 
 [nygard]: https://github.com/joelparkerhenderson/architecture-decision-record/blob/main/locales/en/templates/decision-record-template-by-michael-nygard/index.md
