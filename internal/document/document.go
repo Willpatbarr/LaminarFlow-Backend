@@ -89,14 +89,8 @@ func (s *Service) Save(ctx context.Context, workspaceID, id string, body map[str
 		return "", fmt.Errorf("clear index: %w", err)
 	}
 
-	for fieldID, value := range normalized {
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO search_index (document_id, field_id, content)
-			 VALUES ($1::uuid, $2, $3)`,
-			id, fieldID, FieldText(value),
-		); err != nil {
-			return "", fmt.Errorf("index field %q: %w", fieldID, err)
-		}
+	if err := indexBody(ctx, tx, id, normalized); err != nil {
+		return "", err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -104,6 +98,24 @@ func (s *Service) Save(ctx context.Context, workspaceID, id string, body map[str
 	}
 
 	return id, nil
+}
+
+func indexBody(
+	ctx context.Context,
+	tx pgx.Tx,
+	docID string,
+	body map[string]any,
+) error {
+	for fieldID, value := range body {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO search_index (document_id, field_id, content)
+			 VALUES ($1::uuid, $2, $3)`,
+			docID, fieldID, fieldText(value),
+		); err != nil {
+			return fmt.Errorf("index field %q: %w", fieldID, err)
+		}
+	}
+	return nil
 }
 
 // indexedDoc is one document's ID paired with its decoded body.
@@ -158,14 +170,8 @@ func (s *Service) RebuildIndex(ctx context.Context) (int, error) {
 	}
 
 	for _, d := range docs {
-		for fieldID, value := range d.body {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO search_index (document_id, field_id, content)
-				 VALUES ($1::uuid, $2, $3)`,
-				d.id, fieldID, FieldText(value),
-			); err != nil {
-				return 0, fmt.Errorf("index %s field %q: %w", d.id, fieldID, err)
-			}
+		if err := indexBody(ctx, tx, d.id, d.body); err != nil {
+			return 0, fmt.Errorf("index %s: %w", d.id, err)
 		}
 	}
 

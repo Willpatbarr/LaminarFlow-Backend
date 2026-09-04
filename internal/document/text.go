@@ -1,5 +1,9 @@
 // Package document owns a document's body blob and its derived search index.
-// Service.Save is the only code path permitted to write either table.
+// Service.Save is the only code path permitted to write a document body, and
+// indexBody the only one permitted to write search_index. RebuildIndex is the
+// one sanctioned exception - it writes the index without a blob because it is
+// a pure function of the blobs. boundary_test.go enforces the rule against the
+// rest of the module; docs/adr/0001-write-path-enforcement.md says why.
 package document
 
 import (
@@ -8,7 +12,7 @@ import (
 	"strings"
 )
 
-// FieldText reduces one field value to the plain text stored in search_index.
+// fieldText reduces one field value to the plain text stored in search_index.
 //
 // Both the live write path (Save) and the rebuild path must call this exact
 // function. Two extraction implementations would drift the moment one of them
@@ -16,7 +20,7 @@ import (
 // ticket exists to prevent.
 //
 // Input is always the result of decoding JSON, so this switch is exhaustive.
-func FieldText(value any) string {
+func fieldText(value any) string {
 	switch v := value.(type) {
 	case nil:
 		return ""
@@ -30,7 +34,7 @@ func FieldText(value any) string {
 	case []any:
 		parts := make([]string, 0, len(v))
 		for _, item := range v {
-			if text := FieldText(item); text != "" {
+			if text := fieldText(item); text != "" {
 				parts = append(parts, text)
 			}
 		}
@@ -47,7 +51,7 @@ func FieldText(value any) string {
 
 		parts := make([]string, 0, len(keys))
 		for _, key := range keys {
-			if text := FieldText(v[key]); text != "" {
+			if text := fieldText(v[key]); text != "" {
 				parts = append(parts, text)
 			}
 		}
