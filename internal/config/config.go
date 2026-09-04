@@ -19,6 +19,11 @@ type Config struct {
 	// upgrade over Tailscale is friction nobody needs, and leave it off
 	// anywhere a human is already running deploys.
 	MigrateOnStartup bool
+
+	// FrontendDir overrides the embedded bundle with a directory on disk. Empty
+	// means use the embedded one, which is what a deployed binary does. It
+	// exists so a frontend rebuild can be seen without rebuilding Go.
+	FrontendDir string
 }
 
 // ErrMissingDatabaseURL is returned when DATABASE_URL is unset. There is no
@@ -32,6 +37,7 @@ func Load() (Config, error) {
 		Port:             getenv("PORT", "8080"),
 		DatabaseURL:      os.Getenv("DATABASE_URL"),
 		MigrateOnStartup: os.Getenv("MIGRATE_ON_STARTUP") == "true",
+		FrontendDir:      os.Getenv("FRONTEND_DIR"),
 	}
 
 	if cfg.DatabaseURL == "" {
