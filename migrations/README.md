@@ -1,14 +1,68 @@
 # Migrations
 
-Numbered SQL files, applied in filename order. There is no migration runner
-yet — LAM-10 owns that — so against a real database they are applied by hand:
+Numbered SQL files, applied in version order by the runner in
+`internal/migrate`. They are embedded in the binary (`embed.go`), so the
+`migrate` command and the server both carry their own schema history — there is
+no migrations directory that has to travel beside the binary.
 
-    set -a && source .env && set +a && psql "$DATABASE_URL" -1 -f migrations/0003_workspace.sql
+    go run ./cmd/migrate up       # apply everything pending
+    go run ./cmd/migrate down     # roll back the most recent
+    go run ./cmd/migrate status   # what has run, what has not
 
-The test suite applies every file to an empty database on each run (see
-`internal/document/main_test.go`), so the fresh-install path a self-hosted user
-takes is exercised continuously. A migration that only works against an
-already-populated database will fail there.
+See COMMANDS.md for the forms that load `.env`.
+
+## File format
+
+One file per change, named `NNNN_name.sql`, holding both halves:
+
+    -- A comment block explaining why this change exists.
+    -- Anything above the Up marker is ignored by the runner.
+
+    -- +migrate Up
+
+    CREATE TABLE thing (...);
+
+    -- +migrate Down
+
+    DROP TABLE thing;
+
+Both markers are required. Up and Down live in one file on purpose: they are two
+halves of one reversible change, and splitting them across two files is an
+invitation to update one and not the other.
+
+A Down section may be left empty when a change genuinely cannot be reversed.
+That is a deliberate declaration, not a shortcut — `migrate down` refuses with
+`migration declares no Down section` rather than reporting success having
+changed nothing.
+
+## Guarantees
+
+Each migration runs in one transaction together with its own `schema_migrations`
+row. Postgres has transactional DDL, so a migration that fails halfway leaves
+neither the schema change nor the bookkeeping — the two cannot disagree about
+what has run.
+
+The runner takes a Postgres advisory lock first, so two servers starting at once
+cannot both decide the same migration is pending.
+
+The test suite applies every migration to an empty database on each run using
+this same runner (see `internal/document/main_test.go`), so the fresh-install
+path a self-hosted user takes is exercised continuously. `internal/migrate`
+additionally applies the real migrations *and reverses them* on every run, so a
+Down section that does not actually work fails the build.
+
+## Adopting a hand-built database
+
+A database whose schema was applied by hand before this runner existed — which
+is where LAM-2 through LAM-5 left the development database — has the tables but
+no `schema_migrations`. Running `up` there would try to create `document` a
+second time and fail.
+
+    go run ./cmd/migrate baseline
+
+records every known migration as applied without running any of them. It refuses
+on a database that already has recorded migrations, so it cannot be used to
+paper over a genuinely failed run.
 
 ## Expand and contract
 

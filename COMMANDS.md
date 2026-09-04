@@ -20,9 +20,25 @@ script below instead — it loads `.env` and passes `-count=1`.
 
     curl -s localhost:8080/healthz && curl -s localhost:8080/healthz/db
 
-## Apply a migration to the real database
+## Apply pending migrations to the real database
 
-    set -a && source .env && set +a && psql "$DATABASE_URL" -1 -f migrations/0003_workspace.sql
+    set -a && source .env && set +a && go run ./cmd/migrate up
+
+## Roll back the most recent migration — or the most recent N
+
+    set -a && source .env && set +a && go run ./cmd/migrate down
+    set -a && source .env && set +a && go run ./cmd/migrate down 2
+
+## See which migrations have run
+
+    set -a && source .env && set +a && go run ./cmd/migrate status
+
+## Adopt a database whose schema was built by hand
+
+Records every migration as applied without running any of them. Only for a
+database that predates the runner — it refuses once any migration is recorded.
+
+    set -a && source .env && set +a && go run ./cmd/migrate baseline
 
 ## Open a psql shell on the real database
 

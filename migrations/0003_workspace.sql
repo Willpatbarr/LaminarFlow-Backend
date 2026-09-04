@@ -9,8 +9,8 @@
 -- workspace -> team -> project -> document (see Database Schema notes on
 -- E-LAM-0000). When team/project land, this column either becomes derived
 -- or is replaced by that chain.
---
--- Temporary raw SQL until E-LAM-0002 lands a migration runner.
+
+-- +migrate Up
 
 CREATE TABLE workspace (
     id         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -36,3 +36,10 @@ ALTER TABLE document
 -- once there is more than one workspace, but there is exactly one and three
 -- documents, so indexing now would be guessing at a query pattern that does
 -- not exist. Add it with the ticket that introduces the scoped reads.
+
+-- +migrate Down
+
+-- Order matters: the column references workspace, so it goes first.
+ALTER TABLE document DROP COLUMN workspace_id;
+
+DROP TABLE workspace;
