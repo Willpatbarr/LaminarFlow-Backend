@@ -1,0 +1,24 @@
+# The build context is this repository. Everything here is either rebuilt inside
+# the image, specific to a developer's machine, or a secret.
+
+.git
+.github
+.githooks
+
+# Filled by the frontend stage. The marker stays so web/embed.go's go:embed
+# still has a directory if that stage is ever skipped.
+web/dist/*
+!web/dist/.gitkeep
+
+# Local Postgres data directory from docker-compose.
+pgdata
+
+# Never let a real environment file into an image.
+.env
+.env.*
+!.env.example
+
+# Editor and OS noise.
+.idea
+.vscode
+.DS_Store
