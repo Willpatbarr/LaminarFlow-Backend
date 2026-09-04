@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/config"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/db"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/migrate"
+	"github.com/Willpatbarr/LaminarFlow-Backend/migrations"
 )
 
 const dbCheckTimeout = 3 * time.Second
@@ -25,6 +30,10 @@ func main() {
 	defer pool.Close()
 
 	log.Print("connected to postgres")
+
+	if err := ensureSchema(context.Background(), pool, cfg.MigrateOnStartup); err != nil {
+		log.Fatalf("schema: %v", err)
+	}
 
 	mux := http.NewServeMux()
 
@@ -55,4 +64,40 @@ func main() {
 	addr := ":" + cfg.Port
 	log.Printf("laminarflow backend listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+// ensureSchema brings the database up to date, or refuses to start.
+//
+// Serving against a schema this binary does not match is the failure worth
+// preventing: it does not announce itself at startup, it announces itself as a
+// missing column on whichever request happens to touch the new table first.
+func ensureSchema(ctx context.Context, pool *pgxpool.Pool, autoApply bool) error {
+	loaded, err := migrate.Load(migrations.FS)
+	if err != nil {
+		return err
+	}
+
+	if autoApply {
+		applied, err := migrate.Up(ctx, pool, loaded)
+		if err != nil {
+			return err
+		}
+		for _, m := range applied {
+			log.Printf("applied migration %04d_%s", m.Version, m.Name)
+		}
+		return nil
+	}
+
+	pending, err := migrate.Pending(ctx, pool, loaded)
+	if err != nil {
+		return err
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf(
+			"%d migration(s) pending, oldest %04d_%s - run `migrate up`, or set MIGRATE_ON_STARTUP=true",
+			len(pending), pending[0].Version, pending[0].Name)
+	}
+
+	log.Print("schema is up to date")
+	return nil
 }

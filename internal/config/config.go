@@ -12,6 +12,13 @@ import (
 type Config struct {
 	Port        string
 	DatabaseURL string
+
+	// MigrateOnStartup lets the server apply pending migrations itself. It is
+	// off by default: an unattended container restart must not silently reshape
+	// the database. Turn it on for the self-hosted target, where a two-step
+	// upgrade over Tailscale is friction nobody needs, and leave it off
+	// anywhere a human is already running deploys.
+	MigrateOnStartup bool
 }
 
 // ErrMissingDatabaseURL is returned when DATABASE_URL is unset. There is no
@@ -22,8 +29,9 @@ var ErrMissingDatabaseURL = errors.New("DATABASE_URL is not set")
 // Load reads configuration from the environment.
 func Load() (Config, error) {
 	cfg := Config{
-		Port:        getenv("PORT", "8080"),
-		DatabaseURL: os.Getenv("DATABASE_URL"),
+		Port:             getenv("PORT", "8080"),
+		DatabaseURL:      os.Getenv("DATABASE_URL"),
+		MigrateOnStartup: os.Getenv("MIGRATE_ON_STARTUP") == "true",
 	}
 
 	if cfg.DatabaseURL == "" {
