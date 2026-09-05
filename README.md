@@ -1,5 +1,8 @@
-# LaminarFlow
-Linear Clone with some added functionality
+# LaminarFlow — Backend
+
+The Go API, schema, and migrations for LaminarFlow, a Linear clone with some
+added functionality. The React client lives in
+[LaminarFlow-Frontend](https://github.com/Willpatbarr/LaminarFlow-Frontend).
 
 Common commands live in [COMMANDS.md](COMMANDS.md). Run the checks with
 `./scripts/test.sh` — a bare `go test ./...` skips every database test and
