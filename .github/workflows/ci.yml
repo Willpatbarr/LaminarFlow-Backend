@@ -55,10 +55,9 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # The frontend repo supplies the bundle through a BuildKit named context.
-      # E-LAM-0001-F rather than main because main is still the initial commit
-      # and has no package.json. Change this to main once the epic lands.
-      FRONTEND_REF: E-LAM-0001-F
+    # main, now that E-LAM-0001 has landed there. The image job builds the
+    # backend under test against the last frontend that shipped.
+      FRONTEND_REF: main
 
     steps:
       - uses: actions/checkout@v7
