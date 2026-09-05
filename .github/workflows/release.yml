@@ -1,0 +1,142 @@
+name: Release image
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+  # A Dockerfile change reaches main through a PR, so a build that no longer
+  # works fails at review time rather than on a release evening.
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - scripts/build-image.sh
+      - .github/workflows/release.yml
+
+  workflow_dispatch:
+    inputs:
+      frontend_ref:
+        description: Frontend ref to build the bundle from
+        default: main
+        required: false
+
+jobs:
+  # Builds the shipped image for both architectures - the only check that
+  # exercises the Dockerfile, the named build context, and the version
+  # arguments together.
+  image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: backend
+
+      # Both repos are public, so the default token is enough - no PAT needed.
+      - uses: actions/checkout@v7
+        with:
+          repository: Willpatbarr/LaminarFlow-Frontend
+          ref: ${{ github.event.inputs.frontend_ref || 'main' }}
+          path: frontend
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Read the versions from the files that own them, exactly as
+      # scripts/build-image.sh does, so CI cannot drift from a local build.
+      - name: Resolve build versions
+        id: versions
+        run: |
+          node_version=$(tr -d ' \t\nv' < frontend/.nvmrc)
+          go_version=$(awk '/^go /{split($2,v,"."); print v[1]"."v[2]; exit}' backend/go.mod)
+          echo "node=$node_version" >> "$GITHUB_OUTPUT"
+          echo "go=$go_version" >> "$GITHUB_OUTPUT"
+          echo "node $node_version, go $go_version"
+
+      # No QEMU setup: both build stages are pinned to BUILDPLATFORM and Go
+      # cross-compiles, so nothing is emulated and the arm64 build is as fast as
+      # the amd64 one.
+      - name: Build image (amd64 + arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          build-contexts: frontendsrc=frontend
+          build-args: |
+            NODE_VERSION=${{ steps.versions.outputs.node }}
+            GO_VERSION=${{ steps.versions.outputs.go }}
+          platforms: linux/amd64,linux/arm64
+          # Multi-platform images cannot be loaded into the local image store,
+          # so this proves the build and stops there.
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A single-arch build that can actually be loaded, so the next step can
+      # run the thing rather than only compile it.
+      - name: Build image (amd64, loadable)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          build-contexts: frontendsrc=frontend
+          build-args: |
+            NODE_VERSION=${{ steps.versions.outputs.node }}
+            GO_VERSION=${{ steps.versions.outputs.go }}
+          platforms: linux/amd64
+          load: true
+          tags: laminarflow:ci
+          cache-from: type=gha
+
+      # Proves the image actually runs: serves the embedded frontend, answers
+      # the API, and reaches Postgres. A Dockerfile that builds but produces a
+      # broken image would otherwise pass.
+      - name: Smoke test the image
+        run: |
+          docker network create lf-ci
+          docker run -d --name lf-db --network lf-ci \
+            -e POSTGRES_DB=laminarflow -e POSTGRES_USER=laminarflow \
+            -e POSTGRES_PASSWORD=laminarflow postgres:17
+          for i in $(seq 1 30); do
+            docker exec lf-db pg_isready -U laminarflow -d laminarflow && break
+            sleep 2
+          done
+
+          docker run -d --name lf-app --network lf-ci -p 8080:8080 \
+            -e DATABASE_URL='postgres://laminarflow:laminarflow@lf-db:5432/laminarflow?sslmode=disable' \
+            -e MIGRATE_ON_STARTUP=true \
+            laminarflow:ci
+          for i in $(seq 1 30); do
+            curl -sf localhost:8080/healthz >/dev/null && break
+            sleep 2
+          done
+
+          echo "--- server log ---"
+          docker logs lf-app
+
+          echo "--- healthz ---"
+          curl -sf localhost:8080/healthz | grep -q '"status":"ok"'
+
+          echo "--- healthz/db (migrations applied on startup) ---"
+          curl -sf localhost:8080/healthz/db | grep -q '"status":"ok"'
+
+          echo "--- embedded frontend is served ---"
+          curl -sf localhost:8080/ | grep -qi '<!doctype html'
+
+          echo "--- SPA fallback ---"
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/projects/42)" = "200"
+
+          echo "--- missing asset 404s rather than returning HTML ---"
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/assets/nope-STALE.js)" = "404"
+
+          echo "--- unknown API route returns JSON, not the app shell ---"
+          curl -s localhost:8080/api/nope | grep -q '"error":"not found"'
+
+          echo "--- the image's own healthcheck command ---"
+          docker exec lf-app /laminarflow healthcheck
+
+          echo "--- operator tools are present ---"
+          docker exec lf-app /migrate status
+
+          echo "--- runs as nonroot ---"
+          test "$(docker inspect -f '{{.Config.User}}' laminarflow:ci)" = "nonroot:nonroot"
+
+          echo "✓ image smoke test passed"
