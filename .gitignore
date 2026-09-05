@@ -1,0 +1,9 @@
+LaminarFlow-Backend
+.env
+.idea/
+
+# Built frontend bundle, produced by scripts/build-frontend.sh. Only the
+# directory marker is committed - go:embed needs the directory to exist, but
+# the build output is an artifact and does not belong in git.
+/web/dist/*
+!/web/dist/.gitkeep
