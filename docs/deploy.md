@@ -42,6 +42,14 @@ holds one architecture per tag — so a comma in `PLATFORMS` builds and verifies
 without loading. That is the right form for CI; use a single platform with
 `--load` when you actually want to run it.
 
+### Building in CI
+
+`.github/workflows/release.yml` builds the image on a `v*` tag, on a pull
+request touching the Dockerfile or `scripts/build-image.sh`, and on demand from
+the Actions tab. A manual run takes a `frontend_ref` input — the frontend branch
+or tag the bundle is built from, defaulting to `main`. `ci.yml` runs the Go
+checks and never builds an image.
+
 ## Moving the image to a host without a registry
 
     docker save laminarflow:dev | ssh user@host 'docker load'

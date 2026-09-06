@@ -93,6 +93,13 @@ frontend repo as a build context. A bare `docker build` here will not work.
     PLATFORMS=linux/arm64 ./scripts/build-image.sh
     PLATFORMS=linux/amd64,linux/arm64 ./scripts/build-image.sh
 
+## Build the image in CI, against a chosen frontend ref
+
+Runs `release.yml` on GitHub. Omitting `-f` builds against the frontend's `main`.
+
+    gh workflow run release.yml -f frontend_ref=main
+    gh workflow run release.yml -f frontend_ref=v0.2.0
+
 ## Run the deployed stack
 
     docker compose -f deploy/docker-compose.yml up -d
