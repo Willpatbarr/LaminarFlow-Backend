@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"context"
@@ -45,7 +45,7 @@ func testMux(t *testing.T) *http.ServeMux {
 	}
 	t.Cleanup(pool.Close)
 
-	return newMux(pool, bundle)
+	return NewMux(pool, bundle)
 }
 
 func get(t *testing.T, mux *http.ServeMux, path string) *httptest.ResponseRecorder {
@@ -76,7 +76,7 @@ func TestHealthzDoesNotNeedTheDatabase(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 
-	mux := newMux(pool, bundle)
+	mux := NewMux(pool, bundle)
 
 	// Close the pool out from under the mux, then ask for liveness anyway.
 	pool.Close()
@@ -120,7 +120,7 @@ func TestHealthzDbFailsWhenTheDatabaseIsGone(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 
-	mux := newMux(pool, bundle)
+	mux := NewMux(pool, bundle)
 	pool.Close()
 
 	rec := get(t, mux, "/healthz/db")
@@ -132,8 +132,7 @@ func TestHealthzDbFailsWhenTheDatabaseIsGone(t *testing.T) {
 	}
 }
 
-// The reservation this ticket exists for. Delete the /api/ registration in
-// newMux and this is the only test that notices - every unknown API endpoint
+// every unknown API endpoint
 // would otherwise start returning the HTML app shell with status 200, which a
 // fetch() reports as a JSON parse error three layers from the cause.
 func TestUnknownAPIRouteReturnsJSONNotTheAppShell(t *testing.T) {
