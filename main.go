@@ -9,9 +9,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/Willpatbarr/LaminarFlow-Backend/internal/api"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/api"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/config"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/db"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/migrate"

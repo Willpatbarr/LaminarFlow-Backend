@@ -132,8 +132,7 @@ func TestHealthzDbFailsWhenTheDatabaseIsGone(t *testing.T) {
 	}
 }
 
-// The reservation this ticket exists for. Delete the /api/ registration in
-// newMux and this is the only test that notices - every unknown API endpoint
+// every unknown API endpoint
 // would otherwise start returning the HTML app shell with status 200, which a
 // fetch() reports as a JSON parse error three layers from the cause.
 func TestUnknownAPIRouteReturnsJSONNotTheAppShell(t *testing.T) {
