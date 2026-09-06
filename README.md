@@ -11,6 +11,16 @@ still prints PASS.
 Decisions about how the code is structured live in [docs/adr/](docs/adr/) — why something is
 the way it is, when the code itself cannot say.
 
+## Changing the API
+
+Endpoints are declared with `huma.Register` in `internal/api/`. The declaration
+is the documentation — after changing one, regenerate the spec and commit it:
+
+    go run ./cmd/openapi > api/openapi.json
+
+CI regenerates it and fails if the committed copy differs. The frontend pulls
+that file, so a change here is not real until it is committed.
+
 ## Where the code lives
 
 | Path | What belongs there |
