@@ -17,6 +17,7 @@ func NewMux(pool *pgxpool.Pool, bundle fs.FS) *http.ServeMux {
 
 	mux.HandleFunc("GET /healthz", live())
 	mux.HandleFunc("GET /healthz/db", ready(pool))
+	NewHumaAPI(mux)
 	mux.HandleFunc("/api/", notFound())
 
 	// Everything else is the frontend: real files where they exist, the app
