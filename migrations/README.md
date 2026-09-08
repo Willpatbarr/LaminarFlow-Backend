@@ -124,3 +124,25 @@ absent index with no comment reads as an oversight, and the next person either
 adds a redundant one or spends an afternoon working out whether the omission was
 deliberate. `0003_workspace.sql` declines an index and names the ticket that
 should add it; that is the pattern.
+
+### A cascading foreign key needs the index even when no query does
+
+`ON DELETE CASCADE` and `ON DELETE SET NULL` are not free at the parent end.
+Before Postgres can delete a parent row it has to find every child row that
+references it, and it uses the child's index to do that. Without one, deleting
+a single row scans the whole child table.
+
+That makes the index load-bearing even when no application query would use it.
+`ticket.status_id` and `ticket.assignee_account_id` in `0011_ticket.sql` are
+both indexed for exactly this reason — nothing reads tickets by status alone or
+by assignee across projects, but deleting one status or one account would
+otherwise scan every ticket in the instance.
+
+So the question in the section above splits in two:
+
+* Does a **query** need this index? Maybe not.
+* Does an **`ON DELETE` action** need it? If the action is `CASCADE` or
+  `SET NULL`, yes, always.
+
+A `RESTRICT` foreign key is the exception. It still has to find a referencing
+row, but it can stop at the first one, so the cost is bounded.
