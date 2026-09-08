@@ -30,6 +30,7 @@ const (
 	notNullViolation    = "23502"
 	foreignKeyViolation = "23503"
 	uniqueViolation     = "23505"
+	checkViolation      = "23514"
 )
 
 // migratedPool returns a throwaway database with every real migration applied,
