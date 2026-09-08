@@ -93,3 +93,34 @@ in the bug.
 A `DEFAULT` is right when the value is genuinely a property of the column, like
 `created_at DEFAULT now()`. It is wrong when it invents an answer to a question
 the caller is supposed to answer.
+
+## Foreign keys are not indexed for you
+
+Postgres builds an index for a `PRIMARY KEY` and for a `UNIQUE` constraint. It
+does not build one for a foreign key column. A child table whose only index is
+its own primary key will scan the whole table every time it is looked up by
+parent.
+
+That does not mean every foreign key needs its own index. A `UNIQUE` constraint
+on `(parent_id, name)` — which most child tables in this schema want anyway —
+builds a `btree (parent_id, name)`, and a btree index serves lookups on its
+leading column. So the constraint already indexes the foreign key, and adding a
+separate single-column index would be redundant.
+
+`0005_team.sql` is the worked case: `UNIQUE (workspace_id, name)` is the only
+index on `workspace_id`, and the file says so where a reader would otherwise
+assume the index was forgotten.
+
+The order matters, and it is the part that breaks silently. Reverse the
+constraint to `(name, parent_id)` and the foreign key loses its index with no
+error and no failing test — unless something asserts the leading column.
+`TestTeamConstraints/workspace_id_leads_an_index` in `internal/migrate` is that
+assertion, and a new child table should carry the same one.
+
+### Write the decision down either way
+
+Whether a table gets an index or not, say so in the migration and say why. An
+absent index with no comment reads as an oversight, and the next person either
+adds a redundant one or spends an afternoon working out whether the omission was
+deliberate. `0003_workspace.sql` declines an index and names the ticket that
+should add it; that is the pattern.
