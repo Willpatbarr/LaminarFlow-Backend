@@ -82,6 +82,23 @@ func newTeam(t *testing.T, pool *pgxpool.Pool, workspaceID, name string) string 
 	return id
 }
 
+// newAccount inserts an account and returns its ID. email is folded to lower
+// case by account_email_lower_key, so callers need distinct addresses rather
+// than distinct capitalisation.
+func newAccount(t *testing.T, pool *pgxpool.Pool, email string) string {
+	t.Helper()
+
+	var id string
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO account (email, password_hash, display_name)
+		 VALUES ($1, 'hash', $1) RETURNING id::text`, email,
+	).Scan(&id); err != nil {
+		t.Fatalf("create account %s: %v", email, err)
+	}
+
+	return id
+}
+
 // wantPgError fails unless err is a Postgres error carrying code. what names
 // the attempted violation, so a failure says which constraint did not hold.
 func wantPgError(t *testing.T, err error, code, what string) {
