@@ -66,6 +66,22 @@ func newWorkspace(t *testing.T, pool *pgxpool.Pool, name string) string {
 	return id
 }
 
+// newTeam inserts a team into workspaceID and returns its ID, for the child
+// tables that hang off team rather than off workspace.
+func newTeam(t *testing.T, pool *pgxpool.Pool, workspaceID, name string) string {
+	t.Helper()
+
+	var id string
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO team (workspace_id, name) VALUES ($1::uuid, $2) RETURNING id::text`,
+		workspaceID, name,
+	).Scan(&id); err != nil {
+		t.Fatalf("create team %s: %v", name, err)
+	}
+
+	return id
+}
+
 // wantPgError fails unless err is a Postgres error carrying code. what names
 // the attempted violation, so a failure says which constraint did not hold.
 func wantPgError(t *testing.T, err error, code, what string) {
