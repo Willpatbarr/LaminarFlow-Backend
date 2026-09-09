@@ -146,3 +146,57 @@ So the question in the section above splits in two:
 
 A `RESTRICT` foreign key is the exception. It still has to find a referencing
 row, but it can stop at the first one, so the cost is bounded.
+
+## A join table between two children of the same parent
+
+`ticket_sprint` joins `ticket` and `sprint`. Both are children of `project`, and
+two plain foreign keys let the join table pair a ticket in one project with a
+sprint in another. Nothing in the database objects, and the symptom surfaces
+much later as a board quietly showing a ticket from somewhere else.
+
+The fix is to carry the shared parent's key on the join table and reach both
+sides through composite foreign keys:
+
+    ALTER TABLE ticket ADD CONSTRAINT ticket_id_project_key UNIQUE (id, project_id);
+    ALTER TABLE sprint ADD CONSTRAINT sprint_id_project_key UNIQUE (id, project_id);
+
+    CREATE TABLE ticket_sprint (
+        ticket_id  uuid NOT NULL,
+        sprint_id  uuid NOT NULL,
+        project_id uuid NOT NULL,
+
+        PRIMARY KEY (ticket_id, sprint_id),
+
+        FOREIGN KEY (ticket_id, project_id) REFERENCES ticket (id, project_id) ON DELETE CASCADE,
+        FOREIGN KEY (sprint_id, project_id) REFERENCES sprint (id, project_id) ON DELETE CASCADE
+    );
+
+One `project_id`, two references, so both parents are in the same project by
+construction. There is no state in which they disagree and no application code
+that has to remember to check.
+
+Three things about it are worth knowing before reaching for it:
+
+* **The parents pay.** Postgres only points a foreign key at columns carrying a
+  unique constraint, so each parent needs `UNIQUE (id, project_id)` purely as a
+  target. Both are logically redundant — `id` is already the primary key — and
+  each builds a second btree on a table that did not ask for one.
+* **`project_id` needs no foreign key of its own.** It can only hold a value
+  that both parents already carry, and both of them reference `project`.
+* **It blocks reparenting.** With the default `ON UPDATE NO ACTION`, moving a
+  ticket to another project while it sits in one of the old project's sprints
+  is rejected. `ON UPDATE CASCADE` does not help — it drags the join row's
+  `project_id` along and the sprint side fails instead. Whatever moves a row
+  between parents has to unlink it first. Assert that in a test, or the next
+  person meets it in production.
+
+### It is not always right
+
+The same pattern was proposed for `team_member` under LAM-42 and rejected. That
+turned on outside collaborators being real: a person on a team without being a
+member of the workspace above it is a case the product wants, so forcing the two
+memberships to agree would have banned a feature.
+
+So the question is not "do both sides share a parent" but "is a mismatch ever
+legitimate". For `ticket_sprint` it never is. For `team_member` it routinely is.
+Answer that first; the DDL follows.
