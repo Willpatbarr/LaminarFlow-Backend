@@ -168,9 +168,18 @@ func indexBody(
 	body map[string]any,
 ) error {
 	for fieldID, value := range body {
+		// Scope and title are denormalised from the document rather than
+		// passed in, so the index cannot disagree with the row it describes.
+		// LAM-26 made workspace_id NOT NULL, so a missing document here is a
+		// failed insert rather than a silently unscoped search row.
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO search_index (document_id, field_id, content)
-			 VALUES ($1::uuid, $2, $3)`,
+			`INSERT INTO search_index
+			     (document_id, field_id, content,
+			      workspace_id, project_id, team_id, title_or_preview)
+			 SELECT $1::uuid, $2, $3,
+			        d.workspace_id, d.project_id, d.team_id, d.title
+			   FROM document d
+			  WHERE d.id = $1::uuid`,
 			docID, fieldID, fieldText(value),
 		); err != nil {
 			return fmt.Errorf("index field %q: %w", fieldID, err)
