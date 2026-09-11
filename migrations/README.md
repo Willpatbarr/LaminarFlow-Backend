@@ -200,3 +200,71 @@ memberships to agree would have banned a feature.
 So the question is not "do both sides share a parent" but "is a mismatch ever
 legitimate". For `ticket_sprint` it never is. For `team_member` it routinely is.
 Answer that first; the DDL follows.
+
+## Enforcing "the parent is in a particular state"
+
+A child table sometimes only makes sense under a parent in some state.
+`comment_reviewer` is the worked case: a reviewer can only be attached to a
+`comment` that is acting as a review request, meaning its `review_status` is
+non-null. LAM-25 assigned that rule to application code. The database can hold
+it, and the technique generalises.
+
+The naive version — a composite foreign key on the state column itself —
+does not work when the state is mutable:
+
+    FOREIGN KEY (comment_id, review_status) REFERENCES comment (id, review_status)
+
+`review_status` moves from `pending` to `approved`, which is the entire point
+of a review. That update changes the referenced key, so it either cascades on
+every transition or is refused outright. Both are wrong.
+
+Reference a **generated column that summarises the state** instead, chosen so
+it only changes at the boundary that actually matters:
+
+    ALTER TABLE comment
+        ADD COLUMN is_review_request boolean
+            GENERATED ALWAYS AS (review_status IS NOT NULL) STORED;
+
+    ALTER TABLE comment ADD CONSTRAINT comment_id_review_key UNIQUE (id, is_review_request);
+
+    CREATE TABLE comment_reviewer (
+        comment_id        uuid    NOT NULL,
+        account_id        uuid    NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        is_review_request boolean NOT NULL DEFAULT true,
+
+        PRIMARY KEY (comment_id, account_id),
+
+        CHECK (is_review_request),
+
+        FOREIGN KEY (comment_id, is_review_request)
+            REFERENCES comment (id, is_review_request) ON DELETE CASCADE
+    );
+
+`pending → approved` leaves the generated boolean at `true`, so the foreign
+key never notices. Only crossing the null boundary moves it.
+
+Four things about it are worth knowing before reaching for it:
+
+* **Both halves are load-bearing.** The foreign key stops a row pointing at a
+  parent in the wrong state. The `CHECK` stops a caller writing `false`
+  explicitly, which would otherwise match a plain comment's `(id, false)` and
+  pass the foreign key cleanly. Dropping either one opens a different hole,
+  and `TestCommentReviewerConstraints` has a test for each.
+* **Leave `ON UPDATE` alone.** The only change the referenced key can undergo
+  is the one that must be refused, so a cascade would never usefully fire, and
+  declaring one claims the child follows the parent when it never can.
+  `NO ACTION` says what actually happens.
+* **It blocks the reverse transition.** A review request with reviewers
+  attached cannot become a plain comment; the reviewers have to be unassigned
+  first. That is usually correct — the alternative is silently dropping them —
+  but it is a real sequencing rule and belongs in a test.
+* **The parent pays for it.** A stored boolean on every parent row, plus a
+  second btree for the `UNIQUE` the foreign key needs as a target. The same
+  cost `0013` pays on `ticket` and `sprint`.
+
+### When not to
+
+If the parent state is genuinely allowed to change underneath existing
+children, this is the wrong tool — it will block exactly that. Check that the
+boundary you generate on is one the product agrees is one-way while children
+exist.

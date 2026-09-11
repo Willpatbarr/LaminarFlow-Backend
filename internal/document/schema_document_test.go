@@ -15,6 +15,7 @@ const (
 	checkViolation      = "23514"
 	foreignKeyViolation = "23503"
 	notNullViolation    = "23502"
+	uniqueViolation     = "23505"
 )
 
 // wantPgError fails unless err is a Postgres error carrying code. what names
