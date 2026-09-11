@@ -7,10 +7,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// newAspectTypeField creates a team, an aspect type and one field on it, and
-// returns the field's ID. Names carry the test's label so two tests in one run
-// cannot collide on team's UNIQUE (workspace_id, name).
-func newAspectTypeField(t *testing.T, pool *pgxpool.Pool, workspaceID, label string) string {
+// newAspectType creates a team in workspaceID and one aspect type on it, and
+// returns the aspect type's ID. Team names carry the caller's label so two
+// tests in one run cannot collide on team's UNIQUE (workspace_id, name).
+func newAspectType(t *testing.T, pool *pgxpool.Pool, workspaceID, label string) string {
 	t.Helper()
 
 	ctx := context.Background()
@@ -23,13 +23,33 @@ func newAspectTypeField(t *testing.T, pool *pgxpool.Pool, workspaceID, label str
 		t.Fatalf("create team: %v", err)
 	}
 
-	var aspectTypeID string
-	if err := pool.QueryRow(ctx,
+	return newAspectTypeOn(t, pool, teamID)
+}
+
+// newAspectTypeOn creates one aspect type on an existing team.
+func newAspectTypeOn(t *testing.T, pool *pgxpool.Pool, teamID string) string {
+	t.Helper()
+
+	var id string
+	if err := pool.QueryRow(context.Background(),
 		`INSERT INTO aspect_type (team_id, name) VALUES ($1::uuid, 'Class')
          RETURNING id::text`, teamID,
-	).Scan(&aspectTypeID); err != nil {
+	).Scan(&id); err != nil {
 		t.Fatalf("create aspect type: %v", err)
 	}
+
+	return id
+}
+
+// newAspectTypeField creates a team, an aspect type and one field on it, and
+// returns the field's ID. Names carry the test's label so two tests in one run
+// cannot collide on team's UNIQUE (workspace_id, name).
+func newAspectTypeField(t *testing.T, pool *pgxpool.Pool, workspaceID, label string) string {
+	t.Helper()
+
+	ctx := context.Background()
+
+	aspectTypeID := newAspectType(t, pool, workspaceID, label)
 
 	var fieldID string
 	if err := pool.QueryRow(ctx,
@@ -66,8 +86,11 @@ func TestFieldIDIsTheDocumentBodyKey(t *testing.T) {
 
 	svc := NewService(pool)
 
-	docID, err := svc.Save(ctx, ws, "", map[string]any{
-		fieldID: "func Save(ctx context.Context) error",
+	docID, err := svc.Save(ctx, SaveParams{
+		WorkspaceID: ws,
+		Body: map[string]any{
+			fieldID: "func Save(ctx context.Context) error",
+		},
 	})
 	if err != nil {
 		t.Fatalf("save a document keyed by a real field ID: %v", err)
@@ -110,7 +133,10 @@ func TestRenamingAFieldLabelLeavesDocumentsAlone(t *testing.T) {
 
 	svc := NewService(pool)
 
-	docID, err := svc.Save(ctx, ws, "", map[string]any{fieldID: "unchanged"})
+	docID, err := svc.Save(ctx, SaveParams{
+		WorkspaceID: ws,
+		Body:        map[string]any{fieldID: "unchanged"},
+	})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -137,5 +163,132 @@ func TestRenamingAFieldLabelLeavesDocumentsAlone(t *testing.T) {
 	}
 	if !stillThere {
 		t.Error("renaming a field label orphaned the document body key")
+	}
+}
+
+// LAM-23 step 4: one normal document and one aspect document, both saved and
+// read back through the shared write-path service.
+//
+// This is what the widened SaveParams bought. Before LAM-23 the service could
+// only write the body, so an aspect document could not be created through it
+// at all - the columns that make it an aspect document were unreachable.
+func TestSaveWritesNormalAndAspectDocuments(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	ws := defaultWorkspace(t, pool)
+	svc := NewService(pool)
+
+	aspectTypeID := newAspectType(t, pool, ws, "both-kinds")
+
+	normalID, err := svc.Save(ctx, SaveParams{
+		WorkspaceID: ws,
+		Title:       "Meeting notes",
+		Body:        map[string]any{"f_note": "shipped LAM-23"},
+	})
+	if err != nil {
+		t.Fatalf("save a normal document: %v", err)
+	}
+
+	aspectID, err := svc.Save(ctx, SaveParams{
+		WorkspaceID:  ws,
+		Title:        "User Service",
+		Type:         TypeAspect,
+		AspectTypeID: aspectTypeID,
+		Body:         map[string]any{"f_note": "handles auth"},
+	})
+	if err != nil {
+		t.Fatalf("save an aspect document: %v", err)
+	}
+
+	read := func(t *testing.T, id string) (title, docType string, aspectType *string) {
+		t.Helper()
+
+		if err := pool.QueryRow(ctx,
+			`SELECT title, type, aspect_type_id::text FROM document WHERE id = $1::uuid`, id,
+		).Scan(&title, &docType, &aspectType); err != nil {
+			t.Fatalf("read document %s: %v", id, err)
+		}
+
+		return title, docType, aspectType
+	}
+
+	title, docType, aspectType := read(t, normalID)
+	if title != "Meeting notes" {
+		t.Errorf("normal document title = %q, want %q", title, "Meeting notes")
+	}
+	// Type was left unset by the caller, so normalize must have filled it in.
+	// Empty here would violate document_type_is_known on the next update.
+	if docType != TypeNormal {
+		t.Errorf("normal document type = %q, want %q", docType, TypeNormal)
+	}
+	if aspectType != nil {
+		t.Errorf("normal document carries aspect_type_id %q, want NULL", *aspectType)
+	}
+
+	title, docType, aspectType = read(t, aspectID)
+	if title != "User Service" {
+		t.Errorf("aspect document title = %q, want %q", title, "User Service")
+	}
+	if docType != TypeAspect {
+		t.Errorf("aspect document type = %q, want %q", docType, TypeAspect)
+	}
+	if aspectType == nil || *aspectType != aspectTypeID {
+		t.Errorf("aspect document aspect_type_id = %v, want %q", aspectType, aspectTypeID)
+	}
+
+	// Both bodies still reach search_index - widening the write path must not
+	// have disturbed the half LAM-3 built.
+	index := indexSnapshot(t, pool)
+	if index[normalID+"|f_note"] != "shipped LAM-23" {
+		t.Errorf("normal document not indexed: %v", index)
+	}
+	if index[aspectID+"|f_note"] != "handles auth" {
+		t.Errorf("aspect document not indexed: %v", index)
+	}
+}
+
+// An update must not silently blank the columns it does not mention. This is
+// the failure mode a params struct invites: a caller that sets only Body on
+// an update would previously have left title and type alone, and now writes
+// whatever the zero value is.
+func TestUpdatingADocumentKeepsWhatTheCallerRestates(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	ws := defaultWorkspace(t, pool)
+	svc := NewService(pool)
+
+	id, err := svc.Save(ctx, SaveParams{
+		WorkspaceID: ws,
+		Title:       "Original",
+		Body:        map[string]any{"f_note": "first"},
+	})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if _, err := svc.Save(ctx, SaveParams{
+		WorkspaceID: ws,
+		ID:          id,
+		Title:       "Original",
+		Body:        map[string]any{"f_note": "second"},
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	var title, docType string
+	if err := pool.QueryRow(ctx,
+		`SELECT title, type FROM document WHERE id = $1::uuid`, id,
+	).Scan(&title, &docType); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if title != "Original" {
+		t.Errorf("title = %q after update, want %q", title, "Original")
+	}
+	// normalize() has to run on updates too, or an unset Type writes '' and
+	// trips document_type_is_known.
+	if docType != TypeNormal {
+		t.Errorf("type = %q after update, want %q", docType, TypeNormal)
 	}
 }

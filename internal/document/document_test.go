@@ -83,11 +83,11 @@ func TestSaveWritesBlobAndIndex(t *testing.T) {
 	svc := NewService(pool)
 	ws := defaultWorkspace(t, pool)
 
-	id, err := svc.Save(ctx, ws, "", map[string]any{
+	id, err := svc.Save(ctx, SaveParams{WorkspaceID: ws, Body: map[string]any{
 		"f_title": "Quarterly Report",
 		"f_year":  2026,
 		"f_tags":  []any{"alpha", "beta"},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -126,12 +126,19 @@ func TestSaveRemovesStaleIndexRows(t *testing.T) {
 
 	ws := defaultWorkspace(t, pool)
 
-	id, err := svc.Save(ctx, ws, "", map[string]any{"f_title": "Notes", "f_note": "draft"})
+	id, err := svc.Save(ctx, SaveParams{
+		WorkspaceID: ws,
+		Body:        map[string]any{"f_title": "Notes", "f_note": "draft"},
+	})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
-	if _, err := svc.Save(ctx, ws, id, map[string]any{"f_title": "Notes"}); err != nil {
+	if _, err := svc.Save(ctx, SaveParams{
+		WorkspaceID: ws,
+		ID:          id,
+		Body:        map[string]any{"f_title": "Notes"},
+	}); err != nil {
 		t.Fatalf("resave: %v", err)
 	}
 
@@ -156,7 +163,7 @@ func TestRebuildMatchesLiveIndex(t *testing.T) {
 		{"f_title": "Notes", "f_tags": []any{"alpha", "beta"}},
 		{"f_title": "Nested", "f_meta": map[string]any{"b": "second", "a": "first"}},
 	} {
-		if _, err := svc.Save(ctx, ws, "", body); err != nil {
+		if _, err := svc.Save(ctx, SaveParams{WorkspaceID: ws, Body: body}); err != nil {
 			t.Fatalf("save: %v", err)
 		}
 	}
@@ -193,14 +200,21 @@ func TestSaveRejectsCrossWorkspaceUpdate(t *testing.T) {
 		t.Fatalf("create second workspace: %v", err)
 	}
 
-	id, err := svc.Save(ctx, owner, "", map[string]any{"f_title": "Private"})
+	id, err := svc.Save(ctx, SaveParams{
+		WorkspaceID: owner,
+		Body:        map[string]any{"f_title": "Private"},
+	})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
 	// ErrNotFound specifically, not some distinct "wrong workspace" error: a
 	// caller outside the owning workspace must not learn the document exists.
-	if _, err := svc.Save(ctx, intruder, id, map[string]any{"f_title": "Hijacked"}); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.Save(ctx, SaveParams{
+		WorkspaceID: intruder,
+		ID:          id,
+		Body:        map[string]any{"f_title": "Hijacked"},
+	}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-workspace update returned %v, want ErrNotFound", err)
 	}
 
