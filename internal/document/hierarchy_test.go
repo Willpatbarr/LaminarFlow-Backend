@@ -266,7 +266,16 @@ func TestOptionalParentsStayOptional(t *testing.T) {
 		"search_index.team_id":          "LAM-26: a search row may be scoped no narrower than its workspace",
 		"search_index.parent_reference": "LAM-26: only comment rows have a parent to name",
 		"api_token.expires_at":          "LAM-15: a token may not expire",
+		"saved_view.project_id":         "LAM-50: a saved view may span the whole team, and deleting a project widens it rather than destroying it",
+		"saved_view.owner_account_id":   "LAM-50: a shared team view must survive its author leaving",
 	}
+
+	// saved_view.board_id is deliberately NOT pinned here. It is nullable,
+	// but not optional in this test's sense - saved_view_board_matches_layout
+	// makes it required exactly when layout is 'board' and forbidden
+	// otherwise, so it is a layout discriminant rather than an optional
+	// parent in the master spec 3.2 hierarchy. Its own biconditional is
+	// asserted in both directions by TestSavedViewConstraints.
 
 	rows, err := pool.Query(ctx,
 		`SELECT table_name || '.' || column_name
@@ -315,6 +324,7 @@ func TestTheOptionalParentGuardNamesRealColumns(t *testing.T) {
 		"search_index.ticket_id", "search_index.document_id", "search_index.comment_id",
 		"search_index.project_id", "search_index.team_id", "search_index.parent_reference",
 		"api_token.expires_at",
+		"saved_view.project_id", "saved_view.owner_account_id",
 	} {
 		table, name, _ := strings.Cut(column, ".")
 
