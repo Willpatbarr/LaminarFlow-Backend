@@ -268,3 +268,99 @@ If the parent state is genuinely allowed to change underneath existing
 children, this is the wrong tool — it will block exactly that. Check that the
 boundary you generate on is one the product agrees is one-way while children
 exist.
+
+## When the shared parent is more than one level up
+
+The pattern above assumes both sides are direct children of the parent they
+share. `ticket_sprint` is that case: `ticket` and `sprint` both carry
+`project_id`, so one denormalised `project_id` and two composite foreign keys
+close the hole.
+
+`ticket_label` is not. A `label` belongs to a `team`; a `ticket` belongs to a
+`project`, which belongs to a `team`. The shared parent is two levels above one
+side and one level above the other, and `ticket` carries no `team_id`. So the
+chain has to be walked a hop at a time, each hop pinning the next:
+
+    (ticket_id, project_id) -> ticket  (id, project_id)
+    (project_id, team_id)   -> project (id, team_id)
+    (label_id,   team_id)   -> label   (id, team_id)
+
+Read bottom to top: the label's team is this row's `team_id`, the project's
+team is the same value, and the ticket's project is the same `project_id`. Two
+denormalised columns and three references rather than one and two.
+
+The alternative is to denormalise the distant parent's key onto the
+intermediate table — put `team_id` on `ticket` and the chain collapses back to
+two hops. `0024` rejected that and `0025` chose it, which is not a
+contradiction; the question is who pays:
+
+* **Put the column on the join table** when the parent is an existing table
+  with many writers, or when no read at that level wants the column. Adding
+  `team_id` to `ticket` would have meant a column LAM-18 deliberately left out,
+  that every future ticket writer has to keep in step with its project, for an
+  invariant only the join table needs.
+* **Put it on the chain** when the tables are new anyway, and the distant
+  parent is genuinely part of what the intermediate thing *is*. `board` carries
+  `team_id` down to `board_column` and `board_column_status`, because a board's
+  columns are built out of team statuses — the team is not incidental to a
+  board, and three hops from the leaf would have meant three denormalised
+  columns on one mapping table.
+
+Either way the cost lands on tables that need the invariant, never on a table
+that merely sits between them.
+
+### A composite foreign key nulls every column it references
+
+This one is a trap with no warning attached, and it bites the moment a
+composite reference has a `NOT NULL` column in it.
+
+`ON DELETE SET NULL` on a composite foreign key nulls **all** the referencing
+columns, not just the one that names the vanishing parent:
+
+    ALTER TABLE ticket ADD CONSTRAINT ticket_epic_fkey
+        FOREIGN KEY (epic_id, project_id) REFERENCES epic (id, project_id)
+        ON DELETE SET NULL;          -- nulls project_id too
+
+`ticket.project_id` is `NOT NULL`, so deleting an epic raises 23502 and the
+whole delete is refused. The symptom is not a bad row — it is that epics with
+tickets in them become permanently undeletable, which reads as a mysterious
+constraint error rather than as a design mistake.
+
+Postgres 15 added a column list for exactly this:
+
+    ON DELETE SET NULL (epic_id)
+
+Both the development database and CI run 17, so it is available. Name the
+column whenever the reference is composite and any other column in it is
+`NOT NULL` — which in this schema is most of them, since the denormalised
+parent key is always `NOT NULL`. `0022_epic.sql` and `0027_saved_view.sql` both
+depend on it.
+
+### A CHECK can take an ON DELETE action away from you
+
+Worth knowing before choosing a delete action for a nullable reference: a
+constraint elsewhere on the row can make `SET NULL` impossible.
+
+`saved_view` has a biconditional tying its board to its layout:
+
+    CHECK ((layout = 'board') = (board_id IS NOT NULL))
+
+That makes `board_id` required exactly when `layout` is `'board'`. Nulling it
+therefore leaves a row no `CHECK` can satisfy, so Postgres refuses the delete
+and the board becomes undeletable — the same end state as the trap above,
+reached from a completely different direction.
+
+`CASCADE` is then the only coherent action, and in that case it was also the
+honest one: a board view whose board is gone is not a view of anything. But the
+general rule is worth stating, because the obvious instinct for a nullable
+reference is `SET NULL`:
+
+**If a `CHECK` makes a column conditionally required, `SET NULL` on it is not
+available.** Either cascade, or drop the constraint that makes the column
+meaningful — and dropping it usually means every reader needs a fallback for a
+row that should not exist, which is the null-half-the-columns shape this schema
+declines everywhere else.
+
+Assert it either way. `TestSavedViewConstraints` deletes a board and the
+mutation that swaps `CASCADE` back to `SET NULL (board_id)` fails exactly that
+test, which is what keeps the reasoning from being lost.
