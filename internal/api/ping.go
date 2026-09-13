@@ -57,7 +57,7 @@ func registerPing(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "ping",
 		Method:      http.MethodGet,
-		Path:        "/api/v1/ping",
+		Path:        V1 + "/ping",
 		Summary:     "Ping the API",
 	}, func(ctx context.Context, _ *struct{}) (*PingOutput, error) {
 		return &PingOutput{Body: PingBody{Message: "pong", Time: time.Now().UTC()}}, nil
