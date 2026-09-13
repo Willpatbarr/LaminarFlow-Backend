@@ -32,7 +32,29 @@ func NewHumaAPI(mux *http.ServeMux) huma.API {
 	// is the one place that sets it - see useErrorEnvelope.
 	useErrorEnvelope()
 
-	api := humago.New(mux, huma.DefaultConfig("LaminarFlow", "0.1.0"))
+	cfg := huma.DefaultConfig("LaminarFlow", SpecVersion)
+
+	// DefaultConfig puts these at the root - /docs, /openapi, /schemas - which
+	// left them outside /api/ entirely and unversioned by accident rather than
+	// by decision (LAM-54).
+	//
+	// They move under V1 for two reasons. The document describes one contract:
+	// SpecVersion's major tracks V1, and v1 and v2 are meant to run side by
+	// side, so a single root document could not be 1.x and 2.x at once. And
+	// inside /api/ a mistyped docs URL reaches notFound and gets the JSON
+	// envelope, rather than falling through to the frontend catch-all and
+	// returning the app shell with status 200.
+	//
+	// Setting these three is the only thing that works. huma does have a
+	// prefix mechanism, driven by the first server URL, but getAPIPrefix is
+	// consulted by the docs route and the $schema builder only - never by
+	// huma.Register - and setting Servers moved neither in v2.39.1. Verified
+	// rather than assumed, because the config field reads as though it would.
+	cfg.DocsPath = V1 + "/docs"
+	cfg.OpenAPIPath = V1 + "/openapi"
+	cfg.SchemasPath = V1 + "/schemas"
+
+	api := humago.New(mux, cfg)
 
 	registerPing(api)
 
