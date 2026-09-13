@@ -1,0 +1,11 @@
+{
+  "id": "66666666-6666-4666-8666-666666666666",
+  "project_id": "33333333-3333-4333-8333-333333333333",
+  "status_id": "55555555-5555-4555-8555-555555555555",
+  "assignee_account_id": "44444444-4444-4444-8444-444444444444",
+  "epic_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "title": "Board columns should map to multiple statuses",
+  "description": "A single column may cover several statuses. Model it through board_column_status rather than a status_id column on board_column.",
+  "created_at": "2026-09-04T11:00:00+00:00",
+  "updated_at": "2026-09-12T15:44:00+00:00"
+}
