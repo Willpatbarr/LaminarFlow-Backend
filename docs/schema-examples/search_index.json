@@ -1,0 +1,14 @@
+{
+  "id": "15151515-1515-4151-8151-151515151515",
+  "document_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "field_id": "99999999-9999-4999-8999-999999999999",
+  "ticket_id": null,
+  "comment_id": null,
+  "workspace_id": "11111111-1111-4111-8111-111111111111",
+  "project_id": "33333333-3333-4333-8333-333333333333",
+  "team_id": null,
+  "content": "Columns currently assume one status each, which breaks the In Review / QA split.",
+  "title_or_preview": "Board column mapping review",
+  "parent_reference": "LaminarFlow Core / Board column mapping review",
+  "search": "'assum':3 'break':7 'column':1 'current':2 'each':6 'one':4 'qa':11 'review':10 'split':12 'status':5 'which':8"
+}

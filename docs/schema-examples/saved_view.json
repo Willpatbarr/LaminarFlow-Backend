@@ -1,0 +1,22 @@
+{
+  "id": "12121212-1212-4121-8121-121212121212",
+  "team_id": "22222222-2222-4222-8222-222222222222",
+  "project_id": "33333333-3333-4333-8333-333333333333",
+  "owner_account_id": "44444444-4444-4444-8444-444444444444",
+  "board_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  "name": "My open work",
+  "layout": "board",
+  "config": {
+    "filters": {
+      "assignee_account_id": ["44444444-4444-4444-8444-444444444444"],
+      "label_id": ["dddddddd-dddd-4ddd-8ddd-dddddddddddd"],
+      "status_category": ["not_started", "in_progress"]
+    },
+    "group_by": "status",
+    "sort": [{ "field": "updated_at", "direction": "desc" }],
+    "visible_fields": ["title", "assignee", "status", "labels", "sprint"]
+  },
+  "is_shared": true,
+  "created_at": "2026-09-08T09:30:00+00:00",
+  "updated_at": "2026-09-12T16:00:00+00:00"
+}

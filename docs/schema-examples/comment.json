@@ -1,0 +1,14 @@
+{
+  "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "ticket_id": null,
+  "document_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "field_id": "99999999-9999-4999-8999-999999999999",
+  "region_start": 0,
+  "region_end": 42,
+  "author_id": "44444444-4444-4444-8444-444444444444",
+  "body": "Call out that the join table is what makes the many-to-many legal.",
+  "review_status": "changes_requested",
+  "is_review_request": true,
+  "created_at": "2026-09-10T13:40:00+00:00",
+  "updated_at": "2026-09-11T08:12:00+00:00"
+}
