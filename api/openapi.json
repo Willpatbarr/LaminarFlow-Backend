@@ -1,33 +1,23 @@
 {
   "components": {
     "schemas": {
-      "ErrorDetail": {
-        "additionalProperties": false,
-        "properties": {
-          "location": {
-            "description": "Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'",
-            "type": "string"
-          },
-          "message": {
-            "description": "Error message text",
-            "type": "string"
-          },
-          "value": {
-            "description": "The value at the given location"
-          }
-        },
-        "type": "object"
-      },
-      "ErrorModel": {
+      "Error": {
         "additionalProperties": false,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
             "examples": [
-              "https://example.com/schemas/ErrorModel.json"
+              "https://example.com/schemas/Error.json"
             ],
             "format": "uri",
             "readOnly": true,
+            "type": "string"
+          },
+          "code": {
+            "description": "Stable machine-readable identifier for this kind of failure. Never reworded.",
+            "examples": [
+              "ticket_archived"
+            ],
             "type": "string"
           },
           "detail": {
@@ -78,6 +68,26 @@
             ],
             "format": "uri",
             "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      },
+      "ErrorDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "location": {
+            "description": "Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'",
+            "type": "string"
+          },
+          "message": {
+            "description": "Error message text",
+            "type": "string"
+          },
+          "value": {
+            "description": "The value at the given location"
           }
         },
         "type": "object"
@@ -139,7 +149,7 @@
             "content": {
               "application/problem+json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorModel"
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             },

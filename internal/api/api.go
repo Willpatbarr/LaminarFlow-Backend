@@ -22,8 +22,13 @@ func writeJSON(w http.ResponseWriter, status int, body string) {
 // Go's mux routes /api/anything to the frontend catch-all and a typo'd endpoint
 // returns the HTML app shell with status 200 - which a fetch() reports as a
 // JSON parse error, three layers from the cause.
+//
+// It answers in the same envelope huma raises, rather than a literal of its
+// own (LAM-53). A client that has to tell "no such endpoint" from "no such
+// ticket" is the case this used to break: both are 404, and before this the
+// two came back with different field names and different content types.
 func notFound() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusNotFound, `{"error":"not found"}`)
+		writeError(w, NewError(http.StatusNotFound, CodeNotFound, "no endpoint matches this path"))
 	}
 }
