@@ -145,8 +145,12 @@ func TestUnknownAPIRouteReturnsJSONNotTheAppShell(t *testing.T) {
 			if rec.Code != http.StatusNotFound {
 				t.Errorf("status = %d, want 404", rec.Code)
 			}
-			if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
-				t.Errorf("Content-Type = %q, want JSON", got)
+			// problem+json since LAM-53, not application/json. The substring
+			// matters: "application/problem+json" does not contain
+			// "application/json", so the old assertion fails rather than
+			// passing loosely.
+			if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "application/problem+json") {
+				t.Errorf("Content-Type = %q, want problem+json", got)
 			}
 			if strings.Contains(rec.Body.String(), "<div id=root>") {
 				t.Error("an unknown API route returned the app shell")

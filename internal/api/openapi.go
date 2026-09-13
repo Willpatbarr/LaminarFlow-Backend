@@ -28,6 +28,10 @@ import (
 */
 
 func NewHumaAPI(mux *http.ServeMux) huma.API {
+	// Before anything can raise an error. huma.NewError is a global, so this
+	// is the one place that sets it - see useErrorEnvelope.
+	useErrorEnvelope()
+
 	api := humago.New(mux, huma.DefaultConfig("LaminarFlow", "0.1.0"))
 
 	registerPing(api)
