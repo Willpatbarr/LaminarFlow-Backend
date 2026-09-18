@@ -110,6 +110,36 @@ blocked.
 This bit twice while verifying the guard was real. If the boundary test appears not to run,
 read the gate above it before suspecting the test.
 
+## Extended to api_token — LAM-55
+
+The same four mechanisms now guard `api_token` from inside `internal/auth`, and for a
+different reason than drift.
+
+API Design notes §5 chose a direct Postgres lookup for token validation, and that was only
+safe to choose because a cache can be added later *behind a single entry point* — "purely an
+internal change to that one function [requiring] no changes to any endpoint that uses it."
+An endpoint that queries `api_token` itself removes that option permanently, and nothing
+about the endpoint would look wrong while doing it. So the guard here protects a future
+decision rather than a present invariant.
+
+**The walk moved to `internal/sqlguard`.** It was a 60-line AST walk inside
+`internal/document`; a second owner meant either copying it or sharing it. The subtle parts —
+parsing with comments discarded, skipping the owner's own directory, finding the module root
+rather than assuming a depth — are all invisible when they are wrong, which is the argument
+`internal/dbtest` already makes for itself.
+
+**One exemption, and it is narrow.** `internal/migrate` is skipped by every guard. A schema
+constraint test proves a constraint fires by violating it, so naming the table in an `INSERT`
+is the whole technique — there is no way to assert "`api_token` rejects a null account"
+without SQL naming `api_token`. E-LAM-0003 parked those tests there for every table with no
+owning package. Tables that *do* have an owner keep their schema tests with the owner, which
+is why `internal/document` holds `schema_document_test.go` and `schema_search_index_test.go`
+and needs no exemption at all.
+
+That exemption should shrink. `api_token` has an owner now, so
+`internal/migrate/schema_api_token_test.go` belongs in `internal/auth`; moving it requires
+porting `migratedPool` and `wantPgError`, which is its own piece of work.
+
 ## Verification
 
 The guard was confirmed to fail, not just to pass. A throwaway file containing

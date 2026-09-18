@@ -1,78 +1,27 @@
 package document
 
 import (
-	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"io/fs"
-	"path/filepath"
-	"regexp"
-	"strconv"
 	"testing"
-)
 
-// tableSQL matches a SQL statement naming either table this package owns.
-var tableSQL = regexp.MustCompile(
-	`(?i)\b(insert\s+into|update|delete\s+from|from|join)\s+"?(document|search_index)\b`)
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/sqlguard"
+)
 
 // TestNoSQLOutsideThisPackage fails if any package other than this one issues
 // SQL against document or search_index.
 //
 // Go's encapsulation is package-scoped: Service.pool being unexported stops a
 // caller reaching through a Service, but nothing stops a new package calling
-// db.Connect and writing the tables itself. That is the hole this closes.
+// db.Connect and writing the tables itself. That is the hole this closes, and
+// docs/adr/0001-write-path-enforcement.md is why.
 //
-// Only string literals are inspected, and files are parsed with comments
-// discarded, so prose mentioning a table name is never a failure.
+// The walk itself moved to internal/sqlguard under LAM-55, when internal/auth
+// needed the same guard for api_token. It is one mechanism with two callers
+// rather than two copies of an AST walk - the copy being the thing that drifts,
+// since the subtle parts (parse with comments dropped, skip the owner's own
+// directory) are invisible when they are wrong.
+//
+// LAM-45 splits this: search_index moves to internal/search, and this call
+// keeps document alone. That is a one-line edit here rather than a rewrite.
 func TestNoSQLOutsideThisPackage(t *testing.T) {
-	root := filepath.Join("..", "..")
-	fset := token.NewFileSet()
-	var offenders []string
-
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if d.Name() == ".git" || filepath.Base(path) == "document" {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if filepath.Ext(path) != ".go" {
-			return nil
-		}
-
-		// Mode 0 drops comments, so only real string literals are inspected.
-		f, err := parser.ParseFile(fset, path, nil, 0)
-		if err != nil {
-			return fmt.Errorf("parse %s: %w", path, err)
-		}
-
-		ast.Inspect(f, func(n ast.Node) bool {
-			lit, ok := n.(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				return true
-			}
-			s, err := strconv.Unquote(lit.Value)
-			if err != nil {
-				return true
-			}
-			if tableSQL.MatchString(s) {
-				offenders = append(offenders, fset.Position(lit.Pos()).String())
-			}
-			return true
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk: %v", err)
-	}
-
-	for _, o := range offenders {
-		t.Errorf("SQL against document/search_index outside package document: %s\n"+
-			"  route it through document.Service so the blob and the index stay in sync\n"+
-			"  see docs/adr/0001-write-path-enforcement.md", o)
-	}
+	sqlguard.AssertOwned(t, "document", "document", "search_index")
 }
