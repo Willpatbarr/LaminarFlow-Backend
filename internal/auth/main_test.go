@@ -15,21 +15,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// testDatabaseURL names the throwaway database TestMain built for this run.
-// Empty when TEST_DATABASE_URL is unset, in which case the tests skip.
-//
-// Same shape as internal/document/main_test.go. The duplication is the two
-// TestMain functions themselves, which Go requires one of per package; the
-// parts worth sharing - building the database, applying the real migrations -
-// are already in dbtest and migrate.
+// Empty when TEST_DATABASE_URL is unset, in which case the tests skip. Go requires
+// one TestMain per package; the shareable parts already live in dbtest and migrate.
 var testDatabaseURL string
 
 func TestMain(m *testing.M) {
 	os.Exit(run(m))
 }
 
-// run owns the throwaway database's lifecycle, as its own function so teardown
-// can be deferred: TestMain has to call os.Exit, and os.Exit skips defers.
+// Its own function so teardown can be deferred: os.Exit skips defers.
 func run(m *testing.M) int {
 	ctx := context.Background()
 
@@ -73,8 +67,7 @@ func applyMigrations(ctx context.Context, dsn string) error {
 	return nil
 }
 
-// newTestService returns a Service against the throwaway database, plus an
-// account id to hang tokens off.
+// A Service against the throwaway database, plus an account to hang tokens off.
 func newTestService(t *testing.T) (*Service, string) {
 	t.Helper()
 
@@ -90,10 +83,8 @@ func newTestService(t *testing.T) (*Service, string) {
 	}
 	t.Cleanup(pool.Close)
 
-	// A distinct email per call. account has a unique index over lower(email),
-	// and a test that calls this twice would otherwise fail on the second call
-	// for a reason that has nothing to do with what it was testing. The uuid
-	// comes from Postgres rather than the test so nothing here needs a seed.
+	// Distinct per call: account is unique over lower(email), and a second call
+	// would otherwise fail for a reason unrelated to what it was testing.
 	var accountID string
 	err = pool.QueryRow(ctx,
 		`INSERT INTO account (email, password_hash, display_name)

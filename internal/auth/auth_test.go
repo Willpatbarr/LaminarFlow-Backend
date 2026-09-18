@@ -10,20 +10,13 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/sqlguard"
 )
 
-// The rule this package exists to hold. API Design notes section 5 permits the
-// direct Postgres lookup only because a cache can be added behind one entry
-// point later; an endpoint that reads api_token itself removes that option and
-// nothing about the endpoint would look wrong.
-//
-// Go cannot express this - encapsulation is package-scoped, so an unexported
-// pool stops a caller reaching through a Service but not a new package calling
-// db.Connect. See docs/adr/0001-write-path-enforcement.md.
+// An endpoint reading api_token itself removes the caching option section 5 depends
+// on, and would look fine doing it. Go cannot express the rule; this can.
 func TestNoAPITokenSQLOutsideThisPackage(t *testing.T) {
 	sqlguard.AssertOwned(t, "auth", "api_token")
 }
 
-// The round trip. Issue returns the only copy of the secret; Validate accepts
-// it and reports who it belongs to.
+// The round trip: Issue returns the only copy of the secret, Validate accepts it.
 func TestIssuedTokenValidates(t *testing.T) {
 	svc, accountID := newTestService(t)
 	ctx := context.Background()
@@ -49,9 +42,7 @@ func TestIssuedTokenValidates(t *testing.T) {
 	}
 }
 
-// The secret must not be recoverable from the row. 0008's column comment
-// promises the stored value is a hash and never the token, and this is the
-// assertion behind that promise.
+// 0008's column comment promises a hash and never the token. This is that promise.
 func TestTheStoredRowDoesNotContainTheSecret(t *testing.T) {
 	svc, accountID := newTestService(t)
 	ctx := context.Background()
@@ -81,8 +72,7 @@ func TestTheStoredRowDoesNotContainTheSecret(t *testing.T) {
 	}
 }
 
-// Every way a token can fail returns the same error. A caller that can tell
-// these apart can enumerate which prefixes exist, and can learn that an
+// One error for every failure, or a caller can enumerate prefixes and learn that an
 // expired token was once real.
 func TestEveryFailureIsIndistinguishable(t *testing.T) {
 	svc, accountID := newTestService(t)
@@ -126,8 +116,7 @@ func TestEveryFailureIsIndistinguishable(t *testing.T) {
 	}
 }
 
-// A token expiring in the future still works, so the expiry check is not
-// rejecting everything that carries a date.
+// The expiry check must not reject everything that merely carries a date.
 func TestAnUnexpiredExpiryStillValidates(t *testing.T) {
 	svc, accountID := newTestService(t)
 	ctx := context.Background()
@@ -143,8 +132,7 @@ func TestAnUnexpiredExpiryStillValidates(t *testing.T) {
 	}
 }
 
-// A scopeless token is legal and does nothing, which is the direction 0008
-// chose for the default and the direction an auth default should fail in.
+// Scopeless is legal and can do nothing - the direction an auth default should fail.
 func TestAScopelessTokenValidatesAndCarriesNoScopes(t *testing.T) {
 	svc, accountID := newTestService(t)
 	ctx := context.Background()
@@ -163,9 +151,7 @@ func TestAScopelessTokenValidatesAndCarriesNoScopes(t *testing.T) {
 	}
 }
 
-// Two tokens must never share a prefix: the prefix is the lookup key and
-// carries a UNIQUE constraint, so a collision would surface as a 23505 at
-// issue time rather than as a wrong lookup.
+// The prefix is the UNIQUE lookup key, so a collision is a 23505, not a wrong row.
 func TestTwoTokensGetDifferentPrefixes(t *testing.T) {
 	svc, accountID := newTestService(t)
 	ctx := context.Background()
@@ -193,8 +179,7 @@ func TestTwoTokensGetDifferentPrefixes(t *testing.T) {
 	}
 }
 
-// Each token validates to its own row, which is what proves the lookup keys on
-// prefix rather than returning whatever row comes first.
+// Proves the lookup keys on prefix rather than returning whatever row comes first.
 func TestEachTokenValidatesToItsOwnRow(t *testing.T) {
 	svc, accountID := newTestService(t)
 	ctx := context.Background()
@@ -228,10 +213,8 @@ func TestEachTokenValidatesToItsOwnRow(t *testing.T) {
 	}
 }
 
-// Deleting the account deletes its tokens. 0008 calls the CASCADE a security
-// property rather than a convenience - a token outliving its account is an
-// open door - so it is asserted through this package rather than left to the
-// schema tests alone.
+// 0008 calls this CASCADE a security property: a token outliving its account is an
+// open door.
 func TestDeletingTheAccountInvalidatesItsTokens(t *testing.T) {
 	svc, accountID := newTestService(t)
 	ctx := context.Background()
@@ -278,8 +261,7 @@ func TestBearerToken(t *testing.T) {
 	}
 }
 
-// The scheme is part of the format, so it is pinned. Changing it invalidates
-// every token already issued, which is a migration rather than an edit.
+// Changing the scheme invalidates every token already issued: a migration, not an edit.
 func TestIssuedTokensCarryTheScheme(t *testing.T) {
 	svc, accountID := newTestService(t)
 	ctx := context.Background()
@@ -295,13 +277,9 @@ func TestIssuedTokensCarryTheScheme(t *testing.T) {
 	}
 }
 
-// The bug this pins: the first version of randomString used base64url, whose
-// alphabet contains "_" - the separator splitToken parses on. Tokens were
-// issued successfully and then never validated, because Split produced five
-// parts instead of three.
-//
-// Asserted over many samples rather than one, since the old encoding only
-// produced a separator in roughly half of them and a single draw could pass.
+// base64url's alphabet contains "_", the separator splitToken parses on - tokens
+// issued fine and never validated. Many samples: the old encoding only broke half
+// the time.
 func TestTheTokenAlphabetExcludesTheSeparator(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		s, err := randomString(tokenSecretBytes)
@@ -315,9 +293,8 @@ func TestTheTokenAlphabetExcludesTheSeparator(t *testing.T) {
 	}
 }
 
-// The round trip at the format level, independent of the database: whatever
-// Issue composes, splitToken must take apart. Cheap, and it fails in one place
-// rather than as four confusing database-test failures.
+// Whatever Issue composes, splitToken must take apart - failing here rather than as
+// four confusing database-test failures.
 func TestIssueAndSplitTokenAgreeOnTheFormat(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		prefix, err := randomString(tokenPrefixBytes)
