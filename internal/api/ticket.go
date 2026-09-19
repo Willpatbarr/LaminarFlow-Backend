@@ -4,7 +4,7 @@
 ╠═ declares ════════════════════════════════════════════════════════════════════════════
 ║      CodeTicketNotFound    const
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
-║      NewHumaAPI  →  create · get · update · archive · unarchive
+║      NewHumaAPI  →  create · get · list · update · archive · unarchive
 ╚═══════════════════════════════════════════════════════════════════════════════════════
 */
 
@@ -188,6 +188,38 @@ func registerTickets(api huma.API, svc *ticket.Service) {
 		}
 
 		return nil, nil
+	})
+
+	// The list operation is registered through the generic path rather than spelled
+	// out here: the body, the envelope and the error mapping are the same for every
+	// resource, and only the vocabulary and the row mapping are ticket's.
+	registerList(api, listSpec[ticketBody]{
+		OperationID: "list-tickets",
+		Path:        V1 + "/tickets/list",
+		Summary:     "List tickets (a read - see the description for why it is a POST)",
+		Fields:      ticket.Fields,
+		Run: func(ctx context.Context, accountID string, req listRequest) (listPage[ticketBody], error) {
+			p := ticket.ListParams{Sort: req.Sort, Limit: req.Limit, Cursor: req.Cursor}
+			if req.Filter != nil {
+				p.Filter = *req.Filter
+			}
+
+			page, err := svc.List(ctx, accountID, p)
+			if err != nil {
+				return listPage[ticketBody]{}, err
+			}
+
+			items := make([]ticketBody, len(page.Tickets))
+			for i, t := range page.Tickets {
+				items[i] = asBody(t)
+			}
+
+			return listPage[ticketBody]{
+				Items:      items,
+				NextCursor: page.NextCursor,
+				HasMore:    page.HasMore,
+			}, nil
+		},
 	})
 
 	huma.Register(api, huma.Operation{
