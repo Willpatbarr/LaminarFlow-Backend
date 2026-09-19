@@ -133,8 +133,13 @@ func indexAllTickets(ctx context.Context, tx pgx.Tx) (int, error) {
 // described. project_id and team_id are NOT NULL on the way, so every ticket row is
 // fully scoped - unlike a document, whose narrower scopes may be null.
 //
-// The trailing WHERE true lets the single-ticket form append AND without a second
-// copy of the statement, which is what keeps the live path and the rebuild identical.
+// Archived tickets are excluded here, which is the half of 0029 that is easy to miss:
+// archiving sets a column, and without this the ticket keeps answering searches. It
+// is why internal/ticket calls ClearTicket on archive rather than only updating the
+// row.
+//
+// The trailing WHERE lets the single-ticket form append AND without a second copy of
+// the statement, which is what keeps the live path and the rebuild identical.
 const ticketInsert = `
 	INSERT INTO search_index
 	     (ticket_id, content, workspace_id, project_id, team_id, title_or_preview)
@@ -144,7 +149,7 @@ const ticketInsert = `
 	  FROM ticket t
 	  JOIN project p ON p.id = t.project_id
 	  JOIN team tm   ON tm.id = p.team_id
-	 WHERE true`
+	 WHERE t.archived_at IS NULL`
 
 /*
 ┌─ search ────────────────────────────────────────
@@ -235,4 +240,28 @@ func readDocumentBodies(ctx context.Context, tx pgx.Tx) ([]documentBody, error) 
 	}
 
 	return docs, nil
+}
+
+/*
+┌─ search ────────────────────────────────────────
+│  removes one ticket's row, before reindexing or archiving
+├─ in ────────────────────────────────────────────
+│      ctx         context.Context
+│      tx          pgx.Tx
+│      ticketID    string
+├─ out ───────────────────────────────────────────
+│      error
+*/
+
+// ClearTicket is what makes archiving actually remove a ticket from search, and what
+// keeps an edited title from leaving the old one behind - title is denormalised here,
+// so an update that does not reindex leaves search answering with stale text.
+func ClearTicket(ctx context.Context, tx pgx.Tx, ticketID string) error {
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM search_index WHERE ticket_id = $1::uuid`, ticketID,
+	); err != nil {
+		return fmt.Errorf("search: clear ticket %s: %w", ticketID, err)
+	}
+
+	return nil
 }

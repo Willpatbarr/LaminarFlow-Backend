@@ -18,8 +18,10 @@ import (
 // Writes are not grantable to anyone. Drift is a write problem.
 func TestNoSearchIndexSQLOutsideThisPackage(t *testing.T) {
 	sqlguard.Assert(t, sqlguard.Rule{
-		Owner:   "search",
-		Tables:  []string{"search_index"},
-		Readers: []string{"document"},
+		Owner:  "search",
+		Tables: []string{"search_index"},
+		// internal/ticket joins them: archiving a ticket must clear its index row,
+		// and 0029 leans on that, so its tests have to be able to see the row go.
+		Readers: []string{"document", "ticket"},
 	})
 }

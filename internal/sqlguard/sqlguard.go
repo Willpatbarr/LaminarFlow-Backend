@@ -43,6 +43,17 @@ const schemaTestDir = "migrate"
 var writeVerbs = regexp.MustCompile(
 	`(?i)\b(insert\s+into|update|delete\s+from)\s+"?(%TABLES%)\b`)
 
+// A fixture allowance is the third case, and the narrowest. A test in another package
+// often has to create a row of an owned table to hang its own subject off - a comment
+// needs a ticket, an index row needs a ticket. That is setup, not a scoping bypass, and
+// routing it through the owning service would mean every such test first constructing a
+// membership graph to satisfy a predicate it is not testing.
+//
+// It exempts _test.go files in those directories entirely, reads and writes alike -
+// a fixture that inserts a row usually reads it back. Production code in a fixture
+// directory is guarded exactly as it would be anywhere else, which is the line that
+// keeps this from being a back door.
+
 // Reads are allowed to the owner and to any package the rule names a reader.
 //
 // ADR 0001 guards reads as well as writes, because a raw SELECT elsewhere would bypass
@@ -58,17 +69,19 @@ var readVerbs = regexp.MustCompile(
 ┏━ Rule ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃  who may touch a set of tables, and how
 ┣━ attributes ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-┃      Owner      string      directory name, reads and writes
-┃      Tables     []string    at least one
-┃      Readers    []string    may read, never write
+┃      Owner       string      directory name, reads and writes
+┃      Tables      []string    at least one
+┃      Readers     []string    may read, never write
+┃      Fixtures    []string    _test.go there is exempt, production is not
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      each owning package's boundary test
 */
 
 type Rule struct {
-	Owner   string
-	Tables  []string
-	Readers []string
+	Owner    string
+	Tables   []string
+	Readers  []string
+	Fixtures []string
 }
 
 /*
@@ -105,6 +118,11 @@ func Assert(tb testing.TB, r Rule) {
 		readers[d] = true
 	}
 
+	fixtures := map[string]bool{}
+	for _, d := range r.Fixtures {
+		fixtures[d] = true
+	}
+
 	fset := token.NewFileSet()
 	type offence struct{ where, kind string }
 	var offences []offence
@@ -123,9 +141,16 @@ func Assert(tb testing.TB, r Rule) {
 			return nil
 		}
 
+		dir := filepath.Base(filepath.Dir(path))
+
 		// A reader is exempt from the read half only. Its directory is still
 		// walked, so a write from inside it is still caught.
-		isReader := readers[filepath.Base(filepath.Dir(path))]
+		isReader := readers[dir]
+
+		// A fixture allowance covers _test.go files in that directory and nothing
+		// else. Production code there is guarded exactly as before, which is what
+		// keeps this from being a back door.
+		isFixture := fixtures[dir] && strings.HasSuffix(path, "_test.go")
 
 		// Mode 0 drops comments, so prose naming a table is never a failure.
 		f, err := parser.ParseFile(fset, path, nil, 0)
@@ -144,6 +169,8 @@ func Assert(tb testing.TB, r Rule) {
 			}
 
 			switch {
+			case isFixture:
+				// Setup, not a bypass. See Rule.Fixtures.
 			case writes.MatchString(s):
 				offences = append(offences, offence{fset.Position(lit.Pos()).String(), "writes"})
 			case !isReader && reads.MatchString(s):
