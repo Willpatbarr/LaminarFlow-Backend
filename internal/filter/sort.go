@@ -11,8 +11,6 @@
 
 package filter
 
-import "strconv"
-
 /*
 ┏━ Order ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃  one sort key a caller asked for
@@ -61,44 +59,25 @@ type Order struct {
 // from one end of the whole result to the other - and a cursor taken before the flip
 // would resume in a sequence that no longer contains it.
 func (s Schema) CompileOrder(orders []Order, tiebreak string) (string, error) {
-	s.check()
-
 	if tiebreak == "" {
 		panic("filter: CompileOrder needs a tiebreak, or the order is not total")
 	}
 
-	var (
-		faults []Fault
-		clause = "ORDER BY "
-	)
+	// The same resolution the cursor uses, so the ORDER BY and the keyset predicate
+	// cannot disagree about which fields are sortable or what they compile to.
+	fields, err := s.sortFields(orders)
+	if err != nil {
+		return "", err
+	}
 
-	for i, o := range orders {
-		at := "sort[" + strconv.Itoa(i) + "]"
-
-		f, ok := s[o.Field]
-		if !ok {
-			faults = append(faults, Fault{Location: at + ".field", Message: "unknown field", Value: o.Field})
-			continue
-		}
-
-		if f.Kind == UUIDSet {
-			// A ticket has many labels, so "sorted by label" has no single
-			// meaning. Sorting by the array would order by its first element,
-			// which is an answer nobody asked for.
-			faults = append(faults, Fault{Location: at + ".field", Message: "not sortable", Value: o.Field})
-			continue
-		}
-
+	clause := "ORDER BY "
+	for i, f := range fields {
 		direction := " ASC"
-		if o.Desc {
+		if orders[i].Desc {
 			direction = " DESC"
 		}
 
 		clause += f.Expr + direction + " NULLS LAST, "
-	}
-
-	if len(faults) > 0 {
-		return "", &Error{Faults: faults}
 	}
 
 	return clause + tiebreak, nil

@@ -1,6 +1,27 @@
 {
   "components": {
     "schemas": {
+      "Condition": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "description": "A name from this resource's filter vocabulary.",
+            "type": "string"
+          },
+          "op": {
+            "description": "One of eq, neq, gt, gte, lt, lte, contains, in, is_null, is_not_null.",
+            "type": "string"
+          },
+          "value": {
+            "description": "A scalar, or an array for in. Omitted for is_null and is_not_null."
+          }
+        },
+        "required": [
+          "field",
+          "op"
+        ],
+        "type": "object"
+      },
       "CreateTicketInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -138,6 +159,116 @@
         },
         "type": "object"
       },
+      "Group": {
+        "additionalProperties": false,
+        "properties": {
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/Condition"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/Group"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "op": {
+            "description": "and or or. Joins every condition and subgroup in this group.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "op"
+        ],
+        "type": "object"
+      },
+      "ListEnvelopeTicketBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ListEnvelopeTicketBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TicketBody"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_cursor": {
+            "description": "Pass back as cursor for the next page. Null when there is none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "ListRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ListRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "cursor": {
+            "description": "next_cursor from the previous page. Opaque - do not construct or parse it.",
+            "type": "string"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/Group",
+            "description": "Conditions and nested groups. Omitted means every row the caller may see."
+          },
+          "limit": {
+            "description": "Rows per page. Omitted means 50. Over the maximum is rejected, not clamped.",
+            "format": "int64",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "sort": {
+            "description": "Sort keys, most significant first. A unique tiebreak is always appended.",
+            "items": {
+              "$ref": "#/components/schemas/Order"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "LoginInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -216,6 +347,24 @@
         "required": [
           "account_id",
           "via"
+        ],
+        "type": "object"
+      },
+      "Order": {
+        "additionalProperties": false,
+        "properties": {
+          "desc": {
+            "description": "Descending. Nulls sort last either way.",
+            "type": "boolean"
+          },
+          "field": {
+            "description": "A name from this resource's filter vocabulary.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "desc"
         ],
         "type": "object"
       },
@@ -522,6 +671,45 @@
           }
         },
         "summary": "Create a ticket"
+      }
+    },
+    "/api/v1/tickets/list": {
+      "post": {
+        "description": "Reads a page. POST rather than GET because nested and/or filters do not encode cleanly in a query string, and a per-caller ticket list is not cacheable - so a GET would buy nothing and cost expressiveness. Nothing is written.\n\nPagination is keyset: pass the previous page's `next_cursor` back as `cursor`. A cursor is only valid for the filter and sort it was minted under; changing either restarts from the first page.\n\nFilterable and sortable fields:\n\n- `assignee` (uuid)\n- `created_at` (time)\n- `description` (text)\n- `epic` (uuid)\n- `label` (uuid_set)\n- `project` (uuid)\n- `sprint` (uuid_set)\n- `status` (uuid)\n- `title` (text)\n- `updated_at` (time)\n\nPage size defaults to 50 and may not exceed 200.",
+        "operationId": "list-tickets",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListEnvelopeTicketBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List tickets (a read - see the description for why it is a POST)"
       }
     },
     "/api/v1/tickets/{id}": {

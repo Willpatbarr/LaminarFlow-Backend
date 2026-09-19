@@ -12,7 +12,7 @@ Every failure, from every endpoint, in `application/problem+json`:
 {
   "title": "Unprocessable Entity",
   "status": 422,
-  "detail": "filter is invalid",
+  "detail": "the filter, sort or page size was not accepted",
   "code": "filter_invalid",
   "errors": [
     {"message": "unknown field",
@@ -37,6 +37,17 @@ was added on top of RFC 9457, which has no equivalent.
 
 `code` is always present. A field that is sometimes absent sends a caller back to reading
 prose, so it has no `omitempty` and the OpenAPI document marks it required.
+
+## Codes shipped so far
+
+| Code | Status | Raised by |
+| --- | --- | --- |
+| `not_found` | 404 | An unmatched path under `/api/` |
+| `ticket_not_found` | 404 | Any ticket operation: absent, archived, or outside your scope |
+| `filter_invalid` | 422 | A list body whose filter, sort or page size was rejected. `errors[]` names each problem |
+| `cursor_mismatch` | 400 | A list cursor replayed under a different filter or sort. Start again from the first page |
+| `bad_cursor` | 400 | A list cursor that does not decode. Pass back a `next_cursor` unchanged |
+| *derived* | any | Everything huma raises on its own behalf — `defaultCode` turns the status text into a code |
 
 ## Status codes
 
