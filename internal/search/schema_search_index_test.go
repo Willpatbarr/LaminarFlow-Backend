@@ -1,9 +1,44 @@
-package document
+package search_test
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/document"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// Ported with the file when search_index's ownership moved to internal/search under
+// LAM-45. internal/document keeps its own copy for the tables it still owns; two
+// four-line helpers is cheaper than a shared test package that exists only for them.
+const (
+	checkViolation      = "23514"
+	foreignKeyViolation = "23503"
+	notNullViolation    = "23502"
+	uniqueViolation     = "23505"
+)
+
+// wantPgError asserts err is the Postgres error named by code. Asserting on the code
+// rather than the message is what keeps these tests readable when Postgres rewords.
+func wantPgError(t *testing.T, err error, code, what string) {
+	t.Helper()
+
+	if err == nil {
+		t.Errorf("%s was accepted, want it rejected with %s", what, code)
+		return
+	}
+
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Errorf("%s failed with %v, want a Postgres error %s", what, err, code)
+		return
+	}
+	if pgErr.Code != code {
+		t.Errorf("%s failed with %s (%s), want %s", what, pgErr.Code, pgErr.Message, code)
+	}
+}
 
 // The constraints 0019_search_index.sql claims.
 //
@@ -17,14 +52,22 @@ func TestSearchIndexConstraints(t *testing.T) {
 
 	ws := defaultWorkspace(t, pool)
 
+	// Through the owning service rather than a raw INSERT. internal/search reads
+	// document and never writes it, and this file lives here now - so a fixture
+	// insert would be the guard's job to catch, and was.
+	docs := document.NewService(pool)
 	newDoc := func(t *testing.T, title string) string {
 		t.Helper()
 
-		var id string
-		if err := pool.QueryRow(ctx,
-			`INSERT INTO document (workspace_id, title) VALUES ($1::uuid, $2)
-             RETURNING id::text`, ws, title,
-		).Scan(&id); err != nil {
+		// An explicit empty body, not nil: Save marshals nil to JSON null, which
+		// document_body_is_object rejects. The raw INSERT this replaced leaned on
+		// the column default instead.
+		id, err := docs.Save(ctx, document.SaveParams{
+			WorkspaceID: ws,
+			Title:       title,
+			Body:        map[string]any{},
+		})
+		if err != nil {
 			t.Fatalf("create document: %v", err)
 		}
 
@@ -265,18 +308,17 @@ func TestSearchIndexConstraints(t *testing.T) {
 	})
 }
 
-// The service write path against the new shape. indexBody now denormalises
-// scope and title from the document, and getting that wrong would not fail
-// any constraint - it would quietly produce search rows scoped to the wrong
-// workspace.
+// The service write path against the new shape. IndexDocument denormalises scope and
+// title from the document, and getting that wrong would fail no constraint - it would
+// quietly produce search rows scoped to the wrong workspace.
 func TestIndexedRowsCarryTheDocumentsScope(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
 	ws := defaultWorkspace(t, pool)
-	svc := NewService(pool)
+	svc := document.NewService(pool)
 
-	id, err := svc.Save(ctx, SaveParams{
+	id, err := svc.Save(ctx, document.SaveParams{
 		WorkspaceID: ws,
 		Title:       "Scoped Document",
 		Body:        map[string]any{"f_note": "indexed text"},

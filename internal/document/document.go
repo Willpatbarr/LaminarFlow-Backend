@@ -1,3 +1,13 @@
+// Package document owns a document's body blob. Service.Save is the only code path
+// permitted to write one.
+//
+// It no longer owns search_index. That moved to internal/search under LAM-45, when
+// tickets and comments became sources too and the index stopped being any one table's
+// derived data. Save still keeps the blob and its rows in step, in one transaction -
+// the ownership moved, the invariant did not.
+//
+// boundary_test.go enforces the rule against the rest of the module;
+// docs/adr/0001-write-path-enforcement.md says why.
 package document
 
 import (
@@ -6,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/search"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -13,8 +25,8 @@ import (
 // ErrNotFound is returned when Save targets a document ID that does not exist.
 var ErrNotFound = errors.New("document not found")
 
-// Service is the only type permitted to write document bodies or search_index
-// rows. Handlers depend on this; they never reach for the pool themselves.
+// Service is the only type permitted to write document bodies. Handlers depend on
+// this; they never reach for the pool themselves.
 type Service struct {
 	pool *pgxpool.Pool
 }
@@ -87,7 +99,8 @@ func (p SaveParams) aspectType() *string {
 // This is the single write path required by LAM-3: the blob and the index move
 // together or not at all. LAM-23 widened it from the body alone to the whole
 // row, so that "the service owns document writes" stays true of the columns
-// added around the blob rather than only of the blob.
+// added around the blob rather than only of the blob. LAM-45 moved the index
+// half to internal/search without loosening either property.
 //
 // Scope columns (project_id, team_id) are deliberately absent. Nothing sets
 // them yet, and adding them here would mean choosing how a caller expresses
@@ -140,17 +153,14 @@ func (s *Service) Save(ctx context.Context, p SaveParams) (string, error) {
 		return "", fmt.Errorf("write body: %w", err)
 	}
 
-	// Delete-then-insert rather than upsert: a field removed from the body must
-	// lose its index row. An upsert alone leaves that row behind forever, and
-	// the rebuild would then legitimately disagree with the live index - a
-	// drift bug that presents as a rebuild bug.
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM search_index WHERE document_id = $1::uuid`, id,
-	); err != nil {
-		return "", fmt.Errorf("clear index: %w", err)
+	// Both index calls take this transaction, so the blob and its rows still move
+	// together or not at all. That invariant is the point of Save and survived the
+	// move to internal/search unchanged.
+	if err := search.ClearDocument(ctx, tx, id); err != nil {
+		return "", err
 	}
 
-	if err := indexBody(ctx, tx, id, normalized); err != nil {
+	if err := search.IndexDocument(ctx, tx, id, normalized); err != nil {
 		return "", err
 	}
 
@@ -159,95 +169,4 @@ func (s *Service) Save(ctx context.Context, p SaveParams) (string, error) {
 	}
 
 	return id, nil
-}
-
-func indexBody(
-	ctx context.Context,
-	tx pgx.Tx,
-	docID string,
-	body map[string]any,
-) error {
-	for fieldID, value := range body {
-		// Scope and title are denormalised from the document rather than
-		// passed in, so the index cannot disagree with the row it describes.
-		// LAM-26 made workspace_id NOT NULL, so a missing document here is a
-		// failed insert rather than a silently unscoped search row.
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO search_index
-			     (document_id, field_id, content,
-			      workspace_id, project_id, team_id, title_or_preview)
-			 SELECT $1::uuid, $2, $3,
-			        d.workspace_id, d.project_id, d.team_id, d.title
-			   FROM document d
-			  WHERE d.id = $1::uuid`,
-			docID, fieldID, fieldText(value),
-		); err != nil {
-			return fmt.Errorf("index field %q: %w", fieldID, err)
-		}
-	}
-	return nil
-}
-
-// indexedDoc is one document's ID paired with its decoded body.
-type indexedDoc struct {
-	id   string
-	body map[string]any
-}
-
-// RebuildIndex discards every search_index row and regenerates the entire table
-// from the document body blobs. Because the blobs are the source of truth this
-// is always safe to run: if it ever produces a different index than the live
-// one, the live one was wrong. Returns the number of documents reindexed.
-//
-// Unlike Save, this takes no workspace ID and is deliberately instance-wide: it
-// rebuilds every workspace's rows in one pass. That is the correct scope for an
-// operator repairing a derived table, but it means this is an admin operation,
-// not something to expose to a caller acting within one workspace. A
-// per-workspace variant is deferred until an instance actually has more than
-// one workspace to rebuild.
-func (s *Service) RebuildIndex(ctx context.Context) (int, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("begin: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx, `DELETE FROM search_index`); err != nil {
-		return 0, fmt.Errorf("clear index: %w", err)
-	}
-
-	rows, err := tx.Query(ctx, `SELECT id::text, body::text FROM document`)
-	if err != nil {
-		return 0, fmt.Errorf("read documents: %w", err)
-	}
-
-	// Every document is read into memory before any insert runs. A pgx
-	// connection can only have one query in flight, so writing inside the
-	// rows.Next() loop would fail on the same transaction.
-	docs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (indexedDoc, error) {
-		var d indexedDoc
-		var raw string
-		if err := row.Scan(&d.id, &raw); err != nil {
-			return indexedDoc{}, err
-		}
-		if err := json.Unmarshal([]byte(raw), &d.body); err != nil {
-			return indexedDoc{}, fmt.Errorf("decode body %s: %w", d.id, err)
-		}
-		return d, nil
-	})
-	if err != nil {
-		return 0, fmt.Errorf("read documents: %w", err)
-	}
-
-	for _, d := range docs {
-		if err := indexBody(ctx, tx, d.id, d.body); err != nil {
-			return 0, fmt.Errorf("index %s: %w", d.id, err)
-		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
-	}
-
-	return len(docs), nil
 }

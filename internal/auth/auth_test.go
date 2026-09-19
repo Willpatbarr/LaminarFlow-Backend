@@ -13,7 +13,10 @@ import (
 // An endpoint reading api_token itself removes the caching option section 5 depends
 // on, and would look fine doing it. Go cannot express the rule; this can.
 func TestNoAPITokenSQLOutsideThisPackage(t *testing.T) {
-	sqlguard.AssertOwned(t, "auth", "api_token", "session")
+	sqlguard.Assert(t, sqlguard.Rule{
+		Owner:  "auth",
+		Tables: []string{"api_token", "session"},
+	})
 }
 
 // The round trip: Issue returns the only copy of the secret, Validate accepts it.

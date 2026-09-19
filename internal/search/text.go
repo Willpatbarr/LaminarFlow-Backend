@@ -1,10 +1,8 @@
-// Package document owns a document's body blob and its derived search index.
-// Service.Save is the only code path permitted to write a document body, and
-// indexBody the only one permitted to write search_index. RebuildIndex is the
-// one sanctioned exception - it writes the index without a blob because it is
-// a pure function of the blobs. boundary_test.go enforces the rule against the
-// rest of the module; docs/adr/0001-write-path-enforcement.md says why.
-package document
+// fieldText lives here rather than in internal/document because internal/search is
+// now the only thing that extracts text. The ticket's standing rule is that this stays
+// the single implementation: two would drift the moment one learned about a field type
+// the other did not.
+package search
 
 import (
 	"slices"
