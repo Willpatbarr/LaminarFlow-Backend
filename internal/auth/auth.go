@@ -62,8 +62,9 @@ type Scope string
 ┃  who a valid token belongs to and what it may do
 ┣━ attributes ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      AccountID    string
-┃      TokenID      string
-┃      Scopes       []Scope          nil when the token has none
+┃      TokenID      string           empty for a session
+┃      SessionID    string           empty for a token
+┃      Scopes       []Scope          nil for a session
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      Validate                      one per request
 */
@@ -71,6 +72,7 @@ type Scope string
 type Identity struct {
 	AccountID string
 	TokenID   string
+	SessionID string
 	Scopes    []Scope
 }
 

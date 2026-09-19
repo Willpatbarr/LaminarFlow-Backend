@@ -12,6 +12,8 @@ package api
 import (
 	"net/http"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 )
@@ -27,7 +29,7 @@ import (
 │      empty mux  →  /api/v1/ping, /docs
 */
 
-func NewHumaAPI(mux *http.ServeMux) huma.API {
+func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service) huma.API {
 	// Before anything can raise an error. huma.NewError is a global, so this
 	// is the one place that sets it - see useErrorEnvelope.
 	useErrorEnvelope()
@@ -55,6 +57,14 @@ func NewHumaAPI(mux *http.ServeMux) huma.API {
 	cfg.SchemasPath = V1 + "/schemas"
 
 	api := humago.New(mux, cfg)
+
+	// authSvc is nil only from cmd/openapi, which registers operations to emit
+	// the document and never serves a request, so no handler runs. Anything
+	// that does serve requests comes through NewMux, which always has a pool.
+	if authSvc != nil {
+		api.UseMiddleware(authenticate(api, authSvc))
+	}
+	registerAuth(api, authSvc)
 
 	registerPing(api)
 
