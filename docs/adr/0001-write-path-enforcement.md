@@ -140,6 +140,44 @@ That exemption should shrink. `api_token` has an owner now, so
 `internal/migrate/schema_api_token_test.go` belongs in `internal/auth`; moving it requires
 porting `migratedPool` and `wantPgError`, which is its own piece of work.
 
+## search_index moved out — LAM-45
+
+`internal/document` no longer owns `search_index`. That ownership was right while the index
+was one document's derived data; LAM-45 added tickets and comments as sources, and an index
+derived from three tables is nobody's derived data in particular. It is `internal/search`'s
+now, and `Save` calls into it inside its own transaction — so the blob and its rows still
+move together or not at all. The ownership moved; the invariant did not.
+
+### The guard gained a read/write split, and that is the interesting part
+
+Guarding reads as well as writes was correct for `document`: a raw `SELECT` elsewhere would
+bypass the workspace scoping `Save` enforces, and one rule covering both is simpler to state.
+That reasoning does not survive contact with an index package. `internal/search` exists to
+denormalise `workspace_id`, `project_id`, `team_id` and a title off `document`, `ticket` and
+`comment` onto the row describing each one. Reading those tables *is* the work.
+
+So `sqlguard.Rule` now separates the two:
+
+* **Writes** — `insert into`, `update`, `delete from` — are owner-only and **not grantable**.
+  Drift is a write problem, and this half has no exceptions.
+* **Reads** — `from`, `join` — may be granted to named packages, with the reason recorded at
+  the call site.
+
+Two grants exist. `internal/search` reads `document` because scope denormalisation requires
+it. `internal/document` reads `search_index` because its tests must observe the rows `Save`
+caused — `aspect_seam_test.go` proves a field uuid survives from body key to index row
+unchanged, which cannot be asserted without reading the index.
+
+The split makes the guard stricter where it matters: before, granting any access meant
+granting both.
+
+### Schema tests follow ownership
+
+`schema_search_index_test.go` moved to `internal/search` with the table, matching the rule
+`internal/document` already followed for its own. Its fixture now creates documents through
+`document.Service.Save` rather than a raw `INSERT` — which the guard caught, correctly, the
+moment the file changed packages.
+
 ## Verification
 
 The guard was confirmed to fail, not just to pass. A throwaway file containing
