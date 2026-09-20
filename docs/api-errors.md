@@ -43,6 +43,7 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | Code | Status | Raised by |
 | --- | --- | --- |
 | `not_found` | 404 | An unmatched path under `/api/` |
+| `invalid_login` | 401 | Wrong email or wrong password — one answer for both. A *missing* credential is the derived `unauthorized` instead, and the pair is what lets a caller tell "log in" from "you got that wrong" |
 | `ticket_not_found` | 404 | Any ticket operation: absent, archived, or outside your scope |
 | `filter_invalid` | 422 | A list body whose filter, sort or page size was rejected. `errors[]` names each problem |
 | `cursor_mismatch` | 400 | A list cursor replayed under a different filter or sort. Start again from the first page |
