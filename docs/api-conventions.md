@@ -100,8 +100,25 @@ passed is a guard nobody has tested.
 fourth**. If one is needed, the guard is the wrong shape and should become something
 else.
 
-A table gets a rule when it has one writer whose invariants matter. `team`, `project`
-and `account`'s neighbours are read by nearly every service's scoping predicate, so
-`team` and `project` have no rule: it would name every package as a reader and assert
-nothing. `account` does have one, because the thing it protects is specific — a second
-`DELETE FROM account` would reopen LAM-51's gap with nothing erroring.
+A table gets a rule when it has one writer whose invariants matter, and the rule is
+worth having even when almost everything reads the table.
+
+`team`, `project` and `account` are all joined by nearly every service's scoping
+predicate. Writing each of those readers out would produce a list that permits
+everything and asserts nothing, which is why `team` and `project` originally shipped
+with no rule at all. `sqlguard.AnyReader` says *reads unguarded, writes are not* using
+the `Readers` field that already exists — so the guard still has three concepts, and
+the rule still asserts the thing that matters:
+
+| Table | What a second writer would break |
+| --- | --- |
+| `team` | Seeding. A team with no statuses, no aspect types, no saved view — and no error |
+| `project` | The board a project renders with |
+| `account` | LAM-51's repair. An orphaned private view, owned by and visible to nobody |
+
+`AnyReader` beside a named reader is refused: the named entry would be decoration, and
+the next person adding a reader to that list would change nothing.
+
+Use it only where a full list would name most of the module. Where the reader set is
+small, write it out — "internal/search may read `ticket`" carries a reason, and a
+wildcard does not.

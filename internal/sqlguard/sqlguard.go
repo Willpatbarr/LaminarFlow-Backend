@@ -65,21 +65,41 @@ var writeVerbs = regexp.MustCompile(
 var readVerbs = regexp.MustCompile(
 	`(?i)\b(from|join)\s+"?(%TABLES%)\b`)
 
+// AnyReader is a Readers entry meaning "reads are not guarded on this table; writes
+// are". It is a value of the existing concept, not a fourth one - Rule gains no field,
+// and a rule using it is still read as owner, readers, fixtures.
+//
+// It exists because some tables are read by nearly everything and written by one thing.
+// team and project are joined by the scoping predicate of every service here, so naming
+// each of them a reader would produce a list that permits everything and asserts
+// nothing - which is why LAM-43 shipped with no rule on either at all. The invariant
+// worth protecting there was never about reads: bootstrap is non-optional only because
+// team.Create is the sole path that creates a team, and an INSERT written elsewhere
+// produces a team with no statuses and no error.
+//
+// Use it only where a full Readers list would name most of the module. Where the set of
+// readers is small and meaningful, write it out - "internal/search may read ticket"
+// carries a reason, and this does not.
+const AnyReader = "*"
+
 /*
 ┏━ Rule ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃  who may touch a set of tables, and how
 ┣━ attributes ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      Owner       string      directory name, reads and writes
 ┃      Tables      []string    at least one
-┃      Readers     []string    may read, never write
+┃      Readers     []string    may read, never write · AnyReader
 ┃      Fixtures    []string    _test.go there is exempt, production is not
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      each owning package's boundary test
 */
 
 type Rule struct {
-	Owner    string
-	Tables   []string
+	Owner  string
+	Tables []string
+	// Readers may read and never write. AnyReader here means every directory may
+	// read, which is how a table that everything joins still gets its writes
+	// guarded.
 	Readers  []string
 	Fixtures []string
 }
@@ -102,6 +122,19 @@ func Assert(tb testing.TB, r Rule) {
 	}
 	if r.Owner == "" {
 		tb.Fatal("sqlguard.Assert called with no owner")
+	}
+	// AnyReader beside a named reader is a rule that reads as "search may read"
+	// while actually meaning "anything may read" - the named entry becomes
+	// decoration, and the next person to add a reader to it changes nothing. It is
+	// one or the other.
+	if len(r.Readers) > 1 {
+		for _, d := range r.Readers {
+			if d == AnyReader {
+				tb.Fatalf("sqlguard.Assert: %s lists AnyReader beside %d named reader(s); "+
+					"AnyReader already covers them, so the list is misleading",
+					r.Owner, len(r.Readers)-1)
+			}
+		}
 	}
 
 	root, err := moduleRoot()
@@ -145,7 +178,7 @@ func Assert(tb testing.TB, r Rule) {
 
 		// A reader is exempt from the read half only. Its directory is still
 		// walked, so a write from inside it is still caught.
-		isReader := readers[dir]
+		isReader := readers[dir] || readers[AnyReader]
 
 		// A fixture allowance covers _test.go files in that directory and nothing
 		// else. Production code there is guarded exactly as before, which is what
