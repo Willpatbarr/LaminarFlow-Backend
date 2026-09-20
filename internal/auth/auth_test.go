@@ -16,6 +16,13 @@ func TestNoAPITokenSQLOutsideThisPackage(t *testing.T) {
 	sqlguard.Assert(t, sqlguard.Rule{
 		Owner:  "auth",
 		Tables: []string{"api_token", "session"},
+		// internal/account's tests mint a session and a token to prove both go
+		// with a deleted account - the CASCADE that makes a dead credential
+		// unusable. Issuing them through this package's service would mean
+		// standing up an auth.Service to assert something about account
+		// deletion, and the assertion is that the rows are gone rather than
+		// that they were well formed. Production code there is still guarded.
+		Fixtures: []string{"account"},
 	})
 }
 

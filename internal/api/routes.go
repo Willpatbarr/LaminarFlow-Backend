@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/account"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/frontend"
@@ -24,7 +25,7 @@ func NewMux(pool *pgxpool.Pool, bundle fs.FS) *http.ServeMux {
 	mux.HandleFunc("GET /healthz", live())
 	mux.HandleFunc("GET /healthz/db", ready(pool))
 	NewHumaAPI(mux, auth.NewService(pool), ticket.NewService(pool), aspect.NewService(pool), setting.NewService(pool),
-		team.NewService(pool), project.NewService(pool))
+		team.NewService(pool), project.NewService(pool), account.NewService(pool))
 	mux.HandleFunc("/api/", notFound())
 
 	// Everything else is the frontend: real files where they exist, the app

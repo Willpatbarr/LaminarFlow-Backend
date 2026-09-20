@@ -91,15 +91,24 @@
 -- owner_account_id SET NULL, not CASCADE - a shared team view must survive
 -- its author leaving, the same call comment.author_id made under LAM-24.
 --
--- That leaves one honest rough edge, named rather than fixed. A PRIVATE view
+-- That leaves one rough edge the database cannot fix itself. A PRIVATE view
 -- whose owner is deleted becomes a row with is_shared = false and no owner:
--- visible to nobody and owned by nobody. The database cannot fix this itself,
--- because the repair is "flip is_shared" and a foreign key action cannot set
--- a second column. A CHECK (is_shared OR owner_account_id IS NOT NULL) would
--- only convert the leak into an undeletable account. So whatever handles
--- account deletion has to reassign or delete private views first; it is
--- asserted here as a known state so the next person meets it in a test rather
--- than in production.
+-- visible to nobody and owned by nobody. The repair is "flip is_shared", and a
+-- foreign key action cannot set a second column. A CHECK (is_shared OR
+-- owner_account_id IS NOT NULL) would only convert the leak into an
+-- undeletable account.
+--
+-- CLOSED BY LAM-51, in internal/account rather than here. Delete sweeps a
+-- private view out before it deletes the account, in one transaction - and in
+-- that order, because afterwards owner_account_id is null and nothing in the
+-- database still says which rows were that account's. The policy is deletion
+-- rather than promotion: a private view is one nobody else could ever see, so
+-- publishing it to the team would share work its author never chose to.
+--
+-- The schema still behaves exactly as described above, which is why the test
+-- below still asserts it. What changed is that nothing in the product reaches
+-- that state, because internal/account owns the only path that could - enforced
+-- by sqlguard, not by convention.
 --
 --
 -- is_shared boolean rather than a visibility closed set. LAM-50 decision 3

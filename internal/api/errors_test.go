@@ -23,7 +23,7 @@ func envelopeMux(t *testing.T) *http.ServeMux {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	api := NewHumaAPI(mux, nil, nil, nil, nil, nil, nil)
+	api := NewHumaAPI(mux, nil, nil, nil, nil, nil, nil, nil)
 
 	// A failure huma raises on a handler's behalf.
 	huma.Register(api, huma.Operation{

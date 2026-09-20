@@ -17,10 +17,12 @@ func TestNoTicketSQLOutsideThisPackage(t *testing.T) {
 		Owner:   "ticket",
 		Tables:  []string{"ticket"},
 		Readers: []string{"search"},
-		// A comment needs a ticket to hang off; an index row needs one to describe.
-		// Those fixtures are setup, and routing them through Create would make every
-		// such test build a membership graph to satisfy a predicate it is not
-		// testing. Production code in these packages is still guarded.
-		Fixtures: []string{"document", "search"},
+		// A comment needs a ticket to hang off; an index row needs one to describe;
+		// and internal/account needs an assigned ticket to prove that deleting an
+		// account leaves the work and drops only the name. Those fixtures are
+		// setup, and routing them through Create would make every such test build a
+		// membership graph to satisfy a predicate it is not testing. Production
+		// code in these packages is still guarded.
+		Fixtures: []string{"account", "document", "search"},
 	})
 }

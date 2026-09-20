@@ -57,6 +57,7 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `team_not_found` | 404 | The workspace a team was created in, or a team outside your scope |
 | `team_name_taken` | 409 | Team names are unique per workspace. Send it again under another name |
 | `project_not_found` | 404 | The team a project was created in, or a project outside your scope |
+| `account_not_found` | 404 | An account deletion that found nothing. A retried delete is the ordinary way to see it |
 | *derived* | any | Everything huma raises on its own behalf — `defaultCode` turns the status text into a code |
 
 ## Status codes
