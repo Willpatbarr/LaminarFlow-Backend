@@ -17,5 +17,11 @@ func TestNoSQLOutsideThisPackage(t *testing.T) {
 		Owner:   "document",
 		Tables:  []string{"document"},
 		Readers: []string{"search"},
+		// LAM-44 added internal/aspect, whose entire claim is that a field edit
+		// touches no document. Proving that means making a document, editing a
+		// field, and reading the document back - from outside, because this guard
+		// is what stops internal/aspect doing any of it. Its production code is
+		// guarded exactly as before, which is what the test is asserting.
+		Fixtures: []string{"aspect"},
 	})
 }

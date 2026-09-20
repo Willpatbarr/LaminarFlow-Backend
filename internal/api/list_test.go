@@ -15,7 +15,7 @@ import (
 func listOperation(t *testing.T) *huma.Operation {
 	t.Helper()
 
-	api := NewHumaAPI(http.NewServeMux(), nil, nil)
+	api := NewHumaAPI(http.NewServeMux(), nil, nil, nil)
 
 	item := api.OpenAPI().Paths[V1+"/tickets/list"]
 	if item == nil || item.Post == nil {
@@ -36,7 +36,7 @@ func TestThePublishedPageSizeBoundMatchesTheEnforcedOne(t *testing.T) {
 	}
 
 	name := strings.TrimPrefix(schema.Ref, "#/components/schemas/")
-	body := NewHumaAPI(http.NewServeMux(), nil, nil).OpenAPI().Components.Schemas.Map()[name]
+	body := NewHumaAPI(http.NewServeMux(), nil, nil, nil).OpenAPI().Components.Schemas.Map()[name]
 	if body == nil {
 		t.Fatalf("no schema named %q", name)
 	}
