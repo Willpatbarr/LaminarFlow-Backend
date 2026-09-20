@@ -14,7 +14,7 @@ import (
 // Eight operations, and one of them being public would be a silent hole. Marked
 // individually rather than wrapped, so this checks the marking rather than trusting it.
 func TestEveryAspectOperationRequiresACaller(t *testing.T) {
-	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil).OpenAPI()
+	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil).OpenAPI()
 
 	found := 0
 	for path, item := range doc.Paths {
@@ -79,7 +79,7 @@ func TestAnUnknownAspectErrorIsNotTurnedIntoAClientError(t *testing.T) {
 // The delete decision has to reach whoever calls the API, not only whoever reads the
 // service.
 func TestTheRemoveFieldOperationSaysWhatItDoesNotDelete(t *testing.T) {
-	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil).OpenAPI()
+	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil).OpenAPI()
 
 	op := doc.Paths[V1+"/aspect-types/{id}/fields/{field_id}"].Delete
 	if op == nil {

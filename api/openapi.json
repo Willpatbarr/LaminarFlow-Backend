@@ -90,6 +90,31 @@
         ],
         "type": "object"
       },
+      "ColumnBody": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "position": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "position",
+          "status_id"
+        ],
+        "type": "object"
+      },
       "Condition": {
         "additionalProperties": false,
         "properties": {
@@ -135,6 +160,70 @@
         "required": [
           "team_id",
           "name"
+        ],
+        "type": "object"
+      },
+      "CreateProjectInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/CreateProjectInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "bare": {
+            "description": "Skip the board. A project with no board is legal and renders empty.",
+            "type": "boolean"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "team_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_id",
+          "name",
+          "bare"
+        ],
+        "type": "object"
+      },
+      "CreateTeamInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/CreateTeamInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "bare": {
+            "description": "Skip seeding. For an importer restoring a team that already has its own statuses and aspect types.",
+            "type": "boolean"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "name",
+          "bare"
         ],
         "type": "object"
       },
@@ -547,6 +636,54 @@
         ],
         "type": "object"
       },
+      "ProjectBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ProjectBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "board_id": {
+            "description": "The board seeded on creation. Null when bare - a project with no board is legal.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "columns": {
+            "description": "One per status the team had. Empty when bare.",
+            "items": {
+              "$ref": "#/components/schemas/ColumnBody"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "team_id",
+          "name",
+          "board_id",
+          "columns"
+        ],
+        "type": "object"
+      },
       "RenameAspectTypeInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -684,6 +821,87 @@
         "required": [
           "key",
           "value"
+        ],
+        "type": "object"
+      },
+      "StatusBody": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "description": "not_started, in_progress or done. Reporting depends on it, and it survives a rename.",
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "position": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "color",
+          "position",
+          "category"
+        ],
+        "type": "object"
+      },
+      "TeamBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/TeamBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "aspect_types": {
+            "description": "Seeded on creation. Starter types, not system types.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "statuses": {
+            "description": "Seeded on creation. Ordinary rows - rename or delete them freely.",
+            "items": {
+              "$ref": "#/components/schemas/StatusBody"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "statuses",
+          "aspect_types"
         ],
         "type": "object"
       },
@@ -1286,6 +1504,84 @@
         "summary": "Ping the API"
       }
     },
+    "/api/v1/projects": {
+      "post": {
+        "description": "Seeds one board with a column per status the team has, each mapped to that status. This is the second bootstrap point: board is project-scoped, so it cannot be seeded when the team is created. A project created from a bare team gets a board with no columns.",
+        "operationId": "create-project",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create a project, with the board it renders with"
+      }
+    },
+    "/api/v1/projects/{id}": {
+      "get": {
+        "operationId": "get-project",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Fetch one project"
+      }
+    },
     "/api/v1/settings": {
       "get": {
         "description": "Registered keys only. A stored row whose key is not registered is skipped rather than returned or raised - one bad row must not break the settings screen for everyone.\n\nRegistered keys:\n\n- `board.column_sources` (team-scoped) — The sources a board may derive its columns from. Not a board - the menu a board is built from.\n- `sprint.length_days` (team-scoped) — How many days a new sprint runs. Written into sprint.end_date once, at creation.",
@@ -1452,6 +1748,84 @@
           }
         },
         "summary": "Write one setting"
+      }
+    },
+    "/api/v1/teams": {
+      "post": {
+        "description": "Seeds three statuses, five starter aspect types and one shared saved view, in the same transaction that creates the team - so a team is never observable half-configured. Everything seeded is an ordinary row: rename it, delete it, replace it. Nothing is privileged, and no default labels are seeded, because a label vocabulary is a team's own.",
+        "operationId": "create-team",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTeamInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create a team, with the rows it needs to be usable"
+      }
+    },
+    "/api/v1/teams/{id}": {
+      "get": {
+        "operationId": "get-team",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Fetch one team with its statuses"
       }
     },
     "/api/v1/tickets": {

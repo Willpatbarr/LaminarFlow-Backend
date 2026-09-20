@@ -95,7 +95,7 @@ func TestAnUnknownSettingErrorIsNotTurnedIntoAClientError(t *testing.T) {
 // The registry is Go constants, so the document is the only way a client can learn what
 // keys exist. Generated from the registry, so it cannot offer one the server refuses.
 func TestTheDocumentPublishesTheRegistry(t *testing.T) {
-	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil).OpenAPI()
+	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil).OpenAPI()
 
 	op := doc.Paths[V1+"/settings/{key}"].Put
 	if op == nil {
@@ -124,7 +124,7 @@ func TestTheRegistryDescriptionIsStable(t *testing.T) {
 }
 
 func TestEverySettingOperationRequiresACaller(t *testing.T) {
-	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil).OpenAPI()
+	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil).OpenAPI()
 
 	found := 0
 	for path, item := range doc.Paths {

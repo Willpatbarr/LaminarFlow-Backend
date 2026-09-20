@@ -54,6 +54,9 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `setting_unknown_key` | 422 | A key that is not in the registry. Previously this stored a row nobody read |
 | `setting_wrong_scope` | 422 | A real key written at the wrong level — team key at workspace scope, or the reverse |
 | `setting_invalid_value` | 422 | A value whose shape is not what the key holds |
+| `team_not_found` | 404 | The workspace a team was created in, or a team outside your scope |
+| `team_name_taken` | 409 | Team names are unique per workspace. Send it again under another name |
+| `project_not_found` | 404 | The team a project was created in, or a project outside your scope |
 | *derived* | any | Everything huma raises on its own behalf — `defaultCode` turns the status text into a code |
 
 ## Status codes

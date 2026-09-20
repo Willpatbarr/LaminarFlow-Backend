@@ -19,8 +19,13 @@ func TestNoAspectSQLOutsideThisPackage(t *testing.T) {
 		Tables: []string{"aspect_type", "aspect_type_field"},
 		// internal/document's tests build an aspect type and a field to hang a
 		// document off, and read them back to prove the id/body-key seam holds.
-		// That is setup and assertion about document, not an editor written
-		// elsewhere. Production code there is guarded exactly as before.
-		Fixtures: []string{"document"},
+		// internal/team's count the types its bootstrap seeded and delete them,
+		// to prove a starter type is an ordinary row - which is LAM-21's claim
+		// and cannot be asserted through a service that has no delete.
+		//
+		// Both are assertions about their own package, not editors written
+		// elsewhere. Production code in either is guarded exactly as before, and
+		// internal/team's own seeding goes through aspect.Bootstrap.
+		Fixtures: []string{"document", "team"},
 	})
 }
