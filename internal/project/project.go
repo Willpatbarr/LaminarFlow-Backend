@@ -114,9 +114,9 @@ type CreateParams struct {
 ┃      NewService                  one per process
 */
 
-// No sqlguard rule, for the reason internal/team gives: project is read by the scoping
-// predicate of every service here, so a guard over it would name every package as a
-// reader and assert nothing.
+// Writes are guarded, reads are not - see boundary_test.go, and internal/team's for the
+// argument. project is joined by every scoping predicate here and written by exactly
+// one function.
 type Service struct {
 	pool *pgxpool.Pool
 }
