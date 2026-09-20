@@ -574,3 +574,50 @@ func sameSet(current []Field, ids []string) bool {
 func expand(query, accountPlaceholder string) string {
 	return strings.ReplaceAll(query, "$ACCOUNT", accountPlaceholder)
 }
+
+/*
+┌─ aspect ────────────────────────────────────────
+│  seeds a brand-new team's starter aspect types
+├─ in ────────────────────────────────────────────
+│      ctx       context.Context
+│      tx        pgx.Tx        the team's creation
+│      teamID    string
+│      names     []string
+├─ out ───────────────────────────────────────────
+│      []Type
+│      error
+├─ example ───────────────────────────────────────
+│      [Class, Service]  →  two rows, no scoping
+*/
+
+// Bootstrap is the one entry point here that does not check the caller, and the
+// signature is what makes that safe rather than a comment asking nicely.
+//
+// It takes a pgx.Tx, which only the package that opened it holds, and it is called from
+// inside the transaction that is creating the team - where the team does not exist yet,
+// so there is no membership to check and no row anyone else could reach. Routing this
+// through CreateType instead would mean the scoping predicate joining workspace_member
+// against a team created moments ago in the same uncommitted transaction, which is a
+// check that proves nothing and can only fail for the wrong reasons.
+//
+// LAM-43's reason for running inside that transaction: a team must never be observable
+// half-configured. If the seeding fails, the team was never created either.
+func Bootstrap(ctx context.Context, tx pgx.Tx, teamID string, names []string) ([]Type, error) {
+	out := make([]Type, 0, len(names))
+
+	for _, name := range names {
+		var t Type
+		err := tx.QueryRow(ctx,
+			`INSERT INTO aspect_type (team_id, name) VALUES ($1::uuid, $2)
+			 RETURNING id::text, team_id::text, name, created_at, updated_at`,
+			teamID, name,
+		).Scan(&t.ID, &t.TeamID, &t.Name, &t.CreatedAt, &t.UpdatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("aspect: bootstrap %q: %w", name, err)
+		}
+
+		out = append(out, t)
+	}
+
+	return out, nil
+}
