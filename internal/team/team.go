@@ -172,14 +172,14 @@ type CreateParams struct {
 ┃      NewService                  one per process
 */
 
-// No sqlguard rule, and that is a decision rather than an omission.
+// Create is the only path that makes a team, and boundary_test.go is what enforces
+// that rather than leaving it to convention. LAM-43 shipped without the rule; LAM-60
+// added it once sqlguard could guard writes without a reader list naming most of the
+// module.
 //
-// team is read by the scoping predicate of every service in this codebase -
-// internal/ticket, internal/aspect and internal/setting all join it to reach
-// workspace_member. A guard over it would need a Readers list naming every package,
-// which is a rule that permits everything and therefore asserts nothing. status,
-// saved_view and the board tables have no second writer yet; the first ticket that
-// gives one of them a CRUD surface is the one that should claim it.
+// status, saved_view and the board tables still have no owner. A second writer to
+// status produces a status rather than a broken team, so the invariant is not the same
+// one - the first ticket that gives any of them a CRUD surface should claim it then.
 type Service struct {
 	pool *pgxpool.Pool
 }
