@@ -14,6 +14,7 @@ import (
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/setting"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -28,13 +29,15 @@ import (
 │      authSvc      *auth.Service      nil only for cmd/openapi
 │      ticketSvc    *ticket.Service    nil only for cmd/openapi
 │      aspectSvc    *aspect.Service    nil only for cmd/openapi
+│      settingSvc   *setting.Service   nil only for cmd/openapi
 ├─ out ───────────────────────────────────────────
 │      huma.API    the same API cmd/openapi emits
 ├─ example ───────────────────────────────────────
 │      empty mux  →  /api/v1/ping, /docs
 */
 
-func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Service, aspectSvc *aspect.Service) huma.API {
+func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Service, aspectSvc *aspect.Service,
+	settingSvc *setting.Service) huma.API {
 	// Before anything can raise an error. huma.NewError is a global, so this
 	// is the one place that sets it - see useErrorEnvelope.
 	useErrorEnvelope()
@@ -72,6 +75,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	registerAuth(api, authSvc)
 	registerTickets(api, ticketSvc)
 	registerAspectTypes(api, aspectSvc)
+	registerSettings(api, settingSvc)
 
 	registerPing(api)
 

@@ -620,6 +620,73 @@
         ],
         "type": "object"
       },
+      "SetSettingInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/SetSettingInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "value": {
+            "description": "The value, whose shape depends on the key."
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "type": "object"
+      },
+      "SettingListOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/SettingListOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "additionalProperties": {},
+            "description": "Registered keys only. A stored row whose key is not registered is skipped.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "SettingOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/SettingOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "value": {}
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "type": "object"
+      },
       "TicketBody": {
         "additionalProperties": false,
         "properties": {
@@ -1217,6 +1284,174 @@
           }
         },
         "summary": "Ping the API"
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "description": "Registered keys only. A stored row whose key is not registered is skipped rather than returned or raised - one bad row must not break the settings screen for everyone.\n\nRegistered keys:\n\n- `board.column_sources` (team-scoped) — The sources a board may derive its columns from. Not a board - the menu a board is built from.\n- `sprint.length_days` (team-scoped) — How many days a new sprint runs. Written into sprint.end_date once, at creation.",
+        "operationId": "list-settings",
+        "parameters": [
+          {
+            "description": "Which level the setting hangs at.",
+            "explode": false,
+            "in": "query",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "description": "Which level the setting hangs at.",
+              "enum": [
+                "workspace",
+                "team"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace's or the team's id, matching scope.",
+            "explode": false,
+            "in": "query",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "description": "The workspace's or the team's id, matching scope.",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingListOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List the settings on one workspace or team"
+      }
+    },
+    "/api/v1/settings/{key}": {
+      "delete": {
+        "description": "Deletes the row. There is no value that means \"the default\" - absence is the default, and writing one would freeze today's default into the row.\n\nRegistered keys:\n\n- `board.column_sources` (team-scoped) — The sources a board may derive its columns from. Not a board - the menu a board is built from.\n- `sprint.length_days` (team-scoped) — How many days a new sprint runs. Written into sprint.end_date once, at creation.",
+        "operationId": "unset-setting",
+        "parameters": [
+          {
+            "description": "A registered key. An unregistered one is a 422 rather than a stored row nobody reads.",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "description": "A registered key. An unregistered one is a 422 rather than a stored row nobody reads.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove one setting, restoring its default"
+      },
+      "get": {
+        "description": "404 with code setting_not_set means nothing is configured - fall back to the default. That is a different answer from an unknown key, which is a 422.\n\nRegistered keys:\n\n- `board.column_sources` (team-scoped) — The sources a board may derive its columns from. Not a board - the menu a board is built from.\n- `sprint.length_days` (team-scoped) — How many days a new sprint runs. Written into sprint.end_date once, at creation.",
+        "operationId": "get-setting",
+        "parameters": [
+          {
+            "description": "A registered key. An unregistered one is a 422 rather than a stored row nobody reads.",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "description": "A registered key. An unregistered one is a 422 rather than a stored row nobody reads.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Read one setting"
+      },
+      "put": {
+        "description": "The key, its scope and the value's shape are all checked before anything is stored. A misspelt key, a key at the wrong level, or a value of the wrong shape is a 422 here - previously each of those stored a row that nothing ever read.\n\nRegistered keys:\n\n- `board.column_sources` (team-scoped) — The sources a board may derive its columns from. Not a board - the menu a board is built from.\n- `sprint.length_days` (team-scoped) — How many days a new sprint runs. Written into sprint.end_date once, at creation.",
+        "operationId": "set-setting",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetSettingInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Write one setting"
       }
     },
     "/api/v1/tickets": {
