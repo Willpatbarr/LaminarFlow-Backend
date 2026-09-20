@@ -29,7 +29,7 @@ import (
 │      go run ./cmd/openapi  →  153 lines of JSON
 */
 func main() {
-	spec, err := api.NewHumaAPI(http.NewServeMux(), nil, nil, nil).OpenAPI().MarshalJSON()
+	spec, err := api.NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil).OpenAPI().MarshalJSON()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "openapi: %v\n", err)
 		os.Exit(1)

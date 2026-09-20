@@ -47,6 +47,13 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `filter_invalid` | 422 | A list body whose filter, sort or page size was rejected. `errors[]` names each problem |
 | `cursor_mismatch` | 400 | A list cursor replayed under a different filter or sort. Start again from the first page |
 | `bad_cursor` | 400 | A list cursor that does not decode. Pass back a `next_cursor` unchanged |
+| `aspect_type_not_found` | 404 | An aspect type or one of its fields: absent, or outside your scope |
+| `field_set_mismatch` | 409 | A field reorder that did not name every field exactly once. Refetch and retry |
+| `setting_target_not_found` | 404 | The workspace or team a setting was addressed to |
+| `setting_not_set` | 404 | A real key with no value stored. Use the default |
+| `setting_unknown_key` | 422 | A key that is not in the registry. Previously this stored a row nobody read |
+| `setting_wrong_scope` | 422 | A real key written at the wrong level — team key at workspace scope, or the reverse |
+| `setting_invalid_value` | 422 | A value whose shape is not what the key holds |
 | *derived* | any | Everything huma raises on its own behalf — `defaultCode` turns the status text into a code |
 
 ## Status codes

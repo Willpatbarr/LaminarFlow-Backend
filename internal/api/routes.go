@@ -7,6 +7,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/frontend"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/setting"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -20,7 +21,7 @@ func NewMux(pool *pgxpool.Pool, bundle fs.FS) *http.ServeMux {
 
 	mux.HandleFunc("GET /healthz", live())
 	mux.HandleFunc("GET /healthz/db", ready(pool))
-	NewHumaAPI(mux, auth.NewService(pool), ticket.NewService(pool), aspect.NewService(pool))
+	NewHumaAPI(mux, auth.NewService(pool), ticket.NewService(pool), aspect.NewService(pool), setting.NewService(pool))
 	mux.HandleFunc("/api/", notFound())
 
 	// Everything else is the frontend: real files where they exist, the app
