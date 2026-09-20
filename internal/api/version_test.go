@@ -20,7 +20,7 @@ import (
 // internal/document's boundary test, for the same reason - a convention that
 // only lives in a comment is a convention until someone is in a hurry.
 func TestEveryRouteCarriesTheVersionPrefix(t *testing.T) {
-	api := NewHumaAPI(http.NewServeMux(), nil, nil)
+	api := NewHumaAPI(http.NewServeMux(), nil, nil, nil)
 
 	paths := api.OpenAPI().Paths
 	if len(paths) == 0 {
@@ -65,7 +65,7 @@ func TestSpecVersionMajorMatchesThePathVersion(t *testing.T) {
 // leaves them where they are, so only the explicit paths in NewHumaAPI do this.
 func TestHumaOwnRoutesAreVersioned(t *testing.T) {
 	mux := http.NewServeMux()
-	NewHumaAPI(mux, nil, nil)
+	NewHumaAPI(mux, nil, nil, nil)
 
 	for _, tc := range []struct {
 		path string
