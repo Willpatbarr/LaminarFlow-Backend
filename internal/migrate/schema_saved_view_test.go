@@ -395,13 +395,22 @@ func TestSavedViewConstraints(t *testing.T) {
 		}
 	})
 
-	// The rough edge the migration names rather than fixes. A private view
-	// whose owner is deleted is visible to nobody and owned by nobody. The
-	// database cannot repair it - the fix is "flip is_shared", and a foreign
-	// key action cannot set a second column. Asserted so it is a known state
-	// that whatever handles account deletion has to deal with, rather than
-	// something discovered in production.
-	t.Run("leaves a private view orphaned when its owner is deleted", func(t *testing.T) {
+	// The schema's own behaviour, which LAM-51 did not change and could not:
+	// a raw DELETE FROM account still leaves a private view owned by nobody and
+	// visible to nobody, because the repair is "flip is_shared" and a foreign
+	// key action cannot set a second column.
+	//
+	// What LAM-51 changed is that nothing in the product does a raw delete.
+	// internal/account.Delete sweeps private views out first, in the same
+	// transaction, and sqlguard fails the build on a DELETE FROM account written
+	// anywhere else - so this state is now unreachable rather than merely known.
+	//
+	// This test is still here, and still asserts the gap, because the gap is
+	// still real one layer down. If it ever starts failing, the schema has
+	// gained a repair of its own and 0027's why block needs updating again.
+	// internal/account's TestDeletingAnAccountTakesItsPrivateViewsWithIt is the
+	// assertion about the behaviour a caller actually gets.
+	t.Run("leaves a private view orphaned when the account row is deleted directly", func(t *testing.T) {
 		team, _ := newTeamProject(t, "orphaned-private")
 		owner := newAccount(t, pool, "sv-orphaned-private@example.com")
 
@@ -424,8 +433,9 @@ func TestSavedViewConstraints(t *testing.T) {
 			t.Fatalf("read the view back: %v", err)
 		}
 		if gotOwner != nil || shared {
-			t.Errorf("owner=%v is_shared=%v; this test pins the known gap - if the schema "+
-				"now repairs orphaned private views, 0027's why block needs updating",
+			t.Errorf("owner=%v is_shared=%v; this pins what the schema alone does - if it "+
+				"now repairs orphaned private views, 0027's why block needs updating and "+
+				"internal/account's sweep may be redundant",
 				gotOwner, shared)
 		}
 	})

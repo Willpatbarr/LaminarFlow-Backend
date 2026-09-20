@@ -151,41 +151,9 @@ func TestSaveRemovesStaleIndexRows(t *testing.T) {
 // The safety net named in LAM-3: an index rebuilt from the blobs must be
 // byte-identical to the index the live write path produced. If these ever
 // disagree, the two code paths have drifted.
-func TestRebuildMatchesLiveIndex(t *testing.T) {
-	ctx := context.Background()
-	pool := testPool(t)
-	svc := NewService(pool)
+// TestRebuildMatchesLiveIndex moved to internal/search under LAM-45: it tests that
+// package's Rebuild, and has to cover tickets and comments as well as documents.
 
-	ws := defaultWorkspace(t, pool)
-
-	for _, body := range []map[string]any{
-		{"f_title": "Quarterly Report", "f_year": 2026, "f_draft": false},
-		{"f_title": "Notes", "f_tags": []any{"alpha", "beta"}},
-		{"f_title": "Nested", "f_meta": map[string]any{"b": "second", "a": "first"}},
-	} {
-		if _, err := svc.Save(ctx, SaveParams{WorkspaceID: ws, Body: body}); err != nil {
-			t.Fatalf("save: %v", err)
-		}
-	}
-
-	live := indexSnapshot(t, pool)
-	// Guard against a vacuous pass: two empty maps are trivially equal.
-	if len(live) == 0 {
-		t.Fatal("live index is empty, nothing to compare")
-	}
-
-	if _, err := svc.RebuildIndex(ctx); err != nil {
-		t.Fatalf("rebuild: %v", err)
-	}
-
-	if rebuilt := indexSnapshot(t, pool); !maps.Equal(live, rebuilt) {
-		t.Errorf("rebuilt index differs from live index:\n live     = %v\n rebuilt  = %v", live, rebuilt)
-	}
-}
-
-// The tenancy boundary LAM-4 introduced. Without the workspace clause in Save's
-// UPDATE, anyone holding a document ID could overwrite it regardless of which
-// workspace owns it - and no other test would notice.
 func TestSaveRejectsCrossWorkspaceUpdate(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)

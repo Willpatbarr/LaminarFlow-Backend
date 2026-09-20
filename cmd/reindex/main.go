@@ -1,4 +1,4 @@
-// Command reindex regenerates search_index from the document body blobs.
+// Command reindex regenerates search_index from documents, tickets and comments.
 package main
 
 import (
@@ -7,7 +7,7 @@ import (
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/config"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/db"
-	"github.com/Willpatbarr/LaminarFlow-Backend/internal/document"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/search"
 )
 
 func main() {
@@ -24,10 +24,13 @@ func main() {
 	}
 	defer pool.Close()
 
-	count, err := document.NewService(pool).RebuildIndex(ctx)
+	counts, err := search.NewService(pool).Rebuild(ctx)
 	if err != nil {
 		log.Fatalf("rebuild: %v", err)
 	}
 
-	log.Printf("reindexed %d documents", count)
+	// Per source, because "reindexed 12" hides a rebuild that silently indexed no
+	// tickets at all - which is exactly the regression LAM-45 is closing.
+	log.Printf("reindexed %d documents, %d tickets, %d comments",
+		counts.Documents, counts.Tickets, counts.Comments)
 }
