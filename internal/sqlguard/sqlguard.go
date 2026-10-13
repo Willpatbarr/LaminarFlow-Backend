@@ -33,11 +33,6 @@ import (
 	"testing"
 )
 
-// Skipped by every rule: a schema constraint test proves a constraint by violating it,
-// so naming the table is the technique. Shrinks as tables gain owners - api_token has
-// one now, so schema_api_token_test.go belongs in internal/auth.
-const schemaTestDir = "migrate"
-
 // Writes are never allowed outside the owner. Drift is a write problem, and this half
 // of the guard has no exceptions at all.
 var writeVerbs = regexp.MustCompile(
@@ -50,9 +45,13 @@ var writeVerbs = regexp.MustCompile(
 // membership graph to satisfy a predicate it is not testing.
 //
 // It exempts _test.go files in those directories entirely, reads and writes alike -
-// a fixture that inserts a row usually reads it back. Production code in a fixture
-// directory is guarded exactly as it would be anywhere else, which is the line that
-// keeps this from being a back door.
+// a fixture that inserts a row usually reads it back. internal/migrate is the largest
+// such directory: its schema_<table>_test.go files prove each constraint by violating
+// it, so naming the table is the technique. A rule whose table has a schema test there
+// lists "migrate" like any other fixture; api_token and session do not, because their
+// schema test lives in internal/auth. Production code in a fixture directory is
+// guarded exactly as it would be anywhere else, which is the line that keeps this from
+// being a back door.
 
 // Reads are allowed to the owner and to any package the rule names a reader.
 //
@@ -165,7 +164,7 @@ func Assert(tb testing.TB, r Rule) {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == r.Owner || d.Name() == schemaTestDir {
+			if d.Name() == ".git" || d.Name() == r.Owner {
 				return fs.SkipDir
 			}
 			return nil

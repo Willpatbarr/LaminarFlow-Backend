@@ -26,6 +26,6 @@ func TestNoAspectSQLOutsideThisPackage(t *testing.T) {
 		// Both are assertions about their own package, not editors written
 		// elsewhere. Production code in either is guarded exactly as before, and
 		// internal/team's own seeding goes through aspect.Bootstrap.
-		Fixtures: []string{"document", "team"},
+		Fixtures: []string{"document", "migrate", "team"},
 	})
 }

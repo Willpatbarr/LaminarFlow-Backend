@@ -18,6 +18,6 @@ func TestNoProjectSQLOutsideThisPackage(t *testing.T) {
 		Owner:    "project",
 		Tables:   []string{"project"},
 		Readers:  []string{sqlguard.AnyReader},
-		Fixtures: []string{"account", "document", "search", "setting", "ticket"},
+		Fixtures: []string{"account", "document", "migrate", "search", "setting", "ticket"},
 	})
 }

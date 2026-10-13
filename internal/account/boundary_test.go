@@ -27,7 +27,7 @@ func TestNoAccountSQLOutsideThisPackage(t *testing.T) {
 		// setup for a test about something else. Production code in all of them
 		// is guarded exactly as before, which is what keeps this from being a
 		// back door - and is the half worth probing when this rule changes.
-		Fixtures: []string{"auth", "aspect", "document", "setting", "team", "ticket"},
+		Fixtures: []string{"auth", "aspect", "document", "migrate", "setting", "team", "ticket"},
 	})
 }
 
@@ -48,6 +48,6 @@ func TestNoWorkspaceSQLOutsideThisPackage(t *testing.T) {
 		Owner:    "account",
 		Tables:   []string{"workspace", "workspace_member"},
 		Readers:  []string{sqlguard.AnyReader},
-		Fixtures: []string{"api", "aspect", "document", "setting", "team", "ticket"},
+		Fixtures: []string{"api", "aspect", "document", "migrate", "setting", "team", "ticket"},
 	})
 }

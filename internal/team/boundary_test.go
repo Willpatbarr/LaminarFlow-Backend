@@ -34,6 +34,6 @@ func TestNoTeamSQLOutsideThisPackage(t *testing.T) {
 		// What survives is the part that matters. Every exemption is a _test.go,
 		// so a production writer in any of them is still caught - which is the
 		// half to probe when this list changes.
-		Fixtures: []string{"account", "aspect", "document", "search", "setting", "ticket"},
+		Fixtures: []string{"account", "aspect", "document", "migrate", "search", "setting", "ticket"},
 	})
 }
