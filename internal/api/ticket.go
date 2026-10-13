@@ -24,6 +24,7 @@ import (
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/account"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -322,11 +323,12 @@ func conflictResponses(api huma.API) map[string]*huma.Response {
 │      api    huma.API
 │      svc    *ticket.Service    nil only for cmd/openapi
 │      accounts  *account.Service  names the writer in a 409
+│      feed      ticketFeed        publishes each committed write
 ├─ example ───────────────────────────────────────
 │      →  POST /api/v1/tickets, GET /api/v1/tickets/{id}
 */
 
-func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Service) {
+func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Service, feed ticketFeed) {
 	// Every operation requires a caller. There is no public ticket endpoint, and
 	// marking them individually rather than wrapping the group means a new one is
 	// unprotected only if someone omits the line - which the middleware test catches.
@@ -351,6 +353,8 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		if err != nil {
 			return nil, ticketError(ctx, accounts, err)
 		}
+
+		feed.publish(ctx, realtime.TicketCreated, me.AccountID, t)
 
 		return asOutput(t), nil
 	})
@@ -402,6 +406,8 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 			return nil, ticketError(ctx, accounts, err)
 		}
 
+		feed.publish(ctx, realtime.TicketUpdated, me.AccountID, t)
+
 		return asOutput(t), nil
 	})
 
@@ -429,6 +435,8 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		if err != nil {
 			return nil, ticketError(ctx, accounts, err)
 		}
+
+		feed.publish(ctx, realtime.TicketArchived, me.AccountID, t)
 
 		return &versionOutput{ETag: etag(t.Version)}, nil
 	})
@@ -485,6 +493,8 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		if err != nil {
 			return nil, ticketError(ctx, accounts, err)
 		}
+
+		feed.publish(ctx, realtime.TicketUnarchived, me.AccountID, t)
 
 		return &versionOutput{ETag: etag(t.Version)}, nil
 	})

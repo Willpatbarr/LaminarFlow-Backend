@@ -59,7 +59,7 @@ func registrationMux(t *testing.T, emptyInstall bool) (*http.ServeMux, *pgxpool.
 		}
 	}
 
-	return NewMux(pool, bundle), pool
+	return NewMux(pool, bundle, testHub(t)), pool
 }
 
 func call(t *testing.T, mux *http.ServeMux, method, path string, body any, cookie string, header ...string) *httptest.ResponseRecorder {

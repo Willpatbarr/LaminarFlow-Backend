@@ -10,6 +10,7 @@ import (
 	"testing/fstest"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/dbtest"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -45,7 +46,7 @@ func testMux(t *testing.T) *http.ServeMux {
 	}
 	t.Cleanup(pool.Close)
 
-	return NewMux(pool, bundle)
+	return NewMux(pool, bundle, testHub(t))
 }
 
 func get(t *testing.T, mux *http.ServeMux, path string) *httptest.ResponseRecorder {
@@ -76,7 +77,7 @@ func TestHealthzDoesNotNeedTheDatabase(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 
-	mux := NewMux(pool, bundle)
+	mux := NewMux(pool, bundle, testHub(t))
 
 	// Close the pool out from under the mux, then ask for liveness anyway.
 	pool.Close()
@@ -120,7 +121,7 @@ func TestHealthzDbFailsWhenTheDatabaseIsGone(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 
-	mux := NewMux(pool, bundle)
+	mux := NewMux(pool, bundle, testHub(t))
 	pool.Close()
 
 	rec := get(t, mux, "/healthz/db")
@@ -198,4 +199,15 @@ func TestHealthzIsNotShadowedByTheCatchAll(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", rec.Code)
 	}
+}
+
+// testHub is the change feed every test mux is built with, closed with the test so a
+// socket a test left open cannot outlive it.
+func testHub(t *testing.T) *realtime.Hub {
+	t.Helper()
+
+	hub := realtime.NewHub(realtime.Options{})
+	t.Cleanup(hub.Close)
+
+	return hub
 }

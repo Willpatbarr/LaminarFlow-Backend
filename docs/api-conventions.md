@@ -16,6 +16,12 @@ on any operation that is neither marked nor in its `public` allowlist. **Adding 
 endpoint means adding a line to that allowlist with a reason** — a deliberate act, not a
 line someone forgot.
 
+**Raw routes are invisible to that test.** A handler registered on the mux directly — today only
+`GET /api/v1/ws`, the change feed (`docs/realtime.md`) — is not in the OpenAPI document, so
+neither this guard nor `TestEveryRouteCarriesTheVersionPrefix` sees it. It goes in `rawRoutes`
+(`internal/api/realtime.go`) instead, which `TestRawRoutesCarryTheVersionPrefix` and
+`TestEveryRawRouteRefusesAnUnauthenticatedCaller` walk, and it is documented by hand.
+
 ## 2. A code is permanent, and has to be findable
 
 One constant per code in `internal/api`, never a literal at a call site. Every constant

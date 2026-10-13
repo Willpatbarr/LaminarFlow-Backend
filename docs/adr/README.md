@@ -36,5 +36,6 @@ like this?" and the answer is not in the code:
 | [2](0002-deployment-packaging.md) | Deployment packaging: one image, no shell, frontend embedded | Accepted |
 | [3](0003-api-versioning.md) | API versioning — what v1 promises, and what breaks it | Accepted |
 | [4](0004-registration-single-workspace.md) | Registration in a single-workspace model: join the workspace, no approval step yet | Accepted |
+| [5](0005-in-process-change-feed.md) | The change feed: one in-process hub, best-effort delivery, re-list on reconnect, no broker | Accepted |
 
 [nygard]: https://github.com/joelparkerhenderson/architecture-decision-record/blob/main/locales/en/templates/decision-record-template-by-michael-nygard/index.md

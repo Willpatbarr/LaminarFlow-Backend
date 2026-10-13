@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,6 +18,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/config"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/db"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/migrate"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 	"github.com/Willpatbarr/LaminarFlow-Backend/migrations"
 	"github.com/Willpatbarr/LaminarFlow-Backend/web"
 )
@@ -23,6 +27,9 @@ const (
 	// Short on purpose: a container healthcheck that hangs is indistinguishable
 	// from one that failed, but takes the whole interval to say so.
 	healthcheckTimeout = 2 * time.Second
+
+	// How long in-flight requests get to finish after a termination signal.
+	shutdownTimeout = 10 * time.Second
 )
 
 func main() {
@@ -55,11 +62,47 @@ func main() {
 		log.Fatalf("frontend: %v", err)
 	}
 
-	mux := api.NewMux(pool, bundle)
+	hub := realtime.NewHub(realtime.Options{})
+	mux := api.NewMux(pool, bundle, hub)
 
-	addr := ":" + cfg.Port
-	log.Printf("laminarflow backend listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	// No ReadTimeout, WriteTimeout or TimeoutHandler, and that is load-bearing: GET
+	// /api/v1/ws is a connection that lives for hours, and a server-wide write deadline
+	// or a handler that buffers the response would end or break it. Nothing here wraps
+	// the mux, so there is nothing to exempt the route from. If a timeout is ever added,
+	// the change feed must be carved out of it (ADR 0005).
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: mux}
+
+	// SIGTERM is what `docker stop` sends. Without handling it the process died with
+	// every socket open and no close frame, which a browser reads as a network failure
+	// rather than a restart.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-stop
+
+		// The hub first: http.Server.Shutdown does not wait for hijacked connections,
+		// so a WebSocket would otherwise outlive it.
+		hub.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("shutdown: %v", err)
+		}
+	}()
+
+	log.Printf("laminarflow backend listening on %s", srv.Addr)
+	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("serve: %v", err)
+		hub.Close()
+		pool.Close()
+		os.Exit(1)
+	}
+
+	<-done
 }
 
 // ensureSchema brings the database up to date, or refuses to start.
