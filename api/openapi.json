@@ -602,17 +602,47 @@
             "description": "The authenticated account.",
             "type": "string"
           },
+          "display_name": {
+            "description": "What the app shows for this person.",
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "permissions": {
+            "description": "Everything this credential may do, as resource:action. Gate UI on membership in this list, not on its length: there is no authority model yet, so today every credential holds the full set, and roles will narrow it without changing its shape.",
+            "examples": [
+              [
+                "ticket:write"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "via": {
             "description": "Which credential authenticated this request.",
             "examples": [
               "session"
             ],
             "type": "string"
+          },
+          "workspace_id": {
+            "description": "The workspace this account belongs to. Null only for an account with no membership.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
           "account_id",
-          "via"
+          "via",
+          "email",
+          "display_name",
+          "workspace_id",
+          "permissions"
         ],
         "type": "object"
       },
@@ -710,6 +740,79 @@
           "name",
           "board_id",
           "columns"
+        ],
+        "type": "object"
+      },
+      "RegisterInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/RegisterInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "display_name": {
+            "description": "What the app shows for this person. Not unique.",
+            "examples": [
+              "Will Barr"
+            ],
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "email": {
+            "description": "Matched case-insensitively. Must not already be registered.",
+            "examples": [
+              "will@example.com"
+            ],
+            "format": "email",
+            "maxLength": 254,
+            "type": "string"
+          },
+          "password": {
+            "description": "At least 10 characters and at most 72 bytes. Never logged, never echoed.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "RegisterOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/RegisterOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "account_id": {
+            "type": "string"
+          },
+          "workspace_created": {
+            "description": "True when this registration created the workspace - a fresh install with none.",
+            "type": "boolean"
+          },
+          "workspace_id": {
+            "description": "The workspace the account now belongs to.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "workspace_id",
+          "workspace_created"
         ],
         "type": "object"
       },
@@ -1539,6 +1642,52 @@
           }
         },
         "summary": "Who the current credential belongs to"
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "description": "Public: this is how a person gets a session. Creates the account and, in the same transaction, its membership of the workspace - creating the workspace first if the install has none. On success it sets the session cookie exactly as login does.\n\nSingle-workspace model: when a workspace already exists the new account joins it as a member. There is no invitation or approval step yet (ADR 0004), so until there is, anyone who can reach this endpoint can join - do not expose it beyond a trusted network.\n\nA duplicate email answers 409 `email_taken`. That reveals the address is registered, which a registration endpoint cannot avoid; it costs the same time as a success.",
+        "operationId": "register",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterOutputBody"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create an account and log in as it"
       }
     },
     "/api/v1/ping": {

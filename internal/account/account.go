@@ -10,8 +10,13 @@
 ╚═══════════════════════════════════════════════════════════════════════════════════════
 */
 
-// Package account owns the account table, and exists for one reason: deleting an
-// account is not a DELETE.
+// Package account owns the account table. It began for one reason - deleting an
+// account is not a DELETE - and since LAM-61 it also holds the one path that creates
+// one, because registration writes account, workspace and workspace_member in a single
+// transaction and that is a unit, not three tables' worth of someone else's concerns.
+// See register.go and ADR 0004.
+//
+// Deletion:
 //
 // 0027 records the gap and explains why the schema cannot close it.
 // saved_view.owner_account_id is ON DELETE SET NULL, because a *shared* team view has
@@ -70,6 +75,8 @@ type Removal struct {
 ┃      pool     *pgxpool.Pool    unexported, no reach-through
 ┣━ methods ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      Delete(ctx, accountID)   →  Removal, error
+┃      Register(ctx, NewAccount)  →  Registration, error
+┃      Profile(ctx, accountID)  →  Profile, error
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      NewService                  one per process
 */

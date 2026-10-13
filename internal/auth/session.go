@@ -83,12 +83,12 @@ func (s *Service) LogIn(ctx context.Context, email, password string) (string, ti
 		return "", time.Time{}, ErrInvalidLogin
 	}
 
-	return s.openSession(ctx, accountID)
+	return s.OpenSession(ctx, accountID)
 }
 
 /*
 ┌─ auth ──────────────────────────────────────────
-│  mints a session row and returns its cookie value
+│  mints a session row, for login and for sign-up
 ├─ in ────────────────────────────────────────────
 │      ctx          context.Context
 │      accountID    string
@@ -98,7 +98,7 @@ func (s *Service) LogIn(ctx context.Context, email, password string) (string, ti
 │      error
 */
 
-func (s *Service) openSession(ctx context.Context, accountID string) (string, time.Time, error) {
+func (s *Service) OpenSession(ctx context.Context, accountID string) (string, time.Time, error) {
 	id, err := randomString(sessionIDBytes)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("auth: generate session id: %w", err)

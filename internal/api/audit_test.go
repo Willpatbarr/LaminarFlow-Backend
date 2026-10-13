@@ -51,9 +51,10 @@ func operations(t *testing.T) map[string]*huma.Operation {
 // file - a deliberate act with a reason attached - rather than a line someone forgot to
 // write in a register function.
 var public = map[string]string{
-	"POST " + V1 + "/auth/login":  "there is no caller yet; that is what it is for",
-	"POST " + V1 + "/auth/logout": "logging out with a dead cookie must clear it, not 401",
-	"GET " + V1 + "/ping":         "a liveness probe carries no credential",
+	"POST " + V1 + "/auth/register": "how you get a session at all, so there is no caller yet (ADR 0004)",
+	"POST " + V1 + "/auth/login":    "there is no caller yet; that is what it is for",
+	"POST " + V1 + "/auth/logout":   "logging out with a dead cookie must clear it, not 401",
+	"GET " + V1 + "/ping":           "a liveness probe carries no credential",
 }
 
 // Every operation in the API, not just the ones whose resource happened to grow a test.

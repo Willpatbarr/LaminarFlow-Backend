@@ -34,5 +34,7 @@ like this?" and the answer is not in the code:
 |---|----------|--------|
 | [1](0001-write-path-enforcement.md) | Write-path enforcement for the document blob and the search index | Accepted |
 | [2](0002-deployment-packaging.md) | Deployment packaging: one image, no shell, frontend embedded | Accepted |
+| [3](0003-api-versioning.md) | API versioning — what v1 promises, and what breaks it | Accepted |
+| [4](0004-registration-single-workspace.md) | Registration in a single-workspace model: join the workspace, no approval step yet | Accepted |
 
 [nygard]: https://github.com/joelparkerhenderson/architecture-decision-record/blob/main/locales/en/templates/decision-record-template-by-michael-nygard/index.md
