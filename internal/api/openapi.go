@@ -16,6 +16,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/project"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/setting"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
@@ -36,6 +37,7 @@ import (
 │      teamSvc      *team.Service      nil only for cmd/openapi
 │      projSvc      *project.Service   nil only for cmd/openapi
 │      accountSvc   *account.Service   nil only for cmd/openapi
+│      hub          *realtime.Hub      nil publishes nothing
 ├─ out ───────────────────────────────────────────
 │      huma.API    the same API cmd/openapi emits
 ├─ example ───────────────────────────────────────
@@ -44,7 +46,7 @@ import (
 
 func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Service, aspectSvc *aspect.Service,
 	settingSvc *setting.Service, teamSvc *team.Service, projSvc *project.Service,
-	accountSvc *account.Service) huma.API {
+	accountSvc *account.Service, hub *realtime.Hub) huma.API {
 	// Before anything can raise an error. huma.NewError is a global, so this
 	// is the one place that sets it - see useErrorEnvelope.
 	useErrorEnvelope()
@@ -80,7 +82,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 		api.UseMiddleware(authenticate(api, authSvc))
 	}
 	registerAuth(api, authSvc, accountSvc)
-	registerTickets(api, ticketSvc, accountSvc)
+	registerTickets(api, ticketSvc, accountSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerAspectTypes(api, aspectSvc)
 	registerSettings(api, settingSvc)
 	registerBootstrap(api, teamSvc, projSvc)

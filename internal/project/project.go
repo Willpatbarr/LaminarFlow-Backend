@@ -110,6 +110,7 @@ type CreateParams struct {
 ┣━ methods ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      Create(ctx, accountID, CreateParams)   →  Project, error
 ┃      Get(ctx, accountID, id)                →  Project, error
+┃      WorkspaceID(ctx, projectID)            →  string, error
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      NewService                  one per process
 */
@@ -270,4 +271,40 @@ func seedBoard(ctx context.Context, tx pgx.Tx, pr *Project) error {
 	}
 
 	return nil
+}
+
+/*
+┌─ project ───────────────────────────────────────
+│  the workspace a project belongs to
+├─ in ────────────────────────────────────────────
+│      ctx          context.Context
+│      projectID    string
+├─ out ───────────────────────────────────────────
+│      string                    workspace id
+│      error                     ErrNotFound
+├─ example ───────────────────────────────────────
+│      Core  →  the id of its team's workspace
+*/
+
+// WorkspaceID is unscoped by the caller on purpose: it answers where a project lives,
+// not whether anyone may see it. Its one caller is the change feed, which asks after a
+// ticket write has already committed under the writer's own scoping and needs to know
+// which connections the event belongs to. Nothing here is returned to a request.
+func (s *Service) WorkspaceID(ctx context.Context, projectID string) (string, error) {
+	var id string
+
+	err := s.pool.QueryRow(ctx,
+		`SELECT tm.workspace_id::text
+		   FROM project p
+		   JOIN team tm ON tm.id = p.team_id
+		  WHERE p.id = $1::uuid`, projectID,
+	).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("project: workspace: %w", err)
+	}
+
+	return id, nil
 }

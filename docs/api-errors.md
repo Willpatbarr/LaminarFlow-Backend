@@ -63,6 +63,8 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `team_not_found` | 404 | The workspace a team was created in, or a team outside your scope |
 | `team_name_taken` | 409 | Team names are unique per workspace. Send it again under another name |
 | `project_not_found` | 404 | The team a project was created in, or a project outside your scope |
+| `origin_not_allowed` | 403 | `GET /api/v1/ws` from a page whose `Origin` is not this host. Raised before the credential is looked at. See [docs/realtime.md](realtime.md) |
+| `no_workspace` | 403 | `GET /api/v1/ws` by a valid credential whose account belongs to no workspace, so there is nothing to watch |
 | `account_not_found` | 404 | An account deletion that found nothing. A retried delete is the ordinary way to see it |
 | *derived* | any | Everything huma raises on its own behalf — `defaultCode` turns the status text into a code |
 

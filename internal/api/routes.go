@@ -9,6 +9,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/frontend"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/project"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/setting"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
@@ -19,13 +20,22 @@ import (
 //
 // Split out of main so it can be tested: main itself needs a real database URL
 // and a listening socket, which is why the routing went unverified until LAM-39.
-func NewMux(pool *pgxpool.Pool, bundle fs.FS) *http.ServeMux {
+func NewMux(pool *pgxpool.Pool, bundle fs.FS, hub *realtime.Hub) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", live())
 	mux.HandleFunc("GET /healthz/db", ready(pool))
-	NewHumaAPI(mux, auth.NewService(pool), ticket.NewService(pool), aspect.NewService(pool), setting.NewService(pool),
-		team.NewService(pool), project.NewService(pool), account.NewService(pool))
+	authSvc, accountSvc := auth.NewService(pool), account.NewService(pool)
+	NewHumaAPI(mux, authSvc, ticket.NewService(pool), aspect.NewService(pool), setting.NewService(pool),
+		team.NewService(pool), project.NewService(pool), accountSvc, hub)
+
+	// Handlers huma cannot describe. Registered before the /api/ catch-all below for
+	// readability only: the mux picks the most specific pattern whatever the order, so
+	// GET /api/v1/ws beats /api/ and the frontend's "/" alike.
+	for _, rt := range rawRoutes(authSvc, accountSvc, hub) {
+		mux.Handle(rt.Method+" "+rt.Path, rt.Handler)
+	}
+
 	mux.HandleFunc("/api/", notFound())
 
 	// Everything else is the frontend: real files where they exist, the app
