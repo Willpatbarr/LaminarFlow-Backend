@@ -205,9 +205,7 @@ func (s *Service) Profile(ctx context.Context, accountID string) (Profile, error
 
 	err := s.pool.QueryRow(ctx,
 		`SELECT a.email, a.display_name,
-		        (SELECT wm.workspace_id::text FROM workspace_member wm
-		          WHERE wm.account_id = a.id
-		          ORDER BY wm.created_at, wm.workspace_id LIMIT 1)
+		        (`+WorkspaceOf("a.id")+`)::text
 		   FROM account a WHERE a.id = $1::uuid`, accountID,
 	).Scan(&p.Email, &p.DisplayName, &workspace)
 	if errors.Is(err, pgx.ErrNoRows) {

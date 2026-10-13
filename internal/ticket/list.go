@@ -15,7 +15,6 @@ package ticket
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -93,67 +92,23 @@ type Page struct {
 // body can widen them, and a filter that compiles to TRUE still sees only the caller's
 // live tickets. LAM-59 step 4.
 func (s *Service) List(ctx context.Context, accountID string, p ListParams) (Page, error) {
-	sort := p.Sort
-	if len(sort) == 0 {
-		sort = DefaultSort
-	}
-
-	limit := p.Limit
-	if limit == 0 {
-		limit = filter.DefaultLimit
-	}
-	if limit < 1 || limit > filter.MaxLimit {
-		return Page{}, &filter.Error{Faults: []filter.Fault{{
-			Location: "body.limit",
-			Message:  "must be between 1 and " + strconv.Itoa(filter.MaxLimit),
-			Value:    limit,
-		}}}
-	}
-
-	// A body that omits the filter decodes to a zero Group, whose Op is neither and
-	// nor or. Normalising here rather than at the handler keeps the fingerprint the
-	// same whether a caller omitted the filter or sent an empty one.
-	group := p.Filter
-	if group.Op == "" && len(group.Conditions) == 0 && len(group.Groups) == 0 {
-		group.Op = filter.And
-	}
-
 	// $1 is the caller. Everything the body contributes is numbered after it.
-	args := []any{accountID}
-
-	where, filterArgs, err := Fields.Compile(group, len(args)+1)
+	plan, err := Fields.Plan(filter.Request(p), Tiebreak, DefaultSort, 2)
 	if err != nil {
-		return Page{}, prefix(err, "body.filter")
-	}
-	args = append(args, filterArgs...)
-
-	if p.Cursor != "" {
-		after, cursorArgs, err := s.resume(p.Cursor, group, sort, len(args)+1)
-		if err != nil {
-			return Page{}, err
-		}
-		where += " AND " + after
-		args = append(args, cursorArgs...)
+		return Page{}, err
 	}
 
-	order, err := Fields.CompileOrder(sort, Tiebreak)
-	if err != nil {
-		return Page{}, prefix(err, "body")
-	}
-
-	keys, err := Fields.SortKeys(sort, Tiebreak)
-	if err != nil {
-		return Page{}, prefix(err, "body")
-	}
+	args := append([]any{accountID}, plan.Args...)
 
 	// One more row than asked for, which is how HasMore is known without a second
 	// query. The extra row is dropped before returning.
+	limit := plan.Limit
 	args = append(args, limit+1)
 
-	query := expand(`SELECT `+columns+`, `+strings.Join(keys, ", ")+`
+	query := expand(`SELECT `+columns+`, `+strings.Join(plan.Keys, ", ")+`
 	                   FROM ticket t
-	                  WHERE `+liveOnly+` AND `+callerCanReach+` AND (`+where+`) `+
-		order+` LIMIT $`+strconv.Itoa(len(args)), "$1")
+	                  WHERE `+liveOnly+` AND `+callerCanReach+` AND (`+plan.Where+`) `+
+		plan.Order+` LIMIT $`+strconv.Itoa(len(args)), "$1")
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -169,7 +124,7 @@ func (s *Service) List(ctx context.Context, accountID string, p ListParams) (Pag
 	for rows.Next() {
 		var (
 			t   Ticket
-			key = make([]*string, len(keys))
+			key = make([]*string, len(plan.Keys))
 		)
 
 		dest := []any{&t.ID, &t.ProjectID, &t.Title, &t.Description,
@@ -197,50 +152,8 @@ func (s *Service) List(ctx context.Context, accountID string, p ListParams) (Pag
 	}
 
 	if page.HasMore {
-		page.NextCursor = filter.Cursor{
-			Query: filter.Fingerprint(group, sort),
-			Key:   last,
-		}.Encode()
+		page.NextCursor = plan.Cursor(last)
 	}
 
 	return page, nil
-}
-
-// resume turns a cursor token into the predicate that continues after it.
-//
-// The fingerprint is checked before the key is used. A cursor minted under one filter
-// and replayed under another describes a position in a sequence that no longer exists,
-// and resuming from it returns rows belonging to neither - LAM-59 decision 4.
-func (s *Service) resume(token string, group filter.Group, sort []filter.Order, firstArg int) (string, []any, error) {
-	c, err := filter.Decode(token)
-	if err != nil {
-		return "", nil, err
-	}
-
-	if c.Query != filter.Fingerprint(group, sort) {
-		return "", nil, filter.ErrCursorMismatch
-	}
-
-	return Fields.CompileAfter(sort, Tiebreak, c, firstArg)
-}
-
-// prefix qualifies a filter package's fault locations against the request body, which
-// is the only place that knows where in the body the filter sat.
-func prefix(err error, at string) error {
-	var e *filter.Error
-	if !errors.As(err, &e) {
-		return err
-	}
-
-	out := make([]filter.Fault, len(e.Faults))
-	for i, f := range e.Faults {
-		out[i] = f
-		if f.Location == "" {
-			out[i].Location = at
-			continue
-		}
-		out[i].Location = at + "." + f.Location
-	}
-
-	return &filter.Error{Faults: out}
 }

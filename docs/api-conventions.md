@@ -54,6 +54,12 @@ what differs is which field names are accepted. `listDescription` publishes thos
 the same whitelist the server checks against, so the document cannot offer a field the
 server would reject.
 
+The service half is shared the same way. `filter.Schema.Plan` takes the request and returns
+the WHERE, ORDER BY, cursor columns and arguments - page-size bound, empty-filter
+normalisation, cursor check and fault locations included - so a resource's `List` is its
+own scope predicate, its own column list and its own row scan. `ticket`, `team` and
+`project` all run through it; a fourth should not need to retype any of it.
+
 ## 5. Scope and archive sit underneath the filter, never inside it
 
 The caller's membership predicate and `archived_at IS NULL` are composed into every
@@ -62,6 +68,13 @@ so no request body can widen them.
 
 Both live in one constant per service rather than being retyped per method — `liveOnly`
 and `callerCanReach` in `internal/ticket`, `callerCanReach` in `internal/aspect`.
+
+Teams and projects are scoped to *the caller's workspace*, singular: `account.WorkspaceOf`,
+the oldest membership — the definition `GET /auth/me` reports (ADR 0004). A team or project
+list is what a client hydrates its local store from, so it has to be the workspace `me`
+names. Tickets still use the wider "any workspace the caller is a member of" predicate; the
+two coincide in the single-workspace model and differ only for an account with several
+memberships.
 
 ## 6. A closed set lives where its consumers are
 

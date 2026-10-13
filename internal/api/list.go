@@ -9,7 +9,8 @@
 ║      CodeBadCursor         const
 ║      CodeCursorMismatch    const
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
-║      registerTickets  →  POST /api/v1/tickets/list
+║      registerTickets    →  POST /api/v1/tickets/list
+║      registerBootstrap  →  POST /api/v1/teams/list · POST /api/v1/projects/list
 ╚═══════════════════════════════════════════════════════════════════════════════════════
 */
 
