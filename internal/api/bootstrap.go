@@ -1,12 +1,13 @@
 /*
 ╔═ bootstrap.go ════════════════════════════════════════════════════════════════════════
-║  http handlers · team and project creation
+║  http handlers · team and project creation, and their lists
 ╠═ declares ════════════════════════════════════════════════════════════════════════════
 ║      CodeTeamNotFound       const
 ║      CodeTeamNameTaken      const
 ║      CodeProjectNotFound    const
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
 ║      NewHumaAPI  →  POST /api/v1/teams · POST /api/v1/projects
+║                     POST /api/v1/teams/list · POST /api/v1/projects/list
 ╚═══════════════════════════════════════════════════════════════════════════════════════
 */
 
@@ -47,7 +48,7 @@ type teamBody struct {
 	WorkspaceID string       `json:"workspace_id"`
 	Name        string       `json:"name"`
 	Statuses    []statusBody `json:"statuses" doc:"Seeded on creation. Ordinary rows - rename or delete them freely."`
-	AspectTypes []string     `json:"aspect_types" doc:"Seeded on creation. Starter types, not system types."`
+	AspectTypes []string     `json:"aspect_types" doc:"Seeded on creation. Starter types, not system types. Empty on get and list, which do not load them."`
 }
 
 type teamOutput struct {
@@ -214,6 +215,35 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 		return &teamOutput{Body: asTeamBody(t)}, nil
 	})
 
+	// The team list is where a client learns statuses: they ride on each team, with
+	// category and position, so one call fills the store and a second is never needed.
+	// Three statuses a team keeps the payload small; if that stops being true, the
+	// answer is POST /statuses/list beside this, not a heavier team.
+	registerList(api, listSpec[teamBody]{
+		OperationID: "list-teams",
+		Path:        V1 + "/teams/list",
+		Summary:     "List the workspace's teams, each with its statuses (a read - see the description for why it is a POST)",
+		Fields:      team.Fields,
+		Run: func(ctx context.Context, accountID string, req listRequest) (listPage[teamBody], error) {
+			p := team.ListParams{Sort: req.Sort, Limit: req.Limit, Cursor: req.Cursor}
+			if req.Filter != nil {
+				p.Filter = *req.Filter
+			}
+
+			page, err := teamSvc.List(ctx, accountID, p)
+			if err != nil {
+				return listPage[teamBody]{}, err
+			}
+
+			items := make([]teamBody, len(page.Teams))
+			for i, t := range page.Teams {
+				items[i] = asTeamBody(t)
+			}
+
+			return listPage[teamBody]{Items: items, NextCursor: page.NextCursor, HasMore: page.HasMore}, nil
+		},
+	})
+
 	huma.Register(api, huma.Operation{
 		OperationID: "create-project",
 		Method:      http.MethodPost,
@@ -253,5 +283,30 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 		}
 
 		return &projectOutput{Body: asProjectBody(p)}, nil
+	})
+
+	registerList(api, listSpec[projectBody]{
+		OperationID: "list-projects",
+		Path:        V1 + "/projects/list",
+		Summary:     "List the workspace's projects (a read - see the description for why it is a POST)",
+		Fields:      project.Fields,
+		Run: func(ctx context.Context, accountID string, req listRequest) (listPage[projectBody], error) {
+			p := project.ListParams{Sort: req.Sort, Limit: req.Limit, Cursor: req.Cursor}
+			if req.Filter != nil {
+				p.Filter = *req.Filter
+			}
+
+			page, err := projSvc.List(ctx, accountID, p)
+			if err != nil {
+				return listPage[projectBody]{}, err
+			}
+
+			items := make([]projectBody, len(page.Projects))
+			for i, pr := range page.Projects {
+				items[i] = asProjectBody(pr)
+			}
+
+			return listPage[projectBody]{Items: items, NextCursor: page.NextCursor, HasMore: page.HasMore}, nil
+		},
 	})
 }

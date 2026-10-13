@@ -456,6 +456,84 @@
         ],
         "type": "object"
       },
+      "ListEnvelopeProjectBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ListEnvelopeProjectBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBody"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_cursor": {
+            "description": "Pass back as cursor for the next page. Null when there is none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "ListEnvelopeTeamBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ListEnvelopeTeamBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TeamBody"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_cursor": {
+            "description": "Pass back as cursor for the next page. Null when there is none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "type": "object"
+      },
       "ListEnvelopeTicketBody": {
         "additionalProperties": false,
         "properties": {
@@ -999,7 +1077,7 @@
             "type": "string"
           },
           "aspect_types": {
-            "description": "Seeded on creation. Starter types, not system types.",
+            "description": "Seeded on creation. Starter types, not system types. Empty on get and list, which do not load them.",
             "items": {
               "type": "string"
             },
@@ -1757,6 +1835,45 @@
         "summary": "Create a project, with the board it renders with"
       }
     },
+    "/api/v1/projects/list": {
+      "post": {
+        "description": "Reads a page. POST rather than GET because nested and/or filters do not encode cleanly in a query string, and a per-caller ticket list is not cacheable - so a GET would buy nothing and cost expressiveness. Nothing is written.\n\nPagination is keyset: pass the previous page's `next_cursor` back as `cursor`. A cursor is only valid for the filter and sort it was minted under; changing either restarts from the first page.\n\nFilterable and sortable fields:\n\n- `created_at` (time)\n- `name` (text)\n- `team` (uuid)\n- `updated_at` (time)\n\nPage size defaults to 50 and may not exceed 200.",
+        "operationId": "list-projects",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListEnvelopeProjectBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List the workspace's projects (a read - see the description for why it is a POST)"
+      }
+    },
     "/api/v1/projects/{id}": {
       "get": {
         "operationId": "get-project",
@@ -2001,6 +2118,45 @@
           }
         },
         "summary": "Create a team, with the rows it needs to be usable"
+      }
+    },
+    "/api/v1/teams/list": {
+      "post": {
+        "description": "Reads a page. POST rather than GET because nested and/or filters do not encode cleanly in a query string, and a per-caller ticket list is not cacheable - so a GET would buy nothing and cost expressiveness. Nothing is written.\n\nPagination is keyset: pass the previous page's `next_cursor` back as `cursor`. A cursor is only valid for the filter and sort it was minted under; changing either restarts from the first page.\n\nFilterable and sortable fields:\n\n- `created_at` (time)\n- `name` (text)\n- `updated_at` (time)\n\nPage size defaults to 50 and may not exceed 200.",
+        "operationId": "list-teams",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListEnvelopeTeamBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List the workspace's teams, each with its statuses (a read - see the description for why it is a POST)"
       }
     },
     "/api/v1/teams/{id}": {
