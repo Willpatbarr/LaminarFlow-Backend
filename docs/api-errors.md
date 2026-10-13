@@ -49,7 +49,9 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `password_too_long` | 422 | Registration with a password over 72 bytes, bcrypt's limit. Rejected rather than silently truncated |
 | `ticket_not_found` | 404 | Any ticket operation: absent, archived, or outside your scope |
 | `ticket_conflict` | 409 | A ticket write that sent `If-Match` and lost: the ticket was edited since that version. Nothing was written. The body carries the current ticket and who changed it and when — see [Conflicts carry the other side](#conflicts-carry-the-other-side) |
-| `ticket_archived` | 409 | The same, when the ticket was *archived* since that version. Same extra members, describing the archive. Only with `If-Match`: without it, a write to an archived ticket is still `ticket_not_found` |
+| `ticket_archived` | 409 | The same, when the ticket was *archived* since that version. Same extra members, describing the archive. Only with `If-Match`: without it, a write to an archived ticket is still `ticket_not_found`. Also raised by a create replaying an `Idempotency-Key` whose ticket has since been archived — see [Idempotent create](api-conventions.md#10-a-create-may-carry-a-key-so-a-retry-is-not-a-duplicate-idempotency-key) |
+| `status_not_found` | 422 | `status_id` on a ticket create or update names no status the ticket's project can use: no such status, or a status of a different team. One code for both, deliberately. `errors[0].location` is `body.status_id`. Nothing was written |
+| `assignee_not_found` | 422 | `assignee_id` names no account that is a member of the ticket's workspace: no such account, or an account from another workspace. One code for both, so the error cannot be used to probe for account ids. `errors[0].location` is `body.assignee_id`. Nothing was written |
 | `filter_invalid` | 422 | A list body whose filter, sort or page size was rejected. `errors[]` names each problem |
 | `cursor_mismatch` | 400 | A list cursor replayed under a different filter or sort. Start again from the first page |
 | `bad_cursor` | 400 | A list cursor that does not decode. Pass back a `next_cursor` unchanged |
@@ -66,6 +68,7 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `origin_not_allowed` | 403 | `GET /api/v1/ws` from a page whose `Origin` is not this host. Raised before the credential is looked at. See [docs/realtime.md](realtime.md) |
 | `no_workspace` | 403 | `GET /api/v1/ws` by a valid credential whose account belongs to no workspace, so there is nothing to watch |
 | `account_not_found` | 404 | An account deletion that found nothing. A retried delete is the ordinary way to see it |
+| `unprocessable_entity` (derived) | 422 | Includes the length and blank rules on `title`, `description` and team and project `name` — see [Length limits](#length-limits) — and a malformed `Idempotency-Key` (`header.Idempotency-Key`) |
 | *derived* | any | Everything huma raises on its own behalf — `defaultCode` turns the status text into a code |
 
 ## Conflicts carry the other side
@@ -99,6 +102,30 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 `detail` is prose and may be reworded; compose any user-facing sentence ("edited by Sarah 2 minutes ago") from `changed_by` and `changed_at`.
 
 The members are declared in the OpenAPI document as the `TicketConflict` schema, on the 409 of `update-ticket`, `archive-ticket` and `unarchive-ticket`, so generated client types include them. See `docs/api-conventions.md` §9 for the precondition itself.
+
+## Length limits
+
+A string a person writes has a ceiling, counted in **characters, not bytes** (Unicode code
+points — the same rule as the password floor, and what the OpenAPI `maxLength` counts). A
+200-character title in any alphabet is accepted; a flag emoji is two code points and counts
+as two.
+
+| Field | Rule |
+| --- | --- |
+| `ticket.title` (create and update) | 1 to 200, and not only whitespace |
+| `ticket.description` (create and update) | up to 50,000; empty is fine |
+| `team.name`, `project.name` (create) | 1 to 100, and not only whitespace |
+
+A value outside the rule is a `422` with the derived code `unprocessable_entity` and one
+`errors[]` entry whose `location` is `body.title`, `body.description` or `body.name`, whether
+it was too long (the schema's `maxLength`), empty (`minLength`) or whitespace only (the
+service). The numbers are `maxLength` in the OpenAPI document, which is where a client
+should read them from; they are `ticket.MaxTitleLength`, `ticket.MaxDescriptionLength` and
+`team.MaxNameLength` / `project.MaxNameLength` in the Go code.
+
+They are enforced by the API and the service, not by a database constraint, so a row stored
+before the limit existed stays readable and the limit meets it on its next write: a ticket
+that already has a 5,000-character title cannot be updated until the title is shortened.
 
 ## Status codes
 

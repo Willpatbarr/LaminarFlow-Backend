@@ -44,6 +44,17 @@ const (
 	CodeTicketArchived = "ticket_archived"
 )
 
+// The two 422s a ticket write can get for an id it names. Each is its own code because
+// each has its own field to fix, and a form puts the message beside that input. Both
+// collapse their causes on purpose: status_not_found is "no such status" and "a status
+// of another team" alike, assignee_not_found is "no such account" and "an account
+// outside this workspace" alike. A caller that could tell them apart could probe for ids
+// it is not entitled to know exist.
+const (
+	CodeStatusNotFound   = "status_not_found"
+	CodeAssigneeNotFound = "assignee_not_found"
+)
+
 // This file is the template the other five resources copy, so its shape matters as
 // much as its behaviour: one input struct per verb, handlers that parse and format and
 // nothing else, every operation marked RequireAuth, and every service call passed the
@@ -116,14 +127,66 @@ func etag(version int) string {
 	return `"` + strconv.Itoa(version) + `"`
 }
 
+// idempotencyHeader is spelled once. Go canonicalises header names, and huma's tag and
+// the resolver below must agree on which one they mean.
+const idempotencyHeader = "Idempotency-Key"
+
 type createTicketInput struct {
-	Body struct {
+	IdempotencyKey string `header:"Idempotency-Key" maxLength:"128" pattern:"^[ -~]+$" example:"2b0a7c9e-5d1f-4c8e-9a53-0f2f8d6b1e47" doc:"Makes the create safe to retry. The same key from the same account returns the ticket the first call created instead of creating another - the original's current state, with Idempotent-Replayed: true. 1 to 128 printable ASCII characters; a UUID is ideal. Keys are per account and never expire. A replay ignores the body it carries: send a new key for a different ticket. Omit it for a plain create."`
+	Body           struct {
 		ProjectID   string  `json:"project_id" required:"true" format:"uuid"`
-		Title       string  `json:"title" required:"true"`
-		Description string  `json:"description"`
-		StatusID    *string `json:"status_id" format:"uuid"`
-		AssigneeID  *string `json:"assignee_id" format:"uuid"`
+		Title       string  `json:"title" required:"true" minLength:"1" maxLength:"200" doc:"1 to 200 characters (not bytes), and not only whitespace."`
+		Description string  `json:"description,omitempty" maxLength:"50000" doc:"Up to 50,000 characters (not bytes). Omit for none."`
+		StatusID    *string `json:"status_id,omitempty" format:"uuid" nullable:"true" doc:"Must be a status of the project's team, or status_not_found. Omit, or null, for no status."`
+		AssigneeID  *string `json:"assignee_id,omitempty" format:"uuid" nullable:"true" doc:"Must be a member of the project's workspace, or assignee_not_found. Omit, or null, for unassigned."`
 	}
+}
+
+// Resolve catches the two shapes of the header huma cannot see. It treats an empty
+// value as absent, which is right for most parameters and wrong here: a client that
+// sends Idempotency-Key with nothing in it believes the create is protected, and
+// silently treating it as unprotected is how a retry makes a duplicate. And a header
+// sent twice is ambiguous - the server would use the first and the client may have meant
+// the second.
+//
+// Everything else about the key's shape (printable ASCII, the length) is in the tag, so
+// it is also in the OpenAPI document.
+func (in *createTicketInput) Resolve(ctx huma.Context) []error {
+	var values []string
+	ctx.EachHeader(func(name, value string) {
+		if strings.EqualFold(name, idempotencyHeader) {
+			values = append(values, value)
+		}
+	})
+
+	switch {
+	case len(values) > 1:
+		return []error{&huma.ErrorDetail{Location: "header." + idempotencyHeader,
+			Message: "send the Idempotency-Key header once"}}
+	case len(values) == 1 && values[0] == "":
+		return []error{&huma.ErrorDetail{Location: "header." + idempotencyHeader,
+			Message: "must be 1 to 128 printable ASCII characters, or omitted"}}
+	}
+
+	return nil
+}
+
+// key is the header as the service takes it: nil when none was sent.
+func (in *createTicketInput) key() *string {
+	if in.IdempotencyKey == "" {
+		return nil
+	}
+
+	return &in.IdempotencyKey
+}
+
+// createTicketOutput is ticketOutput plus whether the response is a replay. The status
+// is 200 for both - a fresh create has always answered 200, and v1 is additive - so the
+// header is how a client tells them apart.
+type createTicketOutput struct {
+	ETag     string `header:"ETag" doc:"The ticket's version in quotes, as If-Match takes it back."`
+	Replayed string `header:"Idempotent-Replayed" enum:"true,false" doc:"Only when Idempotency-Key was sent. true: that key had been used, nothing was created, and the body is the original ticket as it is now. false: this request created the ticket."`
+	Body     ticketBody
 }
 
 type getTicketInput struct {
@@ -141,10 +204,10 @@ type updateTicketInput struct {
 	ID string `path:"id" format:"uuid"`
 	Preconditioned
 	Body struct {
-		Title       string  `json:"title" required:"true"`
-		Description string  `json:"description"`
-		StatusID    *string `json:"status_id" format:"uuid"`
-		AssigneeID  *string `json:"assignee_id" format:"uuid"`
+		Title       string  `json:"title" required:"true" minLength:"1" maxLength:"200" doc:"1 to 200 characters (not bytes), and not only whitespace."`
+		Description string  `json:"description" maxLength:"50000" doc:"Up to 50,000 characters (not bytes)."`
+		StatusID    *string `json:"status_id" format:"uuid" doc:"Must be a status of the ticket's project's team, or status_not_found. Null clears it."`
+		AssigneeID  *string `json:"assignee_id" format:"uuid" doc:"Must be a member of the ticket's workspace, or assignee_not_found. Null clears it."`
 	}
 }
 
@@ -241,6 +304,19 @@ func ticketError(ctx context.Context, accounts *account.Service, err error) erro
 		return conflictProblem(ctx, accounts, conflict)
 	}
 
+	switch {
+	case errors.Is(err, ticket.ErrStatusNotFound):
+		return newFieldError(CodeStatusNotFound, "the status is not one this ticket's project can use",
+			"body.status_id", "no such status for this project")
+	case errors.Is(err, ticket.ErrAssigneeNotFound):
+		return newFieldError(CodeAssigneeNotFound, "the assignee is not a member of this ticket's workspace",
+			"body.assignee_id", "no such assignee in this workspace")
+	}
+
+	if e := limitError(err); e != nil {
+		return e
+	}
+
 	return err
 }
 
@@ -262,7 +338,10 @@ func ticketError(ctx context.Context, accounts *account.Service, err error) erro
 // between; that reads as not recorded, which is what null already means.
 func conflictProblem(ctx context.Context, accounts *account.Service, c *ticket.Conflict) error {
 	code, detail := CodeTicketConflict, "the ticket has changed since the version you sent"
-	if c.Archived {
+	switch {
+	case c.Archived && c.Replay:
+		code, detail = CodeTicketArchived, "the ticket this Idempotency-Key created has since been archived"
+	case c.Archived:
 		code, detail = CodeTicketArchived, "the ticket has been archived since the version you sent"
 	}
 
@@ -290,6 +369,12 @@ func conflictProblem(ctx context.Context, accounts *account.Service, c *ticket.C
 	return out
 }
 
+// ifMatchConflict is the 409 an If-Match write can get.
+const ifMatchConflict = "Conflict. Only when If-Match was sent: code is ticket_conflict if the ticket was edited since that version, ticket_archived if it was archived. Nothing was written."
+
+// replayConflict is the 409 a create can get.
+const replayConflict = "Conflict. Only when Idempotency-Key was sent and had already created a ticket that has since been archived: code is ticket_archived, current is that ticket and changed_by and changed_at say who archived it and when. Nothing was written, and no second ticket exists - restore the original or discard the local copy."
+
 // conflictResponses documents the 409 on an operation that can raise it.
 //
 // huma documents an error response with the one schema it derives from huma.NewError,
@@ -298,7 +383,7 @@ func conflictProblem(ctx context.Context, accounts *account.Service, c *ticket.C
 // operations that can raise a conflict declare their own 409 with ticketConflict's
 // schema. That also means supplying the default response, since huma only adds it for
 // an operation that declares none.
-func conflictResponses(api huma.API) map[string]*huma.Response {
+func conflictResponses(api huma.API, description string) map[string]*huma.Response {
 	registry := api.OpenAPI().Components.Schemas
 	problem := func(schema *huma.Schema) map[string]*huma.MediaType {
 		return map[string]*huma.MediaType{"application/problem+json": {Schema: schema}}
@@ -306,7 +391,7 @@ func conflictResponses(api huma.API) map[string]*huma.Response {
 
 	return map[string]*huma.Response{
 		"409": {
-			Description: "Conflict. Only when If-Match was sent: code is ticket_conflict if the ticket was edited since that version, ticket_archived if it was archived. Nothing was written.",
+			Description: description,
 			Content:     problem(registry.Schema(reflect.TypeOf(ticketConflict{}), true, "TicketConflict")),
 		},
 		"default": {
@@ -338,25 +423,43 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		OperationID: "create-ticket",
 		Method:      http.MethodPost,
 		Path:        V1 + "/tickets",
-		Summary:     "Create a ticket",
-		Metadata:    requires,
-	}, func(ctx context.Context, in *createTicketInput) (*ticketOutput, error) {
+		Summary:     "Create a ticket (safe to retry with Idempotency-Key)",
+		Description: "Send `Idempotency-Key` to make the create safe to retry after a lost response. " +
+			"The first request with a key creates the ticket and answers `Idempotent-Replayed: false`; " +
+			"any later request with the same key from the same account creates nothing and answers " +
+			"`Idempotent-Replayed: true` with the original ticket as it is now - same status, 200, as a " +
+			"fresh create. A replay publishes nothing on the change feed. If the original has been archived " +
+			"the answer is a 409 `ticket_archived` carrying it. The body of a replay is ignored.",
+		Metadata:  requires,
+		Responses: conflictResponses(api, replayConflict),
+	}, func(ctx context.Context, in *createTicketInput) (*createTicketOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
-		t, err := svc.Create(ctx, me.AccountID, ticket.CreateParams{
-			ProjectID:   in.Body.ProjectID,
-			Title:       in.Body.Title,
-			Description: in.Body.Description,
-			StatusID:    in.Body.StatusID,
-			AssigneeID:  in.Body.AssigneeID,
+		t, replayed, err := svc.CreateIdempotent(ctx, me.AccountID, ticket.CreateParams{
+			ProjectID:      in.Body.ProjectID,
+			Title:          in.Body.Title,
+			Description:    in.Body.Description,
+			StatusID:       in.Body.StatusID,
+			AssigneeID:     in.Body.AssigneeID,
+			IdempotencyKey: in.key(),
 		})
 		if err != nil {
 			return nil, ticketError(ctx, accounts, err)
 		}
 
-		feed.publish(ctx, realtime.TicketCreated, me.AccountID, t)
+		// A replay wrote nothing, so there is nothing to announce: the original create
+		// already told the workspace, and a second ticket.created for the same ticket
+		// would make every watcher apply an insert twice.
+		if !replayed {
+			feed.publish(ctx, realtime.TicketCreated, me.AccountID, t)
+		}
 
-		return asOutput(t), nil
+		out := &createTicketOutput{ETag: etag(t.Version), Body: asBody(t)}
+		if in.key() != nil {
+			out.Replayed = strconv.FormatBool(replayed)
+		}
+
+		return out, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -383,7 +486,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		Summary:     "Replace a ticket's writable fields",
 		Description: "Last write wins unless `If-Match` is sent. With `If-Match: \"<version>\"` the write happens only if the ticket is still at that version; otherwise it is refused with a 409 (`ticket_conflict` or `ticket_archived`) that carries the current ticket, who changed it and when. Without it, a write to an archived ticket is `ticket_not_found`, as it always was.",
 		Metadata:    requires,
-		Responses:   conflictResponses(api),
+		Responses:   conflictResponses(api, ifMatchConflict),
 	}, func(ctx context.Context, in *updateTicketInput) (*ticketOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -422,7 +525,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		Summary:     "Archive a ticket (soft delete - the row and its comments survive)",
 		Description: "Takes `If-Match` like the update does. A ticket that is already archived answers `ticket_archived` when `If-Match` is sent - including when the archive was your own and the response was lost, in which case `changed_by` is you - and `ticket_not_found` when it is not. The ticket's new version is in the `ETag` header.",
 		Metadata:    requires,
-		Responses:   conflictResponses(api),
+		Responses:   conflictResponses(api, ifMatchConflict),
 	}, func(ctx context.Context, in *writeTicketInput) (*versionOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -480,7 +583,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		Summary:     "Restore an archived ticket",
 		Description: "Takes `If-Match`: the version of the archived ticket you last saw. If it was restored, edited or archived again since, the answer is a 409 `ticket_conflict` with the current ticket. Restoring a ticket that is not archived is `ticket_not_found` either way. The ticket's new version is in the `ETag` header.",
 		Metadata:    requires,
-		Responses:   conflictResponses(api),
+		Responses:   conflictResponses(api, ifMatchConflict),
 	}, func(ctx context.Context, in *writeTicketInput) (*versionOutput, error) {
 		me, _ := auth.FromContext(ctx)
 

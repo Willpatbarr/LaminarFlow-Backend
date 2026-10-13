@@ -46,13 +46,21 @@ import (
 // a client holding unsynced edits to a ticket needs the other side of the conflict even
 // when that other side is "gone".
 type Conflict struct {
-	Archived  bool
+	Archived bool
+
+	// Replay is set when this is not a refused write but a create whose Idempotency-Key
+	// had already made a ticket, which has since been archived. Current is that ticket.
+	Replay bool
+
 	Current   Ticket
 	ChangedBy *string
 	ChangedAt time.Time
 }
 
 func (c *Conflict) Error() string {
+	if c.Replay {
+		return "ticket: the idempotency key created a ticket that has since been archived"
+	}
 	if c.Archived {
 		return "ticket: archived since the version the caller saw"
 	}

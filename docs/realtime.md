@@ -89,6 +89,10 @@ does not matter).
 unreadable (`GET` answers `ticket_not_found`), so the event is the only place a client sees it
 at its archived version.
 
+A create replayed with the same `Idempotency-Key` ([api-conventions.md §10](api-conventions.md))
+writes nothing and publishes nothing: one `ticket.created` per ticket, however many times the
+request is retried.
+
 ### What a client does with an event
 
 1. **`created`, `updated`, `unarchived`:** upsert `ticket` if `version` is greater than the

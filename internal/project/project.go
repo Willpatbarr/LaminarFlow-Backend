@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -40,6 +41,10 @@ import (
 
 // ErrNotFound covers a team that is absent or outside the caller's reach.
 var ErrNotFound = errors.New("project: not found")
+
+// MaxNameLength is the longest a project's name may be, in characters; the same number
+// and the same reasoning as team.MaxNameLength.
+const MaxNameLength = 100
 
 // defaultBoardName is the board every project starts with. One board, not a set: 0025
 // is explicit that nothing privileges one board over another and there is no default
@@ -136,7 +141,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 │      p            CreateParams
 ├─ out ───────────────────────────────────────────
 │      Project                   with its board
-│      error                     ErrNotFound
+│      error                     ErrNotFound · *textlimit.FieldError
 ├─ example ───────────────────────────────────────
 │      "Core"  →  a board with 3 columns
 */
@@ -149,6 +154,10 @@ func NewService(pool *pgxpool.Pool) *Service {
 // board view is empty on the first visit looks broken, and because the columns can only
 // be built from the team's statuses, which is knowledge this is the last place to have.
 func (s *Service) Create(ctx context.Context, accountID string, p CreateParams) (Project, error) {
+	if err := textlimit.Required("name", p.Name, MaxNameLength); err != nil {
+		return Project{}, err
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Project{}, fmt.Errorf("project: begin: %w", err)

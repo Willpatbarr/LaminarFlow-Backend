@@ -58,8 +58,8 @@ type teamOutput struct {
 type createTeamInput struct {
 	Body struct {
 		WorkspaceID string `json:"workspace_id" required:"true" format:"uuid"`
-		Name        string `json:"name" required:"true" minLength:"1"`
-		Bare        bool   `json:"bare" doc:"Skip seeding. For an importer restoring a team that already has its own statuses and aspect types."`
+		Name        string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace."`
+		Bare        bool   `json:"bare,omitempty" default:"false" doc:"Skip seeding. For an importer restoring a team that already has its own statuses and aspect types. Optional; omitted means false, a fully seeded team."`
 	}
 }
 
@@ -89,8 +89,8 @@ type projectOutput struct {
 type createProjectInput struct {
 	Body struct {
 		TeamID string `json:"team_id" required:"true" format:"uuid"`
-		Name   string `json:"name" required:"true" minLength:"1"`
-		Bare   bool   `json:"bare" doc:"Skip the board. A project with no board is legal and renders empty."`
+		Name   string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace."`
+		Bare   bool   `json:"bare,omitempty" default:"false" doc:"Skip the board. A project with no board is legal and renders empty. Optional; omitted means false, a project with its board."`
 	}
 }
 
@@ -140,6 +140,10 @@ func asProjectBody(p project.Project) projectBody {
 // the request is fine and the current state refuses it, and sending it again under
 // another name succeeds - which is exactly the line docs/api-errors.md draws.
 func teamError(err error) error {
+	if e := limitError(err); e != nil {
+		return e
+	}
+
 	switch {
 	case errors.Is(err, team.ErrNotFound):
 		return NewError(http.StatusNotFound, CodeTeamNotFound, "no such workspace")
@@ -152,6 +156,10 @@ func teamError(err error) error {
 }
 
 func projectError(err error) error {
+	if e := limitError(err); e != nil {
+		return e
+	}
+
 	if errors.Is(err, project.ErrNotFound) {
 		return NewError(http.StatusNotFound, CodeProjectNotFound, "no such team or project")
 	}

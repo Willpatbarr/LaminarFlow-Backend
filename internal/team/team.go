@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -44,6 +45,12 @@ import (
 
 // ErrNotFound covers a workspace that is absent or outside the caller's reach.
 var ErrNotFound = errors.New("team: not found")
+
+// MaxNameLength is the longest a team's name may be, in characters (internal/textlimit).
+// Held at the API and in Create, not by a CHECK: a team that already has a longer name
+// stays readable, and the limit meets it only on the next write. The OpenAPI document
+// carries the same number as maxLength.
+const MaxNameLength = 100
 
 // ErrNameTaken is 0005's UNIQUE (workspace_id, name), surfaced rather than leaked as a
 // 23505 - two workspaces may each have a Platform team, one workspace may not.
@@ -199,6 +206,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 ├─ out ───────────────────────────────────────────
 │      Team                      with what was seeded
 │      error                     ErrNotFound · ErrNameTaken
+│                                *textlimit.FieldError
 ├─ example ───────────────────────────────────────
 │      "Platform"  →  3 statuses, 5 types, 1 view
 */
@@ -212,6 +220,10 @@ func NewService(pool *pgxpool.Pool) *Service {
 // Running once is guaranteed here by construction: this is the only path that creates a
 // team, and it seeds inside the same statement's transaction.
 func (s *Service) Create(ctx context.Context, accountID string, p CreateParams) (Team, error) {
+	if err := textlimit.Required("name", p.Name, MaxNameLength); err != nil {
+		return Team{}, err
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Team{}, fmt.Errorf("team: begin: %w", err)

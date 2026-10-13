@@ -15,8 +15,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
 
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -115,6 +118,49 @@ func NewError(status int, code, detail string) *Error {
 		},
 		Code: code,
 	}
+}
+
+/*
+┌─ api ───────────────────────────────────────────
+│  a 422 that names the field it is about
+├─ in ────────────────────────────────────────────
+│      code        string    one of the constants above
+│      detail      string    prose, for a person
+│      location    string    body.status_id · header.Idempotency-Key
+│      message     string    what is wrong with it
+├─ out ───────────────────────────────────────────
+│      *Error      status 422, errors[] holding the one entry
+├─ example ───────────────────────────────────────
+│      "body.status_id"  →  errors[0].location "body.status_id"
+*/
+
+// newFieldError is for a rule only the service can check - the status exists, the
+// assignee is in the workspace - which still has to land where a schema violation does:
+// a 422 whose errors[] points at the field, so a form can put the message beside the
+// input. The code is what distinguishes it from the derived unprocessable_entity.
+func newFieldError(code, detail, location, message string) *Error {
+	e := NewError(http.StatusUnprocessableEntity, code, detail)
+	e.Errors = []*huma.ErrorDetail{{Message: message, Location: location}}
+
+	return e
+}
+
+// limitError turns a textlimit refusal into the same 422 huma's schema validation gives
+// an over-long value, so the two paths cannot be told apart by a client: the location
+// is body.<field> either way. Nil for any other error, so a handler's mapping can fall
+// through.
+//
+// Reaching it takes a rule huma's schema cannot express - a title of nothing but spaces -
+// or a caller that is not this API, since the schema's maxLength refuses an over-long
+// value first.
+func limitError(err error) *Error {
+	var fe *textlimit.FieldError
+	if !errors.As(err, &fe) {
+		return nil
+	}
+
+	return newFieldError(defaultCode(http.StatusUnprocessableEntity),
+		"the "+fe.Field+" was not accepted", "body."+fe.Field, fe.Message())
 }
 
 /*

@@ -206,4 +206,99 @@ same version cannot both pass; the second blocks on the first's row lock and re-
 against what it committed.
 
 **Reading an archived ticket stays `404`.** `current` in a 409 is the single exception, and
-`internal/ticket/conflict.go` is the only place that reads `ticket` without `liveOnly`.
+`internal/ticket/conflict.go` and the idempotency lookup in `internal/ticket/refusal.go`
+(§10) are the only places that read `ticket` without `liveOnly`.
+
+## 10. A create may carry a key so a retry is not a duplicate: `Idempotency-Key`
+
+Enforced by `internal/ticket`'s `idempotency_test.go` (the service, including 16 concurrent
+creates) and `internal/api`'s `idempotency_test.go` (the wire). A client creates a ticket, the
+connection drops, and it cannot tell whether the ticket exists. Retrying blindly makes a
+duplicate; not retrying loses the work. LAM-75.
+
+**The format.** `POST /tickets` takes an optional request header:
+
+    Idempotency-Key: 2b0a7c9e-5d1f-4c8e-9a53-0f2f8d6b1e47
+
+1 to 128 printable ASCII characters (space to `~`); a UUID is the obvious choice. Anything
+else — empty, longer than 128, non-ASCII or a control character, or the header sent twice —
+is a `422` on `header.Idempotency-Key`. Only `POST /tickets` takes it; the other writes are
+already safe to repeat (`PUT` replaces, archive and unarchive are refused when repeated, and
+all three can carry `If-Match`).
+
+**No header, no change.** A create without it behaves exactly as before.
+
+**The same key from the same account** returns the ticket the first call created instead of
+creating another.
+
+| Situation | Answer |
+| --- | --- |
+| First use of the key | Creates. `200`, `Idempotent-Replayed: false` |
+| Key already used by this account, ticket live | `200`, `Idempotent-Replayed: true`, **the original ticket as it is now** (edits made since are in it; so is `version`) |
+| Key already used, ticket since archived | `409 ticket_archived`, `current` = the ticket, `changed_by` / `changed_at` = who archived it and when. Nothing is created |
+| Same key, different account | Independent: that account's own ticket. Keys are scoped to the creator, so one account's key can never return, or reveal, another's ticket |
+| Key used, but the account can no longer reach the ticket's project | `404 ticket_not_found`, as for any ticket it cannot reach |
+
+**200 for both, and a header to tell them apart.** A fresh create has always answered `200`,
+and v1 is additive-only (ADR 0003), so it cannot become `201`. Making only the replay differ
+(`200` vs `201`) would put the distinction in the one place a client that never heard of
+the key would misread it. `Idempotent-Replayed` is `true` or `false` whenever a key was sent,
+and absent otherwise.
+
+**A replay writes nothing.** No second row, no version bump, no search reindex, and no
+`ticket.created` on the change feed ([realtime.md](realtime.md)) — the first create already
+told everyone, and a second event would make every watcher insert the same ticket twice.
+
+**A replay ignores its body.** The key identifies the *request*, and the answer is whatever
+that request created. A replay with a different title, project, status or anything else gets
+the original back, unchanged; to create a different ticket, send a different key. There is
+no body fingerprint and no "key reused with different parameters" error: a retry after an
+edit to a form is far more common than a client that reuses a key by mistake, and a hard
+refusal would turn a retry into a failure. (The body still has to be valid: a replay with an
+over-long title is a `422` before the key is looked at.)
+
+**Why an archived original is a 409, not the archived body or a 404.** A ticket body does not
+say it is archived, so answering `200` with it would tell a sync client its create succeeded
+and the ticket is live. A `404` would tell it the create never happened, and the natural next
+step — create again, under a new key — makes the duplicate this exists to prevent. `409
+ticket_archived` is the answer §9 already gives for "this ticket was archived and here is
+the whole of it": the client learns that the ticket exists, its id and contents, who archived
+it and when, and can restore it (`POST /tickets/{id}/unarchive`, sending `current.version` as
+`If-Match`) or discard its local copy. Either way, no second ticket.
+
+**Race-safe.** The key is stored on the ticket row with its creator (`created_by`), under a
+partial unique index, and the insert is `INSERT … ON CONFLICT (created_by, idempotency_key)
+DO NOTHING`. Concurrent requests with one key all reach the same insert; exactly one writes,
+the others wait for it to commit and read its row. There is no check-then-insert. The
+concurrent test fires 16 at once.
+
+**No expiry.** A key lives as long as its ticket; nothing deletes or recycles it. A client
+must not reuse a key for an unrelated create, ever. A retention window is a possible later
+change to the stored column, not to this contract.
+
+## 11. A named id must exist, and belong to the right place
+
+Enforced by `internal/ticket`'s `ticket_test.go` and `internal/api`'s `ticket_refs_test.go`.
+`status_id` and `assignee_id` on a ticket create or update are checked as part of the write.
+Each failure is a `422` at its own field with its own code: `status_not_found` at
+`body.status_id`, `assignee_not_found` at `body.assignee_id` (`docs/api-errors.md`).
+
+- A **status** must belong to the team of the ticket's project. A status of another team is
+  the same error as one that does not exist.
+- An **assignee** must be a member of the ticket's workspace. An account from elsewhere is
+  the same error as one that does not exist, so the error is no oracle for account ids.
+- Both are predicates of the `INSERT` / `UPDATE` itself, not a read before it, so there is no
+  window between check and write; only when the statement writes nothing does a second
+  statement (same transaction) work out which rule failed. A foreign-key violation that
+  still gets through is mapped by constraint name (`ticket_status_id_fkey`,
+  `ticket_assignee_account_id_fkey`), never by its message.
+- The schema does not enforce the team rule (`ticket.status_id` is a plain foreign key and
+  `ticket` carries no `team_id`), so this is the only thing that does; a migration adding a
+  composite key is the stronger fix and is not made here.
+- Order, when more than one thing is wrong on an update: ticket absent or unreachable
+  (`404`), then stale `If-Match` (`409`), then `status_not_found`, then `assignee_not_found`.
+  One error at a time.
+
+`status_id` and `assignee_id` are **optional keys on create** — absent means null — and stay
+required keys (null allowed) on `PUT`, which is a full replace. `description` is optional on
+create the same way. `bare` is optional on team and project creation, default false.
