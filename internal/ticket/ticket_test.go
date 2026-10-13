@@ -177,7 +177,7 @@ func TestScopingHidesOtherWorkspacesTickets(t *testing.T) {
 	if _, err := w.svc.Update(ctx, w.outsid, ticket.UpdateParams{ID: made.ID, Title: "hijacked"}); !errors.Is(err, ticket.ErrNotFound) {
 		t.Errorf("update as an outsider = %v, want ErrNotFound", err)
 	}
-	if err := w.svc.Archive(ctx, w.outsid, made.ID); !errors.Is(err, ticket.ErrNotFound) {
+	if _, err := w.svc.Archive(ctx, w.outsid, made.ID, nil); !errors.Is(err, ticket.ErrNotFound) {
 		t.Errorf("archive as an outsider = %v, want ErrNotFound", err)
 	}
 
@@ -270,7 +270,7 @@ func TestArchiveKeepsTheRowAndItsComments(t *testing.T) {
 		t.Fatalf("comment: %v", err)
 	}
 
-	if err := w.svc.Archive(ctx, w.member, made.ID); err != nil {
+	if _, err := w.svc.Archive(ctx, w.member, made.ID, nil); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 
@@ -298,7 +298,7 @@ func TestArchivedTicketsAreInvisible(t *testing.T) {
 	ctx := context.Background()
 	made := w.create(t, "Fix login")
 
-	if err := w.svc.Archive(ctx, w.member, made.ID); err != nil {
+	if _, err := w.svc.Archive(ctx, w.member, made.ID, nil); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 
@@ -321,14 +321,14 @@ func TestArchivingRemovesTheTicketFromSearch(t *testing.T) {
 		t.Fatalf("index rows after create = %d, want 1", n)
 	}
 
-	if err := w.svc.Archive(ctx, w.member, made.ID); err != nil {
+	if _, err := w.svc.Archive(ctx, w.member, made.ID, nil); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 	if n := w.indexRows(t, made.ID); n != 0 {
 		t.Errorf("index rows after archive = %d, want 0 - an archived ticket is still searchable", n)
 	}
 
-	if err := w.svc.Unarchive(ctx, w.member, made.ID); err != nil {
+	if _, err := w.svc.Unarchive(ctx, w.member, made.ID, nil); err != nil {
 		t.Fatalf("unarchive: %v", err)
 	}
 	if n := w.indexRows(t, made.ID); n != 1 {
@@ -342,10 +342,10 @@ func TestUnarchiveRestoresTheTicket(t *testing.T) {
 	ctx := context.Background()
 	made := w.create(t, "Fix login")
 
-	if err := w.svc.Archive(ctx, w.member, made.ID); err != nil {
+	if _, err := w.svc.Archive(ctx, w.member, made.ID, nil); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
-	if err := w.svc.Unarchive(ctx, w.member, made.ID); err != nil {
+	if _, err := w.svc.Unarchive(ctx, w.member, made.ID, nil); err != nil {
 		t.Fatalf("unarchive: %v", err)
 	}
 
@@ -365,13 +365,13 @@ func TestArchiveAndUnarchiveRefuseNoOps(t *testing.T) {
 	ctx := context.Background()
 	made := w.create(t, "Fix login")
 
-	if err := w.svc.Unarchive(ctx, w.member, made.ID); !errors.Is(err, ticket.ErrNotFound) {
+	if _, err := w.svc.Unarchive(ctx, w.member, made.ID, nil); !errors.Is(err, ticket.ErrNotFound) {
 		t.Errorf("unarchive a live ticket = %v, want ErrNotFound", err)
 	}
-	if err := w.svc.Archive(ctx, w.member, made.ID); err != nil {
+	if _, err := w.svc.Archive(ctx, w.member, made.ID, nil); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
-	if err := w.svc.Archive(ctx, w.member, made.ID); !errors.Is(err, ticket.ErrNotFound) {
+	if _, err := w.svc.Archive(ctx, w.member, made.ID, nil); !errors.Is(err, ticket.ErrNotFound) {
 		t.Errorf("archive twice = %v, want ErrNotFound", err)
 	}
 }

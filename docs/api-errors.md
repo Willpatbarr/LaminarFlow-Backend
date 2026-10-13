@@ -48,6 +48,8 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `password_too_short` | 422 | Registration with a password under 10 characters (characters, not bytes). Nothing was created |
 | `password_too_long` | 422 | Registration with a password over 72 bytes, bcrypt's limit. Rejected rather than silently truncated |
 | `ticket_not_found` | 404 | Any ticket operation: absent, archived, or outside your scope |
+| `ticket_conflict` | 409 | A ticket write that sent `If-Match` and lost: the ticket was edited since that version. Nothing was written. The body carries the current ticket and who changed it and when — see [Conflicts carry the other side](#conflicts-carry-the-other-side) |
+| `ticket_archived` | 409 | The same, when the ticket was *archived* since that version. Same extra members, describing the archive. Only with `If-Match`: without it, a write to an archived ticket is still `ticket_not_found` |
 | `filter_invalid` | 422 | A list body whose filter, sort or page size was rejected. `errors[]` names each problem |
 | `cursor_mismatch` | 400 | A list cursor replayed under a different filter or sort. Start again from the first page |
 | `bad_cursor` | 400 | A list cursor that does not decode. Pass back a `next_cursor` unchanged |
@@ -63,6 +65,38 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `project_not_found` | 404 | The team a project was created in, or a project outside your scope |
 | `account_not_found` | 404 | An account deletion that found nothing. A retried delete is the ordinary way to see it |
 | *derived* | any | Everything huma raises on its own behalf — `defaultCode` turns the status text into a code |
+
+## Conflicts carry the other side
+
+`ticket_conflict` and `ticket_archived` are the only failures with members beyond the table above. They are RFC 9457 *extension members*, so they sit at the top level beside `code`:
+
+```json
+{
+  "title": "Conflict",
+  "status": 409,
+  "detail": "the ticket has changed since the version you sent",
+  "code": "ticket_conflict",
+  "current": {
+    "id": "8b1c…", "project_id": "…", "title": "Fix login properly", "description": "",
+    "status_id": null, "assignee_id": null,
+    "updated_at": "2026-10-13T17:02:11Z", "updated_by": "4f0e…", "version": 6
+  },
+  "changed_by": {"account_id": "4f0e…", "display_name": "Sarah Okafor"},
+  "changed_at": "2026-10-13T17:02:11Z"
+}
+```
+
+| Member | Meaning |
+| --- | --- |
+| `current` | The server's copy right now, in the shape of `GET /tickets/{id}` (`TicketBody`). Present for `ticket_archived` too, although the ticket reads as not found everywhere else — this is the one place an archived ticket is shown, and only to a caller who can reach it |
+| `changed_by` | `{account_id, display_name}` of whoever made the change that caused the refusal. For `ticket_archived`, who archived it. **Null** when not recorded (a ticket written before `updated_by` existed) or when that account has since been deleted — show it as "someone" |
+| `changed_at` | When. For `ticket_archived`, when it was archived |
+
+`changed_by.account_id` equal to your own account means the change was yours: a retry of a write whose first attempt landed but whose response was lost. Compare `current` with what you meant to write before treating it as a conflict.
+
+`detail` is prose and may be reworded; compose any user-facing sentence ("edited by Sarah 2 minutes ago") from `changed_by` and `changed_at`.
+
+The members are declared in the OpenAPI document as the `TicketConflict` schema, on the 409 of `update-ticket`, `archive-ticket` and `unarchive-ticket`, so generated client types include them. See `docs/api-conventions.md` §9 for the precondition itself.
 
 ## Status codes
 

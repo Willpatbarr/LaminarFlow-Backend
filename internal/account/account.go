@@ -77,6 +77,7 @@ type Removal struct {
 ┃      Delete(ctx, accountID)   →  Removal, error
 ┃      Register(ctx, NewAccount)  →  Registration, error
 ┃      Profile(ctx, accountID)  →  Profile, error
+┃      DisplayName(ctx, accountID)  →  string, error
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      NewService                  one per process
 */

@@ -222,6 +222,38 @@ func (s *Service) Profile(ctx context.Context, accountID string) (Profile, error
 	return p, nil
 }
 
+/*
+┌─ account ───────────────────────────────────────
+│  the name a client shows for someone else's edit
+├─ in ────────────────────────────────────────────
+│      ctx          context.Context
+│      accountID    string
+├─ out ───────────────────────────────────────────
+│      string                  the display name
+│      error                   ErrNotFound
+├─ example ───────────────────────────────────────
+│      Sarah's id  →  "Sarah Okafor"
+*/
+
+// DisplayName exists so that a package which must say who did something does not read
+// the account table to find out. Ticket conflicts name the account that changed the
+// ticket, and sqlguard keeps account reads to this package and auth - joining it from
+// internal/ticket would mean widening that rule for one column.
+func (s *Service) DisplayName(ctx context.Context, accountID string) (string, error) {
+	var name string
+
+	err := s.pool.QueryRow(ctx,
+		`SELECT display_name FROM account WHERE id = $1::uuid`, accountID).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("account: display name: %w", err)
+	}
+
+	return name, nil
+}
+
 // isUniqueViolation reports a 23505 on the named constraint or index. Named, because a
 // unique violation on some other constraint is a bug to surface, not an email to blame.
 func isUniqueViolation(err error, constraint string) bool {
