@@ -169,6 +169,57 @@ func TestTicketConstraints(t *testing.T) {
 		}
 	})
 
+	// 0031. A ticket starts at version 1 without being told, which is also what existing
+	// rows became when the column was added.
+	t.Run("a ticket's version defaults to 1 and cannot be below it", func(t *testing.T) {
+		_, _, project := scaffold(t, "version")
+
+		var version int
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO ticket (project_id, title) VALUES ($1::uuid, 'Fresh') RETURNING version`, project,
+		).Scan(&version); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+		if version != 1 {
+			t.Errorf("version = %d, want 1", version)
+		}
+
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO ticket (project_id, title, version) VALUES ($1::uuid, 'Zero', 0)`, project,
+		); err == nil {
+			t.Error("a ticket at version 0 was accepted")
+		}
+	})
+
+	// Work outlives the people who touched it: the same call 0011 made for assignees.
+	// Losing the name of whoever last edited or archived a ticket is a nil in a 409, not a
+	// ticket that cannot be kept.
+	t.Run("deleting an account leaves the ticket standing, with no writer or archiver", func(t *testing.T) {
+		_, _, project := scaffold(t, "writers")
+		account := newAccount(t, pool, "writer@example.com")
+
+		var id string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO ticket (project_id, title, updated_by, archived_by, archived_at)
+			 VALUES ($1::uuid, 'Touched', $2::uuid, $2::uuid, now()) RETURNING id::text`, project, account,
+		).Scan(&id); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM account WHERE id = $1::uuid`, account); err != nil {
+			t.Fatalf("delete account: %v", err)
+		}
+
+		var updatedBy, archivedBy *string
+		if err := pool.QueryRow(ctx,
+			`SELECT updated_by::text, archived_by::text FROM ticket WHERE id = $1::uuid`, id,
+		).Scan(&updatedBy, &archivedBy); err != nil {
+			t.Fatalf("the ticket did not survive its writer: %v", err)
+		}
+		if updatedBy != nil || archivedBy != nil {
+			t.Errorf("updated_by %v, archived_by %v, want both nulled", updatedBy, archivedBy)
+		}
+	})
+
 	t.Run("deleting a project deletes its tickets", func(t *testing.T) {
 		_, _, project := scaffold(t, "project-cascade")
 
@@ -208,9 +259,9 @@ func TestTicketConstraints(t *testing.T) {
 	})
 
 	// Every referencing column needs a leading index. project_id for the
-	// board read, and the other two so a SET NULL does not scan the whole
+	// board read, and the others (0031's two included) so a SET NULL does not scan the whole
 	// ticket table to find the rows it has to null.
-	for _, col := range []string{"project_id", "status_id", "assignee_account_id"} {
+	for _, col := range []string{"project_id", "status_id", "assignee_account_id", "updated_by", "archived_by"} {
 		t.Run(col+" leads an index", func(t *testing.T) {
 			var leads bool
 			if err := pool.QueryRow(ctx,

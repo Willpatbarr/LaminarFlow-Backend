@@ -218,6 +218,29 @@ func TestProfileReportsTheAccountAndItsWorkspace(t *testing.T) {
 	}
 }
 
+// LAM-65. A ticket conflict names who changed the ticket, and internal/ticket may not read
+// account to find out.
+func TestDisplayNameIsTheNameAClientShows(t *testing.T) {
+	_, svc := freshInstall(t, true)
+	ctx := context.Background()
+
+	reg, err := svc.Register(ctx, account.NewAccount{
+		Email: "sarah@example.com", PasswordHash: "h", DisplayName: "Sarah Okafor",
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	got, err := svc.DisplayName(ctx, reg.AccountID)
+	if err != nil || got != "Sarah Okafor" {
+		t.Errorf("display name = %q, %v, want Sarah Okafor", got, err)
+	}
+
+	if _, err := svc.DisplayName(ctx, "00000000-0000-4000-8000-000000000000"); !errors.Is(err, account.ErrNotFound) {
+		t.Errorf("display name of nobody = %v, want ErrNotFound", err)
+	}
+}
+
 func TestProfileOfAnAccountWithNoMembershipHasNoWorkspace(t *testing.T) {
 	w := newWorld(t)
 

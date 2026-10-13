@@ -127,8 +127,7 @@ func (s *Service) List(ctx context.Context, accountID string, p ListParams) (Pag
 			key = make([]*string, len(plan.Keys))
 		)
 
-		dest := []any{&t.ID, &t.ProjectID, &t.Title, &t.Description,
-			&t.StatusID, &t.AssigneeID, &t.CreatedAt, &t.UpdatedAt}
+		dest := t.dest()
 		for i := range key {
 			dest = append(dest, &key[i])
 		}

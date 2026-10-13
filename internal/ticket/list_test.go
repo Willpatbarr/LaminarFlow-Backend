@@ -206,7 +206,7 @@ func TestListExcludesArchivedTickets(t *testing.T) {
 	kept := w.create(t, "kept")
 	gone := w.create(t, "archived")
 
-	if err := w.svc.Archive(context.Background(), w.member, gone.ID); err != nil {
+	if _, err := w.svc.Archive(context.Background(), w.member, gone.ID, nil); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 

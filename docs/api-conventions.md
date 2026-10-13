@@ -142,3 +142,62 @@ the next person adding a reader to that list would change nothing.
 Use it only where a full list would name most of the module. Where the reader set is
 small, write it out — "internal/search may read `ticket`" carries a reason, and a
 wildcard does not.
+
+## 9. A write may carry the version it last saw: `If-Match`
+
+Enforced by `internal/ticket`'s `conflict_test.go` (the service) and `internal/api`'s
+`ticket_conflict_test.go` (the wire). A local-first client edits a ticket, then syncs later;
+if someone changed or archived it meanwhile, overwriting silently loses their work and the
+client cannot say why. LAM-65.
+
+**The format.** `PUT /tickets/{id}`, `DELETE /tickets/{id}` (archive) and
+`POST /tickets/{id}/unarchive` take an optional request header:
+
+    If-Match: "4"
+
+The version in double quotes — exactly what the `ETag` response header carries. One value
+only: a list of tags, a weak tag (`W/"4"`), `*`, an unquoted number and `"0"` are all a `422`
+on `header.If-Match`. A malformed precondition is refused, never guessed at.
+
+**A header, not a body field.** Archive and unarchive have no body, and a precondition that
+`PUT` takes in one place and `DELETE` in another is two rules. `If-Match` is also what HTTP
+already calls this, so a client library or proxy that knows it behaves. (RFC 9110 would make
+a failed `If-Match` a `412`; the API-wide rule is that a stale write is `409` with a body
+the client can act on — `docs/api-errors.md` — so it is.)
+
+**`version`.** On `TicketBody` (every ticket response, the list included). Starts at 1 on
+create; rises by exactly 1 on every successful update, archive and unarchive; nothing else
+moves it. Each of those responses also carries it as `ETag: "<version>"` — the only way an
+archive or unarchive, which return `204`, can tell a client its ticket is now at 5. Do not
+use `updated_at` as a precondition: it is a transaction timestamp and two writes can share
+one.
+
+**No header, no precondition.** A request without `If-Match` behaves exactly as it did
+before: last write wins, and a write to an archived ticket is `ticket_not_found`. API-token
+scripts that have never heard of versions are unaffected, which is why this is not
+mandatory and will not become so inside v1 (ADR 0003).
+
+**With it:**
+
+| Situation | Answer |
+| --- | --- |
+| Ticket at that version, live | The write happens. Version + 1 |
+| Ticket live, at another version | `409 ticket_conflict`, nothing written |
+| Ticket archived (update or archive) | `409 ticket_archived`, whatever version was sent |
+| Unarchive, ticket archived at that version | Restored. Version + 1 |
+| Unarchive, ticket archived at another version, or live at another version | `409 ticket_conflict` |
+| Unarchive, ticket live *at that version* | `404 ticket_not_found`, as without the header |
+| Ticket absent, or not yours | `404 ticket_not_found`. The 409 never reveals a ticket the caller cannot reach |
+
+**Forcing.** A client that has seen the 409 and decided its edit should win resends with
+the `current.version` from the 409 — still conditional, so a *third* writer in the gap
+is caught too. Omitting the header is a blind overwrite and is for scripts.
+
+**Atomic.** The check is the last predicate of the `UPDATE` that writes
+(`… WHERE version = $n RETURNING`); there is no read before it. Only when it matches no row
+does a second statement run — in the same transaction — to say *why*. Two writers with the
+same version cannot both pass; the second blocks on the first's row lock and re-evaluates
+against what it committed.
+
+**Reading an archived ticket stays `404`.** `current` in a 409 is the single exception, and
+`internal/ticket/conflict.go` is the only place that reads `ticket` without `liveOnly`.
