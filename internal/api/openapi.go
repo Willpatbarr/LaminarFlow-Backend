@@ -79,7 +79,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	if authSvc != nil {
 		api.UseMiddleware(authenticate(api, authSvc))
 	}
-	registerAuth(api, authSvc)
+	registerAuth(api, authSvc, accountSvc)
 	registerTickets(api, ticketSvc)
 	registerAspectTypes(api, aspectSvc)
 	registerSettings(api, settingSvc)

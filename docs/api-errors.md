@@ -44,6 +44,9 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | --- | --- | --- |
 | `not_found` | 404 | An unmatched path under `/api/` |
 | `invalid_login` | 401 | Wrong email or wrong password — one answer for both. A *missing* credential is the derived `unauthorized` instead, and the pair is what lets a caller tell "log in" from "you got that wrong" |
+| `email_taken` | 409 | Registration with an address that already has an account, compared case-insensitively. Log in instead, or use another address. This reveals the address is registered — see ADR 0004 for why that is accepted |
+| `password_too_short` | 422 | Registration with a password under 10 characters (characters, not bytes). Nothing was created |
+| `password_too_long` | 422 | Registration with a password over 72 bytes, bcrypt's limit. Rejected rather than silently truncated |
 | `ticket_not_found` | 404 | Any ticket operation: absent, archived, or outside your scope |
 | `filter_invalid` | 422 | A list body whose filter, sort or page size was rejected. `errors[]` names each problem |
 | `cursor_mismatch` | 400 | A list cursor replayed under a different filter or sort. Start again from the first page |

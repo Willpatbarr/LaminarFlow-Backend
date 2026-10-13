@@ -75,6 +75,12 @@ field**, not a named string type: Go converts an untyped string constant to a na
 string type implicitly, so `type Key string` looks like it does the job and does not.
 One function turns a string into a key, and it consults the registry.
 
+`auth.Permission` (LAM-61) is the second. What the API can do is known at compile time and
+reported by `GET /auth/me` as a list of `resource:action` strings; the type is the same
+struct-with-an-unexported-field shape, `auth.ParsePermission` is its one door, and
+`auth.Permissions` is the one function that says who holds what. Roles will narrow that
+function's answer without touching its shape.
+
 The opposite call is also on the record: `board.group_by` and `status.category` are
 `CHECK`s, because they are facts about a *row* and every renderer branches on them.
 `internal/setting`'s tests assert the registry and `board.group_by`'s CHECK agree, in
@@ -103,7 +109,7 @@ else.
 A table gets a rule when it has one writer whose invariants matter, and the rule is
 worth having even when almost everything reads the table.
 
-`team`, `project` and `account` are all joined by nearly every service's scoping
+`team`, `project`, `account` and `workspace_member` are all joined by nearly every service's scoping
 predicate. Writing each of those readers out would produce a list that permits
 everything and asserts nothing, which is why `team` and `project` originally shipped
 with no rule at all. `sqlguard.AnyReader` says *reads unguarded, writes are not* using
@@ -115,6 +121,7 @@ the rule still asserts the thing that matters:
 | `team` | Seeding. A team with no statuses, no aspect types, no saved view — and no error |
 | `project` | The board a project renders with |
 | `account` | LAM-51's repair. An orphaned private view, owned by and visible to nobody |
+| `workspace`, `workspace_member` | LAM-61's registration transaction. An account with no membership — a login that reaches an app with nowhere to go |
 
 `AnyReader` beside a named reader is refused: the named entry would be decoration, and
 the next person adding a reader to that list would change nothing.

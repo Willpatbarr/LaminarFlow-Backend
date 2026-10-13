@@ -30,3 +30,24 @@ func TestNoAccountSQLOutsideThisPackage(t *testing.T) {
 		Fixtures: []string{"auth", "aspect", "document", "setting", "team", "ticket"},
 	})
 }
+
+// LAM-61. Registration is one transaction over account, workspace and workspace_member,
+// and this package is its only writer: an account with no membership is a login that
+// reaches an app with nowhere to go, and nothing in the schema stops one.
+//
+// Reads are unguarded (AnyReader) for the reason team and project are: every service's
+// scoping predicate joins workspace_member, so a reader list would name most of the
+// module and assert nothing. The invariant was only ever about writes.
+//
+// Fixtures is the five packages whose tests create "the other workspace" or a
+// membership to prove scoping against, plus api, whose registration tests empty the
+// install to reach the no-workspace branch. All are _test.go only; production code in
+// any of them is guarded exactly as before.
+func TestNoWorkspaceSQLOutsideThisPackage(t *testing.T) {
+	sqlguard.Assert(t, sqlguard.Rule{
+		Owner:    "account",
+		Tables:   []string{"workspace", "workspace_member"},
+		Readers:  []string{sqlguard.AnyReader},
+		Fixtures: []string{"api", "aspect", "document", "setting", "team", "ticket"},
+	})
+}

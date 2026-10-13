@@ -2,9 +2,13 @@
 ╔═ auth.go ═════════════════════════════════════════════════════════════════════════════
 ║  http handlers · authentication
 ╠═ declares ════════════════════════════════════════════════════════════════════════════
-║      RequireAuth    operation metadata key
+║      RequireAuth             operation metadata key
+║      CodeInvalidLogin        const
+║      CodeEmailTaken          const
+║      CodePasswordTooShort    const
+║      CodePasswordTooLong     const
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
-║      NewHumaAPI  →  login · logout · me, and the middleware
+║      NewHumaAPI  →  register · login · logout · me, and the middleware
 ╚═══════════════════════════════════════════════════════════════════════════════════════
 */
 
@@ -12,9 +16,13 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/account"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -32,6 +40,33 @@ const RequireAuth = "auth:required"
 // A missing credential takes LAM-53's derived default, "unauthorized".
 const CodeInvalidLogin = "invalid_login"
 
+// The three ways a registration is refused for reasons the caller can fix. Each has a
+// code because each wants a different message beside a different field: "that address is
+// taken" belongs under the email box, the other two under the password box.
+const (
+	CodeEmailTaken       = "email_taken"
+	CodePasswordTooShort = "password_too_short"
+	CodePasswordTooLong  = "password_too_long"
+)
+
+type registerInput struct {
+	Body struct {
+		Email       string `json:"email" required:"true" format:"email" maxLength:"254" doc:"Matched case-insensitively. Must not already be registered." example:"will@example.com"`
+		Password    string `json:"password" required:"true" doc:"At least 10 characters and at most 72 bytes. Never logged, never echoed."`
+		DisplayName string `json:"display_name" required:"true" minLength:"1" maxLength:"100" doc:"What the app shows for this person. Not unique." example:"Will Barr"`
+	}
+}
+
+// registerOutput sets the cookie exactly as login does, so sign-up lands logged in.
+type registerOutput struct {
+	SetCookie http.Cookie `header:"Set-Cookie"`
+	Body      struct {
+		AccountID        string `json:"account_id"`
+		WorkspaceID      string `json:"workspace_id" doc:"The workspace the account now belongs to."`
+		WorkspaceCreated bool   `json:"workspace_created" doc:"True when this registration created the workspace - a fresh install with none."`
+	}
+}
+
 type loginInput struct {
 	Body struct {
 		Email    string `json:"email" required:"true" doc:"Matched case-insensitively." example:"will@example.com"`
@@ -45,8 +80,12 @@ type logoutInput struct {
 
 type meOutput struct {
 	Body struct {
-		AccountID string `json:"account_id" doc:"The authenticated account."`
-		Via       string `json:"via" doc:"Which credential authenticated this request." example:"session"`
+		AccountID   string   `json:"account_id" doc:"The authenticated account."`
+		Via         string   `json:"via" doc:"Which credential authenticated this request." example:"session"`
+		Email       string   `json:"email"`
+		DisplayName string   `json:"display_name" doc:"What the app shows for this person."`
+		WorkspaceID *string  `json:"workspace_id" doc:"The workspace this account belongs to. Null only for an account with no membership."`
+		Permissions []string `json:"permissions" nullable:"false" doc:"Everything this credential may do, as resource:action. Gate UI on membership in this list, not on its length: there is no authority model yet, so today every credential holds the full set, and roles will narrow it without changing its shape." example:"ticket:write"`
 	}
 }
 
@@ -65,15 +104,85 @@ type loginOutput struct {
 
 /*
 ┌─ api ───────────────────────────────────────────
-│  registers login, logout and me on the api
+│  registers register, login, logout and me
 ├─ in ────────────────────────────────────────────
-│      api    huma.API
-│      svc    *auth.Service      nil only for cmd/openapi
+│      api         huma.API
+│      svc         *auth.Service       nil only for cmd/openapi
+│      accounts    *account.Service    nil only for cmd/openapi
 ├─ example ───────────────────────────────────────
-│      →  POST /api/v1/auth/login, /logout, GET /me
+│      →  POST /api/v1/auth/register, /login, /logout, GET /me
 */
 
-func registerAuth(api huma.API, svc *auth.Service) {
+func registerAuth(api huma.API, svc *auth.Service, accounts *account.Service) {
+	huma.Register(api, huma.Operation{
+		OperationID:   "register",
+		Method:        http.MethodPost,
+		Path:          V1 + "/auth/register",
+		Summary:       "Create an account and log in as it",
+		DefaultStatus: http.StatusCreated,
+		Description: "Public: this is how a person gets a session. Creates the account and, in the same " +
+			"transaction, its membership of the workspace - creating the workspace first if the install " +
+			"has none. On success it sets the session cookie exactly as login does.\n\n" +
+			"Single-workspace model: when a workspace already exists the new account joins it as a member. " +
+			"There is no invitation or approval step yet (ADR 0004), so until there is, anyone who can " +
+			"reach this endpoint can join - do not expose it beyond a trusted network.\n\n" +
+			"A duplicate email answers 409 `email_taken`. That reveals the address is registered, which " +
+			"a registration endpoint cannot avoid; it costs the same time as a success.",
+	}, func(ctx context.Context, in *registerInput) (*registerOutput, error) {
+		name := strings.TrimSpace(in.Body.DisplayName)
+		if name == "" {
+			// minLength passes " ", so the schema alone would store a blank name.
+			return nil, huma.Error422UnprocessableEntity("display name must not be blank",
+				&huma.ErrorDetail{Message: "must not be blank", Location: "body.display_name"})
+		}
+
+		switch err := auth.ValidatePassword(in.Body.Password); {
+		case errors.Is(err, auth.ErrPasswordTooShort):
+			return nil, NewError(http.StatusUnprocessableEntity, CodePasswordTooShort,
+				fmt.Sprintf("password must be at least %d characters", auth.MinPasswordLength))
+		case errors.Is(err, auth.ErrPasswordTooLong):
+			return nil, NewError(http.StatusUnprocessableEntity, CodePasswordTooLong,
+				fmt.Sprintf("password must be at most %d bytes", auth.MaxPasswordBytes))
+		}
+
+		// Hashed before the email is looked at, so a taken address pays the same
+		// bcrypt cost a free one does and the response time says nothing the 409
+		// does not. The hash is auth's: this package has one implementation of it.
+		hash, err := auth.HashPassword(in.Body.Password)
+		if err != nil {
+			return nil, err
+		}
+
+		reg, err := accounts.Register(ctx, account.NewAccount{
+			Email:        in.Body.Email,
+			PasswordHash: hash,
+			DisplayName:  name,
+		})
+		if errors.Is(err, account.ErrEmailTaken) {
+			return nil, NewError(http.StatusConflict, CodeEmailTaken,
+				"an account with this email already exists")
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// A separate step from the registration, deliberately. If it fails the
+		// account exists and the caller can log in; making the two atomic would mean
+		// auth writing inside account's transaction for a failure that costs one
+		// extra request to recover from.
+		id, expiresAt, err := svc.OpenSession(ctx, reg.AccountID)
+		if err != nil {
+			return nil, err
+		}
+
+		out := &registerOutput{SetCookie: *auth.SessionCookie(id, expiresAt)}
+		out.Body.AccountID = reg.AccountID
+		out.Body.WorkspaceID = reg.WorkspaceID
+		out.Body.WorkspaceCreated = reg.WorkspaceCreated
+
+		return out, nil
+	})
+
 	huma.Register(api, huma.Operation{
 		OperationID: "login",
 		Method:      http.MethodPost,
@@ -132,12 +241,28 @@ func registerAuth(api huma.API, svc *auth.Service) {
 			return nil, huma.Error401Unauthorized("this endpoint requires a credential")
 		}
 
+		profile, err := accounts.Profile(ctx, id.AccountID)
+		if errors.Is(err, account.ErrNotFound) {
+			// A live credential for a deleted account. The credentials CASCADE with
+			// the account, so only a request in flight during the delete gets here.
+			return nil, huma.Error401Unauthorized("this endpoint requires a credential")
+		}
+		if err != nil {
+			return nil, err
+		}
+
 		out := &meOutput{}
 		out.Body.AccountID = id.AccountID
 		out.Body.Via = "token"
 		if id.SessionID != "" {
 			out.Body.Via = "session"
 		}
+		out.Body.Email = profile.Email
+		out.Body.DisplayName = profile.DisplayName
+		if profile.WorkspaceID != "" {
+			out.Body.WorkspaceID = &profile.WorkspaceID
+		}
+		out.Body.Permissions = auth.Permissions(id)
 
 		return out, nil
 	})
