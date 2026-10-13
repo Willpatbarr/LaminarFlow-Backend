@@ -23,6 +23,6 @@ func TestNoTicketSQLOutsideThisPackage(t *testing.T) {
 		// setup, and routing them through Create would make every such test build a
 		// membership graph to satisfy a predicate it is not testing. Production
 		// code in these packages is still guarded.
-		Fixtures: []string{"account", "document", "search"},
+		Fixtures: []string{"account", "document", "migrate", "search"},
 	})
 }

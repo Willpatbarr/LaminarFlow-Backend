@@ -128,17 +128,20 @@ parsing with comments discarded, skipping the owner's own directory, finding the
 rather than assuming a depth — are all invisible when they are wrong, which is the argument
 `internal/dbtest` already makes for itself.
 
-**One exemption, and it is narrow.** `internal/migrate` is skipped by every guard. A schema
-constraint test proves a constraint fires by violating it, so naming the table in an `INSERT`
-is the whole technique — there is no way to assert "`api_token` rejects a null account"
-without SQL naming `api_token`. E-LAM-0003 parked those tests there for every table with no
-owning package. Tables that *do* have an owner keep their schema tests with the owner, which
-is why `internal/document` holds `schema_document_test.go` and `schema_search_index_test.go`
-and needs no exemption at all.
+**One exemption, and it is opt-in (LAM-74).** A schema constraint test proves a constraint
+fires by violating it, so naming the table in an `INSERT` is the whole technique — there is no
+way to assert "`api_token` rejects a null account" without SQL naming `api_token`. E-LAM-0003
+parked those tests in `internal/migrate` for every table with no owning package. Tables that
+*do* have an owner keep their schema tests with the owner, which is why `internal/document`
+holds `schema_document_test.go` and `schema_search_index_test.go`, and `internal/auth` holds
+`schema_api_token_test.go`, and none of them needs an exemption.
 
-That exemption should shrink. `api_token` has an owner now, so
-`internal/migrate/schema_api_token_test.go` belongs in `internal/auth`; moving it requires
-porting `migratedPool` and `wantPgError`, which is its own piece of work.
+`internal/migrate` used to be skipped by every guard outright. It is now an ordinary `Fixtures`
+entry: a rule whose table still has a schema test there lists `"migrate"`, and the `api_token`/
+`session` rule does not. No fourth concept was needed — `Fixtures` already means "`_test.go`
+there is exempt, production code is not". The cost is that a new owned table with a leftover
+schema test in `internal/migrate` fails its guard until that test moves or the rule names it,
+which is the point.
 
 ## search_index moved out — LAM-45
 

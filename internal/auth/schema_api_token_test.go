@@ -1,14 +1,86 @@
-package migrate
+package auth
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// The SQLSTATE codes these tests assert on. Asserting the code rather than "an error
+// came back" is what makes the assertions mean anything: a typo in the INSERT also
+// returns an error, and would otherwise read as a constraint doing its job.
+const (
+	notNullViolation    = "23502"
+	foreignKeyViolation = "23503"
+	uniqueViolation     = "23505"
+)
+
+// A pool on the database TestMain migrated. Unlike internal/migrate's tests, which get
+// a fresh database each, this one is shared by the whole package - so the helpers below
+// make every account email and token prefix unique, or a second run in the same process
+// (-count=2) would collide with the first on the very constraints being tested.
+func schemaPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	if testDatabaseURL == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	pool, err := pgxpool.New(context.Background(), testDatabaseURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	return pool
+}
+
+func newAccount(t *testing.T, pool *pgxpool.Pool, name string) string {
+	t.Helper()
+
+	var id string
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO account (email, password_hash, display_name)
+		 VALUES ($1 || '-' || gen_random_uuid() || '@example.com', 'hash', $1)
+		 RETURNING id::text`, name,
+	).Scan(&id); err != nil {
+		t.Fatalf("create account %s: %v", name, err)
+	}
+
+	return id
+}
+
+func uniquePrefix(prefix string) string {
+	return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano())
+}
+
+// wantPgError fails unless err is a Postgres error carrying code. what names the
+// attempted violation, so a failure says which constraint did not hold.
+func wantPgError(t *testing.T, err error, code, what string) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatalf("%s: statement succeeded, want SQLSTATE %s", what, code)
+	}
+
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("%s: got %v, want a Postgres error with SQLSTATE %s", what, err, code)
+	}
+	if pgErr.Code != code {
+		t.Fatalf("%s: got SQLSTATE %s (%s), want %s", what, pgErr.Code, pgErr.Message, code)
+	}
+}
 
 // The constraints 0008_api_token.sql claims, each asserted by trying to
 // violate it.
 func TestAPITokenConstraints(t *testing.T) {
-	pool := migratedPool(t)
+	pool := schemaPool(t)
 	ctx := context.Background()
 
 	insert := func(accountID, label, prefix string) error {
@@ -32,7 +104,7 @@ func TestAPITokenConstraints(t *testing.T) {
 	})
 
 	t.Run("rejects a null token_prefix", func(t *testing.T) {
-		acct := newAccount(t, pool, "nullprefix@example.com")
+		acct := newAccount(t, pool, "nullprefix")
 
 		_, err := pool.Exec(ctx,
 			`INSERT INTO api_token (account_id, label, token_prefix, token_hash)
@@ -41,7 +113,7 @@ func TestAPITokenConstraints(t *testing.T) {
 	})
 
 	t.Run("rejects a null token_hash", func(t *testing.T) {
-		acct := newAccount(t, pool, "nullhash@example.com")
+		acct := newAccount(t, pool, "nullhash")
 
 		_, err := pool.Exec(ctx,
 			`INSERT INTO api_token (account_id, label, token_prefix, token_hash)
@@ -50,7 +122,7 @@ func TestAPITokenConstraints(t *testing.T) {
 	})
 
 	t.Run("rejects a null label", func(t *testing.T) {
-		acct := newAccount(t, pool, "nulllabel@example.com")
+		acct := newAccount(t, pool, "nulllabel")
 
 		_, err := pool.Exec(ctx,
 			`INSERT INTO api_token (account_id, label, token_prefix, token_hash)
@@ -62,23 +134,26 @@ func TestAPITokenConstraints(t *testing.T) {
 	// ambiguous, and the server would have to bcrypt-compare more than one
 	// row - which is the scan the split-token design exists to avoid.
 	t.Run("rejects a duplicate token_prefix, even across accounts", func(t *testing.T) {
-		first := newAccount(t, pool, "dupprefix-one@example.com")
-		second := newAccount(t, pool, "dupprefix-two@example.com")
+		first := newAccount(t, pool, "dupprefix-one")
+		second := newAccount(t, pool, "dupprefix-two")
+		prefix := uniquePrefix("lam_collision")
 
-		if err := insert(first, "CI", "lam_collision"); err != nil {
+		if err := insert(first, "CI", prefix); err != nil {
 			t.Fatalf("first insert: %v", err)
 		}
 
-		wantPgError(t, insert(second, "CI", "lam_collision"),
+		wantPgError(t, insert(second, "CI", prefix),
 			uniqueViolation, "duplicate token_prefix")
 	})
 
 	// Deny by default. A token created without scopes must grant nothing, so
 	// the default is the empty array rather than null or a wildcard.
 	t.Run("scopes default to empty, not null", func(t *testing.T) {
-		acct := newAccount(t, pool, "defaultscopes@example.com")
+		acct := newAccount(t, pool, "defaultscopes")
 
-		if err := insert(acct, "CI", "lam_defaultscopes"); err != nil {
+		prefix := uniquePrefix("lam_defaultscopes")
+
+		if err := insert(acct, "CI", prefix); err != nil {
 			t.Fatalf("insert: %v", err)
 		}
 
@@ -86,7 +161,7 @@ func TestAPITokenConstraints(t *testing.T) {
 		var expires *string
 		if err := pool.QueryRow(ctx,
 			`SELECT scopes, expires_at::text FROM api_token WHERE token_prefix = $1`,
-			"lam_defaultscopes",
+			prefix,
 		).Scan(&scopes, &expires); err != nil {
 			t.Fatalf("read back: %v", err)
 		}
@@ -101,7 +176,7 @@ func TestAPITokenConstraints(t *testing.T) {
 	})
 
 	t.Run("rejects null scopes", func(t *testing.T) {
-		acct := newAccount(t, pool, "nullscopes@example.com")
+		acct := newAccount(t, pool, "nullscopes")
 
 		_, err := pool.Exec(ctx,
 			`INSERT INTO api_token (account_id, label, token_prefix, token_hash, scopes)
@@ -112,9 +187,9 @@ func TestAPITokenConstraints(t *testing.T) {
 	// A token outliving the account it authenticates is an open door, so this
 	// cascade is a security property, not a convenience.
 	t.Run("deleting an account deletes its tokens", func(t *testing.T) {
-		acct := newAccount(t, pool, "cascade@example.com")
+		acct := newAccount(t, pool, "cascade")
 
-		if err := insert(acct, "Doomed", "lam_cascade"); err != nil {
+		if err := insert(acct, "Doomed", uniquePrefix("lam_cascade")); err != nil {
 			t.Fatalf("insert: %v", err)
 		}
 

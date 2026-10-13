@@ -21,6 +21,6 @@ func TestNoSettingSQLOutsideThisPackage(t *testing.T) {
 		// internal/document's hierarchy test counts a fresh team's settings to
 		// prove a team is usable with nothing configured. That is an assertion
 		// about the absence of rows, not a second write path.
-		Fixtures: []string{"document"},
+		Fixtures: []string{"document", "migrate"},
 	})
 }
