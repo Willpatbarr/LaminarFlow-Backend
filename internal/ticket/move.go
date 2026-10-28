@@ -62,6 +62,7 @@ type MoveParams struct {
 │      p            MoveParams
 ├─ out ───────────────────────────────────────────
 │      Ticket                     as written, Version + 1
+│      []Ticket                   others renumbered to make room, as written
 │      error                      ErrNotFound · *Conflict · ErrStatusNotFound
 │                                 ErrNeighbourNotFound
 ├─ example ───────────────────────────────────────
@@ -77,12 +78,12 @@ type MoveParams struct {
 // it, with the ticket's row locked, so two drops of one card serialise. When there is no
 // whole number between the neighbours the target column is renumbered first, 1024 apart,
 // in one statement. That rewrite changes position on tickets that are not the one being
-// moved and does not bump their version or announce them: position is a hint, and a
-// client that sees an order it does not expect re-lists.
-func (s *Service) Move(ctx context.Context, accountID string, p MoveParams) (Ticket, error) {
+// moved. Those are written like edits too - version + 1 - and returned, so the caller
+// announces each as ticket.updated.
+func (s *Service) Move(ctx context.Context, accountID string, p MoveParams) (Ticket, []Ticket, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return Ticket{}, fmt.Errorf("ticket: begin: %w", err)
+		return Ticket{}, nil, fmt.Errorf("ticket: begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -100,25 +101,25 @@ func (s *Service) Move(ctx context.Context, accountID string, p MoveParams) (Tic
 		p.ID, accountID, p.IfVersion,
 	).Scan(&projectID, &teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Ticket{}, s.noRow(ctx, tx, accountID, p.ID, p.IfVersion, false)
+		return Ticket{}, nil, s.noRow(ctx, tx, accountID, p.ID, p.IfVersion, false)
 	}
 	if err != nil {
-		return Ticket{}, fmt.Errorf("ticket: move lock: %w", err)
+		return Ticket{}, nil, fmt.Errorf("ticket: move lock: %w", err)
 	}
 
 	var ok bool
 	if err := tx.QueryRow(ctx,
 		`SELECT EXISTS (SELECT 1 FROM status WHERE id = $1::uuid AND team_id = $2::uuid)`,
 		p.StatusID, teamID).Scan(&ok); err != nil {
-		return Ticket{}, fmt.Errorf("ticket: move status: %w", err)
+		return Ticket{}, nil, fmt.Errorf("ticket: move status: %w", err)
 	}
 	if !ok {
-		return Ticket{}, ErrStatusNotFound
+		return Ticket{}, nil, ErrStatusNotFound
 	}
 
-	pos, err := s.place(ctx, tx, projectID, p)
+	pos, renumbered, err := s.place(ctx, tx, accountID, projectID, p)
 	if err != nil {
-		return Ticket{}, err
+		return Ticket{}, nil, err
 	}
 
 	var t Ticket
@@ -131,27 +132,27 @@ func (s *Service) Move(ctx context.Context, accountID string, p MoveParams) (Tic
 		p.ID, p.StatusID, pos, accountID,
 	).Scan(t.dest()...)
 	if err != nil {
-		return Ticket{}, fmt.Errorf("ticket: move: %w", err)
+		return Ticket{}, nil, fmt.Errorf("ticket: move: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return Ticket{}, fmt.Errorf("ticket: commit: %w", err)
+		return Ticket{}, nil, fmt.Errorf("ticket: commit: %w", err)
 	}
 
-	return t, nil
+	return t, renumbered, nil
 }
 
 // place picks the position a moved ticket is written with.
-func (s *Service) place(ctx context.Context, tx pgx.Tx, projectID string, p MoveParams) (int, error) {
+func (s *Service) place(ctx context.Context, tx pgx.Tx, accountID, projectID string, p MoveParams) (int, []Ticket, error) {
 	switch {
 	case p.Position != nil:
-		return *p.Position, nil
+		return *p.Position, nil, nil
 
 	case p.BeforeID != nil:
-		return s.between(ctx, tx, projectID, p, *p.BeforeID, true)
+		return s.between(ctx, tx, accountID, projectID, p, *p.BeforeID, true)
 
 	case p.AfterID != nil:
-		return s.between(ctx, tx, projectID, p, *p.AfterID, false)
+		return s.between(ctx, tx, accountID, projectID, p, *p.AfterID, false)
 	}
 
 	var end int
@@ -160,16 +161,18 @@ func (s *Service) place(ctx context.Context, tx pgx.Tx, projectID string, p Move
 		  WHERE project_id = $1::uuid AND status_id = $2::uuid AND archived_at IS NULL
 		    AND id <> $3::uuid`,
 		projectID, p.StatusID, p.ID).Scan(&end); err != nil {
-		return 0, fmt.Errorf("ticket: move end: %w", err)
+		return 0, nil, fmt.Errorf("ticket: move end: %w", err)
 	}
 
-	return end + positionStep, nil
+	return end + positionStep, nil, nil
 }
 
 // between finds a number on the near side of the neighbour, strictly between it and the
 // card on its other side. At most one renumber is needed: after it the neighbours are
 // 1024 apart.
-func (s *Service) between(ctx context.Context, tx pgx.Tx, projectID string, p MoveParams, neighbour string, before bool) (int, error) {
+func (s *Service) between(ctx context.Context, tx pgx.Tx, accountID, projectID string, p MoveParams, neighbour string, before bool) (int, []Ticket, error) {
+	var renumbered []Ticket
+
 	for attempt := 0; attempt < 2; attempt++ {
 		var (
 			nPos     int
@@ -200,18 +203,18 @@ func (s *Service) between(ctx context.Context, tx pgx.Tx, projectID string, p Mo
 			neighbour, projectID, p.ID, p.StatusID,
 		).Scan(&nPos, &gap, &hasOther)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ErrNeighbourNotFound
+			return 0, nil, ErrNeighbourNotFound
 		}
 		if err != nil {
-			return 0, fmt.Errorf("ticket: move neighbour: %w", err)
+			return 0, nil, fmt.Errorf("ticket: move neighbour: %w", err)
 		}
 
 		if !hasOther {
 			if before {
-				return nPos - positionStep, nil
+				return nPos - positionStep, renumbered, nil
 			}
 
-			return nPos + positionStep, nil
+			return nPos + positionStep, renumbered, nil
 		}
 
 		lo, hi := *gap, nPos
@@ -219,32 +222,49 @@ func (s *Service) between(ctx context.Context, tx pgx.Tx, projectID string, p Mo
 			lo, hi = nPos, *gap
 		}
 		if hi-lo >= 2 {
-			return lo + (hi-lo)/2, nil
+			return lo + (hi-lo)/2, renumbered, nil
 		}
 
 		if attempt == 0 {
-			if err := s.renumber(ctx, tx, projectID, p); err != nil {
-				return 0, err
+			var err error
+			if renumbered, err = s.renumber(ctx, tx, accountID, projectID, p); err != nil {
+				return 0, nil, err
 			}
 		}
 	}
 
-	return 0, fmt.Errorf("ticket: move: no room between neighbours after renumbering")
+	return 0, nil, fmt.Errorf("ticket: move: no room between neighbours after renumbering")
 }
 
 // renumber spaces the target column's tickets 1024 apart in their current order,
-// leaving out the ticket being moved.
-func (s *Service) renumber(ctx context.Context, tx pgx.Tx, projectID string, p MoveParams) error {
-	if _, err := tx.Exec(ctx,
-		`UPDATE ticket t SET position = o.ord * `+fmt.Sprint(positionStep)+`
+// leaving out the ticket being moved. Each renumbered ticket is written like an edit
+// (version + 1, updated_at, updated_by) and returned as written, so the caller can
+// announce it: a client holding the old position would otherwise sort the moved ticket
+// wrongly against the new numbering.
+func (s *Service) renumber(ctx context.Context, tx pgx.Tx, accountID, projectID string, p MoveParams) ([]Ticket, error) {
+	rows, err := tx.Query(ctx,
+		`UPDATE ticket t SET position = o.ord * `+fmt.Sprint(positionStep)+`,
+		        updated_at = now(), updated_by = $4::uuid, version = t.version + 1
 		   FROM (SELECT x.id, row_number() OVER (ORDER BY x.position, x.id) AS ord
 		           FROM ticket x
 		          WHERE x.project_id = $1::uuid AND x.status_id = $2::uuid
 		            AND x.archived_at IS NULL AND x.id <> $3::uuid) o
-		  WHERE t.id = o.id`,
-		projectID, p.StatusID, p.ID); err != nil {
-		return fmt.Errorf("ticket: renumber: %w", err)
+		  WHERE t.id = o.id AND t.position <> o.ord * `+fmt.Sprint(positionStep)+`
+		 RETURNING `+columns,
+		projectID, p.StatusID, p.ID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("ticket: renumber: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Ticket
+	for rows.Next() {
+		var t Ticket
+		if err := rows.Scan(t.dest()...); err != nil {
+			return nil, fmt.Errorf("ticket: renumber scan: %w", err)
+		}
+		out = append(out, t)
 	}
 
-	return nil
+	return out, rows.Err()
 }

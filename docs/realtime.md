@@ -143,8 +143,10 @@ its `status_ids`; on `deleted`, the board as it was). `board.column.updated` als
 
 There is no version: replace the board (or the column) you hold with the one in the event, and re-list on
 doubt. A ticket move (`POST /tickets/{id}/move`) is an ordinary `ticket.updated` at the new version,
-with the new `status_id` and `position` in `ticket`. When a move had to renumber the target column, the
-other tickets' `position` changed without an event; re-list if the order looks wrong.
+with the new `status_id` and `position` in `ticket`. When a move had to renumber the target column (no
+whole number between two neighbours), every other ticket whose `position` changed is written like an edit
+(version + 1) and gets its own `ticket.updated`, sent before the moved ticket's. Apply them by version as
+usual; no new event type.
 
 ## Not here yet
 

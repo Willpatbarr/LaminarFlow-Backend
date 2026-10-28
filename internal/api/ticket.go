@@ -546,7 +546,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 			"(more is a 422); none puts the ticket at the end of the column. `before_id`/`after_id` name a live ticket in the target column, " +
 			"or the answer is a 422 `neighbour_not_found` at that member. Written like any edit: version + 1, announced as `ticket.updated`, and " +
 			"`If-Match` makes it conditional. When there is no room between two neighbours the target column's other tickets are renumbered; " +
-			"that does not change their version and is not announced, so re-list if the order looks wrong.",
+			"each of those is written like an edit (version + 1) and announced as `ticket.updated`, before the moved ticket's own event.",
 		Metadata:  requires,
 		Responses: conflictResponses(api, ifMatchConflict),
 	}, func(ctx context.Context, in *moveTicketInput) (*ticketOutput, error) {
@@ -569,7 +569,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 				"body", "position, before_id and after_id are mutually exclusive")
 		}
 
-		t, err := svc.Move(ctx, me.AccountID, ticket.MoveParams{
+		t, renumbered, err := svc.Move(ctx, me.AccountID, ticket.MoveParams{
 			ID:        in.ID,
 			StatusID:  in.Body.StatusID,
 			Position:  in.Body.Position,
@@ -585,6 +585,9 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 			return nil, ticketError(ctx, accounts, err)
 		}
 
+		for _, o := range renumbered {
+			feed.publish(ctx, realtime.TicketUpdated, me.AccountID, o)
+		}
 		feed.publish(ctx, realtime.TicketUpdated, me.AccountID, t)
 
 		return asOutput(t), nil

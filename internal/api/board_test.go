@@ -708,3 +708,44 @@ func TestNewTicketsGoToTheEndAndExistingOnesAreBackfilled(t *testing.T) {
 		t.Errorf("positions %v, want 1024 apart from the first", positions)
 	}
 }
+
+func TestARenumberingMoveAnnouncesEveryTicketItRewrote(t *testing.T) {
+	f := newFeed(t)
+	sarah := f.open(t, f.cookie(f.sarahC))
+	todo := f.team(t).Statuses[0].ID
+
+	first := f.withStatus(t, "first", todo)
+	f.withStatus(t, "last", todo)
+	var movers []ticketWire
+	for _, name := range []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9", "m10", "m11"} {
+		movers = append(movers, f.withStatus(t, name, todo))
+	}
+	for i := 0; i < 13; i++ {
+		readEvent(t, sarah)
+	}
+
+	renumbered := 0
+	for _, m := range movers {
+		if code, body := f.move(t, m.ID, map[string]any{"status_id": todo, "after_id": first.ID}); code != http.StatusOK {
+			t.Fatalf("drop %s: status %d - %s", m.Title, code, body)
+		}
+
+		// The mover's own event comes last; anything before it is a rewritten neighbour.
+		for {
+			ev := readEvent(t, sarah)
+			if ev.Type != "ticket.updated" {
+				t.Fatalf("event %+v, want ticket.updated", ev)
+			}
+			if ev.TicketID == m.ID {
+				break
+			}
+			renumbered++
+			if ev.Version < 2 || ev.Ticket["position"] == nil {
+				t.Errorf("renumber event %+v, want a bumped version and the new position", ev)
+			}
+		}
+	}
+	if renumbered == 0 {
+		t.Errorf("no renumbering happened, so nothing was announced: the test did not reach the case")
+	}
+}
