@@ -184,7 +184,8 @@ type CreateParams struct {
 // added it once sqlguard could guard writes without a reader list naming most of the
 // module.
 //
-// status, saved_view and the board tables still have no owner. A second writer to
+// status and the board tables still have no owner (internal/savedview owns saved_view's
+// API, though not its guard: internal/account and this package both write it). A second writer to
 // status produces a status rather than a broken team, so the invariant is not the same
 // one - the first ticket that gives any of them a CRUD surface should claim it then.
 type Service struct {
