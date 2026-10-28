@@ -27,8 +27,12 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/account"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/board"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/epic"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/label"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/milestone"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/project"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/sprint"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
 )
@@ -311,6 +315,69 @@ func (f ticketFeed) publishBoard(workspaceID, kind, actorID string, b board.Boar
 		ProjectID: b.ProjectID,
 		BoardID:   b.ID,
 		Board:     asBoardBody(b),
+	})
+}
+
+// publishEpic, publishSprint, publishMilestone and publishLabel announce a hierarchy
+// resource as its REST body: *.created, *.updated, and *.deleted (the resource as it was).
+// LAM-93. After the commit, best-effort, as above.
+func (f ticketFeed) publishEpic(workspaceID, kind, actorID string, e epic.Epic) {
+	if f.hub == nil {
+		return
+	}
+
+	f.hub.Publish(workspaceID, realtime.Event{
+		Type:      kind,
+		ActorID:   actorID,
+		At:        time.Now().UTC(),
+		ProjectID: e.ProjectID,
+		EpicID:    e.ID,
+		Epic:      asEpicBody(e),
+	})
+}
+
+func (f ticketFeed) publishSprint(workspaceID, kind, actorID string, s sprint.Sprint) {
+	if f.hub == nil {
+		return
+	}
+
+	f.hub.Publish(workspaceID, realtime.Event{
+		Type:      kind,
+		ActorID:   actorID,
+		At:        time.Now().UTC(),
+		ProjectID: s.ProjectID,
+		SprintID:  s.ID,
+		Sprint:    asSprintBody(s),
+	})
+}
+
+func (f ticketFeed) publishMilestone(workspaceID, kind, actorID string, m milestone.Milestone) {
+	if f.hub == nil {
+		return
+	}
+
+	f.hub.Publish(workspaceID, realtime.Event{
+		Type:        kind,
+		ActorID:     actorID,
+		At:          time.Now().UTC(),
+		ProjectID:   m.ProjectID,
+		MilestoneID: m.ID,
+		Milestone:   asMilestoneBody(m),
+	})
+}
+
+func (f ticketFeed) publishLabel(workspaceID, kind, actorID string, l label.Label) {
+	if f.hub == nil {
+		return
+	}
+
+	f.hub.Publish(workspaceID, realtime.Event{
+		Type:    kind,
+		ActorID: actorID,
+		At:      time.Now().UTC(),
+		TeamID:  l.TeamID,
+		LabelID: l.ID,
+		Label:   asLabelBody(l),
 	})
 }
 

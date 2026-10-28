@@ -262,7 +262,7 @@ func TestAnInvalidBodyIsStillRefusedOnAReplay(t *testing.T) {
 }
 
 func TestTheOpenAPIDocumentsTheKeyAndTheReplay(t *testing.T) {
-	api := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI()
+	api := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI()
 	op := api.Paths[V1+"/tickets"].Post
 	if op == nil {
 		t.Fatal("no POST /tickets in the document")

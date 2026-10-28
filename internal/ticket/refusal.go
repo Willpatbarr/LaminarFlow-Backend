@@ -45,8 +45,20 @@ var ErrAssigneeNotFound = errors.New("ticket: no such assignee in this workspace
 // language and version, the name is part of the schema. The schema test in this package
 // fails if a migration renames either.
 const (
-	statusForeignKey   = "ticket_status_id_fkey"
-	assigneeForeignKey = "ticket_assignee_account_id_fkey"
+	statusForeignKey    = "ticket_status_id_fkey"
+	assigneeForeignKey  = "ticket_assignee_account_id_fkey"
+	epicForeignKey      = "ticket_epic_fkey"
+	milestoneForeignKey = "ticket_milestone_fkey"
+	labelForeignKey     = "ticket_label_label_fkey"
+)
+
+// ErrEpicNotFound and ErrMilestoneNotFound (LAM-93) collapse like the status: no such
+// epic and an epic of another project are one answer, because 0022's and 0033's
+// composite keys make "another project's" the same fact to the database, and telling the
+// caller which would confirm that an id exists somewhere they may not see.
+var (
+	ErrEpicNotFound      = errors.New("ticket: no such epic in this project")
+	ErrMilestoneNotFound = errors.New("ticket: no such milestone in this project")
 )
 
 // How the schema relates the tables, which decides what the service has to check:
@@ -79,6 +91,35 @@ func assigneeValid(teamAlias, param string) string {
 		teamAlias, param)
 }
 
+// epicValid and milestoneValid are true when the value is absent, or exists in the
+// project. expr is a uuid-typed SQL expression - the value the statement is about to
+// write, which for an update that leaves the column alone is the column itself.
+func epicValid(projectAlias, expr string) string {
+	return fmt.Sprintf(`(%[2]s IS NULL OR EXISTS (
+		        SELECT 1 FROM epic re WHERE re.id = %[2]s AND re.project_id = %[1]s.id))`, projectAlias, expr)
+}
+
+func milestoneValid(projectAlias, expr string) string {
+	return fmt.Sprintf(`(%[2]s IS NULL OR EXISTS (
+		        SELECT 1 FROM milestone rm WHERE rm.id = %[2]s AND rm.project_id = %[1]s.id))`, projectAlias, expr)
+}
+
+// hierarchyValid is both, for a statement that writes.
+func hierarchyValid(projectAlias, epicExpr, milestoneExpr string) string {
+	return epicValid(projectAlias, epicExpr) + ` AND ` + milestoneValid(projectAlias, milestoneExpr)
+}
+
+// after is the value an update writes to a column a Ref governs.
+func after(setParam, idParam, column string) string {
+	return fmt.Sprintf(`(CASE WHEN %s::boolean THEN %s::uuid ELSE %s END)`, setParam, idParam, column)
+}
+
+// What Update writes to the two columns, with its own parameter numbers.
+var (
+	epicAfter      = after("$8", "$9", "t.epic_id")
+	milestoneAfter = after("$10", "$11", "t.milestone_id")
+)
+
 // referencesValid is both, for a statement that writes.
 func referencesValid(teamAlias, statusParam, assigneeParam string) string {
 	return statusValid(teamAlias, statusParam) + ` AND ` + assigneeValid(teamAlias, assigneeParam)
@@ -108,6 +149,13 @@ func refError(err error) error {
 		return ErrStatusNotFound
 	case assigneeForeignKey:
 		return ErrAssigneeNotFound
+	case epicForeignKey:
+		return ErrEpicNotFound
+	case milestoneForeignKey:
+		return ErrMilestoneNotFound
+	case labelForeignKey:
+		// A label deleted between the check and the insert. Which entry is not known.
+		return &LabelError{Index: -1}
 	}
 
 	return nil
@@ -163,16 +211,17 @@ func (s *Service) afterEmptyInsert(ctx context.Context, tx pgx.Tx, accountID str
 		}
 	}
 
-	var statusOK, assigneeOK bool
+	var statusOK, assigneeOK, epicOK, milestoneOK bool
 	err := tx.QueryRow(ctx,
-		`SELECT `+statusValid("tm", "$2")+`, `+assigneeValid("tm", "$3")+`
+		`SELECT `+statusValid("tm", "$2")+`, `+assigneeValid("tm", "$3")+`,
+		        `+epicValid("p", "$5::uuid")+`, `+milestoneValid("p", "$6::uuid")+`
 		   FROM project p
 		   JOIN team tm ON tm.id = p.team_id
 		   JOIN workspace_member wm
 		        ON wm.workspace_id = tm.workspace_id AND wm.account_id = $4::uuid
 		  WHERE p.id = $1::uuid`,
-		p.ProjectID, p.StatusID, p.AssigneeID, accountID,
-	).Scan(&statusOK, &assigneeOK)
+		p.ProjectID, p.StatusID, p.AssigneeID, accountID, p.EpicID, p.MilestoneID,
+	).Scan(&statusOK, &assigneeOK, &epicOK, &milestoneOK)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Ticket{}, false, ErrNotFound
 	}
@@ -185,6 +234,10 @@ func (s *Service) afterEmptyInsert(ctx context.Context, tx pgx.Tx, accountID str
 		return Ticket{}, false, ErrStatusNotFound
 	case !assigneeOK:
 		return Ticket{}, false, ErrAssigneeNotFound
+	case !epicOK:
+		return Ticket{}, false, ErrEpicNotFound
+	case !milestoneOK:
+		return Ticket{}, false, ErrMilestoneNotFound
 	}
 
 	// Every precondition holds now, and the key is unused, yet nothing was written. The
@@ -215,17 +268,20 @@ func (s *Service) afterEmptyInsert(ctx context.Context, tx pgx.Tx, accountID str
 // reach never learns whether an id it sent was valid.
 func (s *Service) explainUpdate(ctx context.Context, tx pgx.Tx, accountID string, p UpdateParams) error {
 	var (
-		version              int
-		statusOK, assigneeOK bool
+		version                              int
+		statusOK, assigneeOK, epicOK, mileOK bool
 	)
 	err := tx.QueryRow(ctx,
-		expand(`SELECT t.version, `+statusValid("ttm", "$2")+`, `+assigneeValid("ttm", "$3")+`
+		expand(`SELECT t.version, `+statusValid("ttm", "$2")+`, `+assigneeValid("ttm", "$3")+`,
+		               `+epicValid("tp", after("$5", "$6", "t.epic_id"))+`,
+		               `+milestoneValid("tp", after("$7", "$8", "t.milestone_id"))+`
 		          FROM ticket t
 		          JOIN project tp ON tp.id = t.project_id
 		          JOIN team ttm ON ttm.id = tp.team_id
 		         WHERE t.id = $1::uuid AND `+liveOnly+` AND `+callerCanReach, "$4"),
 		p.ID, p.StatusID, p.AssigneeID, accountID,
-	).Scan(&version, &statusOK, &assigneeOK)
+		p.Epic.Set, p.Epic.ID, p.Milestone.Set, p.Milestone.ID,
+	).Scan(&version, &statusOK, &assigneeOK, &epicOK, &mileOK)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s.noRow(ctx, tx, accountID, p.ID, p.IfVersion, false)
 	}
@@ -242,6 +298,10 @@ func (s *Service) explainUpdate(ctx context.Context, tx pgx.Tx, accountID string
 		return ErrStatusNotFound
 	case !assigneeOK:
 		return ErrAssigneeNotFound
+	case !epicOK:
+		return ErrEpicNotFound
+	case !mileOK:
+		return ErrMilestoneNotFound
 	}
 
 	return s.noRow(ctx, tx, accountID, p.ID, p.IfVersion, false)

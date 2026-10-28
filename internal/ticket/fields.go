@@ -32,6 +32,7 @@ var Fields = filter.Schema{
 	"status":      {Expr: "t.status_id", Kind: filter.UUID},
 	"assignee":    {Expr: "t.assignee_account_id", Kind: filter.UUID},
 	"epic":        {Expr: "t.epic_id", Kind: filter.UUID},
+	"milestone":   {Expr: "t.milestone_id", Kind: filter.UUID},
 	"created_at":  {Expr: "t.created_at", Kind: filter.Time},
 	"updated_at":  {Expr: "t.updated_at", Kind: filter.Time},
 	"version":     {Expr: "t.version", Kind: filter.Number},

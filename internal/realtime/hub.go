@@ -62,6 +62,20 @@ const (
 	BoardUpdated       = "board.updated"
 	BoardDeleted       = "board.deleted"
 	BoardColumnUpdated = "board.column.updated"
+
+	// LAM-93. Each carries the resource in its own member; see Event.
+	EpicCreated      = "epic.created"
+	EpicUpdated      = "epic.updated"
+	EpicDeleted      = "epic.deleted"
+	SprintCreated    = "sprint.created"
+	SprintUpdated    = "sprint.updated"
+	SprintDeleted    = "sprint.deleted"
+	MilestoneCreated = "milestone.created"
+	MilestoneUpdated = "milestone.updated"
+	MilestoneDeleted = "milestone.deleted"
+	LabelCreated     = "label.created"
+	LabelUpdated     = "label.updated"
+	LabelDeleted     = "label.deleted"
 )
 
 // helloFrame is the first frame on every connection. A socket that is open is not a
@@ -123,6 +137,18 @@ type Event struct {
 	Board     any    `json:"board,omitempty"`
 	ColumnID  string `json:"column_id,omitempty"`
 	Column    any    `json:"column,omitempty"`
+
+	// LAM-93. epic.*, sprint.* and milestone.* carry ProjectID and their own id and body;
+	// label.* carries TeamID (above) and LabelID and Label. Each body is the REST body,
+	// whole; on a *.deleted event it is the resource as it was.
+	EpicID      string `json:"epic_id,omitempty"`
+	Epic        any    `json:"epic,omitempty"`
+	SprintID    string `json:"sprint_id,omitempty"`
+	Sprint      any    `json:"sprint,omitempty"`
+	MilestoneID string `json:"milestone_id,omitempty"`
+	Milestone   any    `json:"milestone,omitempty"`
+	LabelID     string `json:"label_id,omitempty"`
+	Label       any    `json:"label,omitempty"`
 }
 
 /*

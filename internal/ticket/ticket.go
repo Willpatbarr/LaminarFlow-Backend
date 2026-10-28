@@ -104,6 +104,9 @@ const liveOnly = `t.archived_at IS NULL`
 ┃      Version      int           1 on create, +1 per write
 ┃      UpdatedBy    *string       null: not recorded, or account gone
 ┃      Position     int           order within a board column
+┃      EpicID       *string       null is normal (LAM-93)
+┃      MilestoneID  *string       null is normal (LAM-93)
+┃      LabelIDs     []string      never nil; the ticket's labels, by id
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      Create · Get · Update         one per call
 */
@@ -131,6 +134,13 @@ type Ticket struct {
 	// Position orders the ticket within its board column (0034): ORDER BY position, id.
 	// A hint, not a slot - duplicates are legal. Only Move and Create write it.
 	Position int
+
+	// EpicID, MilestoneID and LabelIDs are the flexible hierarchy (LAM-93): every one is
+	// optional, and a ticket with none of them is an ordinary ticket. A ticket's sprints
+	// are not here - membership is read through the list's sprint filter.
+	EpicID      *string
+	MilestoneID *string
+	LabelIDs    []string
 }
 
 // dest is the scan target for columns, in columns' order. Written once because the
@@ -138,7 +148,8 @@ type Ticket struct {
 // and fails at runtime.
 func (t *Ticket) dest() []any {
 	return []any{&t.ID, &t.ProjectID, &t.Title, &t.Description,
-		&t.StatusID, &t.AssigneeID, &t.CreatedAt, &t.UpdatedAt, &t.Version, &t.UpdatedBy, &t.Position}
+		&t.StatusID, &t.AssigneeID, &t.CreatedAt, &t.UpdatedAt, &t.Version, &t.UpdatedBy, &t.Position,
+		&t.EpicID, &t.MilestoneID, &t.LabelIDs}
 }
 
 /*
@@ -175,6 +186,12 @@ type CreateParams struct {
 	StatusID    *string
 	AssigneeID  *string
 
+	// EpicID and MilestoneID must be in the ticket's project, and every LabelIDs entry
+	// must be a label of its team, or the create is refused. All optional.
+	EpicID      *string
+	MilestoneID *string
+	LabelIDs    []string
+
 	// IdempotencyKey, when set, makes the create safe to retry: the same key from the
 	// same account returns the ticket the first call made instead of making another.
 	// See CreateIdempotent. Nil is an ordinary create.
@@ -195,6 +212,14 @@ type UpdateParams struct {
 	StatusID    *string
 	AssigneeID  *string
 
+	// Epic and Milestone are left alone unless Set, and cleared by a Set with a nil ID:
+	// unlike status and assignee they are new to the API, so a client that has never
+	// heard of them must not wipe them by writing a title. LabelIDs nil leaves the
+	// labels alone; non-nil, even empty, replaces them.
+	Epic      Ref
+	Milestone Ref
+	LabelIDs  []string
+
 	// IfVersion is the version the caller last saw. Nil means no precondition, and
 	// the write is last-write-wins exactly as it was before 0031 - an API-token
 	// script has no version to send. Non-nil makes the write conditional: it
@@ -203,9 +228,19 @@ type UpdateParams struct {
 	IfVersion *int
 }
 
+// Ref is a reference an update may leave alone (Set false), point at an id, or clear
+// (Set true, ID nil) - the three states a nullable column needs and a bare pointer
+// cannot give.
+type Ref struct {
+	Set bool
+	ID  *string
+}
+
 const columns = `t.id::text, t.project_id::text, t.title, t.description,
                  t.status_id::text, t.assignee_account_id::text,
-                 t.created_at, t.updated_at, t.version, t.updated_by::text, t.position`
+                 t.created_at, t.updated_at, t.version, t.updated_by::text, t.position,
+                 t.epic_id::text, t.milestone_id::text,
+                 ARRAY(SELECT tl.label_id::text FROM ticket_label tl WHERE tl.ticket_id = t.id ORDER BY tl.label_id)`
 
 /*
 ┌─ ticket ────────────────────────────────────────
@@ -280,20 +315,24 @@ func (s *Service) CreateIdempotent(ctx context.Context, accountID string, p Crea
 	var t Ticket
 	err = tx.QueryRow(ctx,
 		`INSERT INTO ticket (project_id, title, description, status_id, assignee_account_id,
-		                     updated_by, created_by, idempotency_key, position)
+		                     updated_by, created_by, idempotency_key, position, epic_id, milestone_id)
 		 SELECT p.id, $2, $3, $4::uuid, $5::uuid, $6::uuid, $6::uuid, $7::text,
-		        coalesce((SELECT max(x.position) FROM ticket x WHERE x.project_id = p.id), 0) + 1024
+		        coalesce((SELECT max(x.position) FROM ticket x WHERE x.project_id = p.id), 0) + 1024,
+		        $8::uuid, $9::uuid
 		   FROM project p
 		   JOIN team tm ON tm.id = p.team_id
 		   JOIN workspace_member wm
 		        ON wm.workspace_id = tm.workspace_id AND wm.account_id = $6::uuid
 		  WHERE p.id = $1::uuid AND `+referencesValid("tm", "$4", "$5")+`
+		    AND `+hierarchyValid("p", "$8::uuid", "$9::uuid")+`
 		 ON CONFLICT (created_by, idempotency_key) WHERE idempotency_key IS NOT NULL
 		 DO NOTHING
 		 RETURNING id::text, project_id::text, title, description,
 		           status_id::text, assignee_account_id::text, created_at, updated_at,
-		           version, updated_by::text, position`,
+		           version, updated_by::text, position, epic_id::text, milestone_id::text,
+		           ARRAY[]::text[]`,
 		p.ProjectID, p.Title, p.Description, p.StatusID, p.AssigneeID, accountID, p.IdempotencyKey,
+		p.EpicID, p.MilestoneID,
 	).Scan(t.dest()...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Nothing was written: either the key was already used, or a precondition of
@@ -306,6 +345,12 @@ func (s *Service) CreateIdempotent(ctx context.Context, accountID string, p Crea
 	}
 	if err != nil {
 		return Ticket{}, false, fmt.Errorf("ticket: insert: %w", err)
+	}
+
+	if p.LabelIDs != nil {
+		if err := setLabels(ctx, tx, &t, p.LabelIDs); err != nil {
+			return Ticket{}, false, err
+		}
 	}
 
 	if err := search.IndexTicket(ctx, tx, t.ID); err != nil {
@@ -392,14 +437,17 @@ func (s *Service) Update(ctx context.Context, accountID string, p UpdateParams) 
 		expand(`UPDATE ticket t
 		    SET title = $2, description = $3, status_id = $4::uuid,
 		        assignee_account_id = $5::uuid, updated_at = now(),
-		        updated_by = $6::uuid, version = t.version + 1
+		        updated_by = $6::uuid, version = t.version + 1,
+		        epic_id = `+epicAfter+`, milestone_id = `+milestoneAfter+`
 		   FROM project tp
 		   JOIN team ttm ON ttm.id = tp.team_id
 		  WHERE t.id = $1::uuid AND tp.id = t.project_id AND `+liveOnly+` AND `+callerCanReach+`
 		    AND ($7::int IS NULL OR t.version = $7::int)
 		    AND `+referencesValid("ttm", "$4", "$5")+`
+		    AND `+hierarchyValid("tp", epicAfter, milestoneAfter)+`
 		 RETURNING `+columns, "$6"),
 		p.ID, p.Title, p.Description, p.StatusID, p.AssigneeID, accountID, p.IfVersion,
+		p.Epic.Set, p.Epic.ID, p.Milestone.Set, p.Milestone.ID,
 	).Scan(t.dest()...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Ticket{}, s.explainUpdate(ctx, tx, accountID, p)
@@ -409,6 +457,12 @@ func (s *Service) Update(ctx context.Context, accountID string, p UpdateParams) 
 	}
 	if err != nil {
 		return Ticket{}, fmt.Errorf("ticket: update: %w", err)
+	}
+
+	if p.LabelIDs != nil {
+		if err := setLabels(ctx, tx, &t, p.LabelIDs); err != nil {
+			return Ticket{}, err
+		}
 	}
 
 	// Reindex rather than leave the old text: the title is denormalised into

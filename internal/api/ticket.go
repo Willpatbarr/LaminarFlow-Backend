@@ -72,6 +72,10 @@ type ticketBody struct {
 	StatusID    *string `json:"status_id" doc:"Null is normal - no status is sacred, so a ticket may have none."`
 	AssigneeID  *string `json:"assignee_id" doc:"Null is normal - an unassigned ticket."`
 
+	EpicID      *string  `json:"epic_id" doc:"The ticket's epic. Null is normal - the hierarchy is flexible and a ticket needs no parent."`
+	MilestoneID *string  `json:"milestone_id" doc:"The ticket's milestone. Null is normal."`
+	LabelIDs    []string `json:"label_ids" doc:"The ticket's labels, in id order. Never null; empty for none."`
+
 	UpdatedAt time.Time `json:"updated_at" doc:"When the ticket last changed - an edit, an archive or a restore. For display; to compare versions use version."`
 	UpdatedBy *string   `json:"updated_by" doc:"The account that made the last change. Null when it was not recorded (tickets from before this field existed) or that account has since been deleted - show it as someone."`
 	Position  int       `json:"position" doc:"Order within a board column: sort by position, then id. A hint, not a slot - duplicates are legal. Written by POST /tickets/{id}/move; a new ticket goes to the end of its project."`
@@ -144,6 +148,10 @@ type createTicketInput struct {
 		Description string  `json:"description,omitempty" maxLength:"50000" doc:"Up to 50,000 characters (not bytes). Omit for none."`
 		StatusID    *string `json:"status_id,omitempty" format:"uuid" nullable:"true" doc:"Must be a status of the project's team, or status_not_found. Omit, or null, for no status."`
 		AssigneeID  *string `json:"assignee_id,omitempty" format:"uuid" nullable:"true" doc:"Must be a member of the project's workspace, or assignee_not_found. Omit, or null, for unassigned."`
+
+		EpicID      *string  `json:"epic_id,omitempty" format:"uuid" nullable:"true" doc:"Must be an epic of the ticket's project, or a 422 epic_not_found. Omit, or null, for none."`
+		MilestoneID *string  `json:"milestone_id,omitempty" format:"uuid" nullable:"true" doc:"Must be a milestone of the ticket's project, or a 422 milestone_not_found. Omit, or null, for none."`
+		LabelIDs    []string `json:"label_ids,omitempty" doc:"Labels of the project's team. An id that is not one is a 422 label_not_found at body.label_ids[i]. Omit for none."`
 	}
 }
 
@@ -213,6 +221,13 @@ type updateTicketInput struct {
 		Description string  `json:"description" maxLength:"50000" doc:"Up to 50,000 characters (not bytes)."`
 		StatusID    *string `json:"status_id" format:"uuid" doc:"Must be a status of the ticket's project's team, or status_not_found. Null clears it."`
 		AssigneeID  *string `json:"assignee_id" format:"uuid" doc:"Must be a member of the ticket's workspace, or assignee_not_found. Null clears it."`
+
+		// Unlike status_id and assignee_id these three are optional, and leave the ticket alone
+		// when omitted: a client written before the hierarchy existed must not clear it by
+		// editing a title. See patchValue.
+		EpicID      patchUUID `json:"epic_id,omitempty" doc:"Must be an epic of the ticket's project, or a 422 epic_not_found. Omit to leave it, null to clear it."`
+		MilestoneID patchUUID `json:"milestone_id,omitempty" doc:"Must be a milestone of the ticket's project, or a 422 milestone_not_found. Omit to leave it, null to clear it."`
+		LabelIDs    []string  `json:"label_ids,omitempty" doc:"The complete set of labels, all of them labels of the ticket's project's team; an id that is not one is a 422 label_not_found at body.label_ids[i]. Omit to leave the labels alone; [] clears them."`
 	}
 }
 
@@ -237,11 +252,23 @@ func asBody(t ticket.Ticket) ticketBody {
 		Description: t.Description,
 		StatusID:    t.StatusID,
 		AssigneeID:  t.AssigneeID,
+		EpicID:      t.EpicID,
+		MilestoneID: t.MilestoneID,
+		LabelIDs:    labelIDs(t.LabelIDs),
 		UpdatedAt:   t.UpdatedAt.UTC(),
 		UpdatedBy:   t.UpdatedBy,
 		Position:    t.Position,
 		Version:     t.Version,
 	}
+}
+
+// labelIDs is never nil, so the JSON is [] and not null.
+func labelIDs(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+
+	return ids
 }
 
 func asOutput(t ticket.Ticket) *ticketOutput {
@@ -334,6 +361,22 @@ func ticketError(ctx context.Context, accounts *account.Service, err error) erro
 	case errors.Is(err, ticket.ErrAssigneeNotFound):
 		return newFieldError(CodeAssigneeNotFound, "the assignee is not a member of this ticket's workspace",
 			"body.assignee_id", "no such assignee in this workspace")
+	case errors.Is(err, ticket.ErrEpicNotFound):
+		return newFieldError(CodeEpicNotFound, "the epic is not one this ticket's project has",
+			"body.epic_id", "no such epic in this project")
+	case errors.Is(err, ticket.ErrMilestoneNotFound):
+		return newFieldError(CodeMilestoneNotFound, "the milestone is not one this ticket's project has",
+			"body.milestone_id", "no such milestone in this project")
+	case errors.Is(err, ticket.ErrLabelNotFound):
+		loc := "body.label_ids"
+
+		var le *ticket.LabelError
+		if errors.As(err, &le) && le.Index >= 0 {
+			loc = "body.label_ids[" + strconv.Itoa(le.Index) + "]"
+		}
+
+		return newFieldError(CodeLabelNotFound, "a label is not one this ticket's project's team has",
+			loc, "no such label for this project's team")
 	}
 
 	if e := limitError(err); e != nil {
@@ -464,6 +507,9 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 			Description:    in.Body.Description,
 			StatusID:       in.Body.StatusID,
 			AssigneeID:     in.Body.AssigneeID,
+			EpicID:         in.Body.EpicID,
+			MilestoneID:    in.Body.MilestoneID,
+			LabelIDs:       in.Body.LabelIDs,
 			IdempotencyKey: in.key(),
 		})
 		if err != nil {
@@ -526,6 +572,9 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 			Description: in.Body.Description,
 			StatusID:    in.Body.StatusID,
 			AssigneeID:  in.Body.AssigneeID,
+			Epic:        ticket.Ref{Set: in.Body.EpicID.Set, ID: in.Body.EpicID.Value},
+			Milestone:   ticket.Ref{Set: in.Body.MilestoneID.Set, ID: in.Body.MilestoneID.Value},
+			LabelIDs:    in.Body.LabelIDs,
 			IfVersion:   ifVersion,
 		})
 		if err != nil {
