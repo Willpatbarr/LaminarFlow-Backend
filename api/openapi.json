@@ -995,6 +995,107 @@
         ],
         "type": "object"
       },
+      "DocumentDetailBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/DocumentDetailBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "archived_at": {
+            "description": "Null while live. Set on an archived document, which only a 409's current and a document.archived event ever show.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "aspect_type_id": {
+            "description": "Set exactly when type is aspect; null otherwise.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body": {
+            "additionalProperties": {},
+            "description": "Keyed by aspect type field id; each value is a Markdown string (docs/adr/0006). A normal document keeps its text under the key content. A field with no value is an absent key.",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "description": "The project the document is filed under. Null for a team's or a workspace-level document.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team_id": {
+            "description": "The team the document is filed under. Null for a project's or a workspace-level document.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tickets": {
+            "description": "The tickets linked to this document, oldest link first, archived ones included. Never null; empty for none.",
+            "items": {
+              "$ref": "#/components/schemas/LinkedTicketBody"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "normal",
+              "aspect"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "When the document last changed - an edit, an archive or a restore. For display; to compare versions use version.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "description": "Starts at 1 and rises by exactly 1 on every update, archive and unarchive. Send it back as If-Match to make a write conditional; also in the ETag header.",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tickets",
+          "id",
+          "title",
+          "type",
+          "aspect_type_id",
+          "team_id",
+          "project_id",
+          "body",
+          "version",
+          "created_at",
+          "updated_at",
+          "archived_at"
+        ],
+        "type": "object"
+      },
       "EpicBody": {
         "additionalProperties": false,
         "properties": {
@@ -1258,6 +1359,95 @@
           "color",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "LinkDocumentInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/LinkDocumentInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "document_id": {
+            "description": "The document to link. Unknown, or in another workspace than the ticket: 404 not_found. Archived is fine.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id"
+        ],
+        "type": "object"
+      },
+      "LinkedDocumentBody": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "description": "Null while live. A link survives an archive, so an archived document is listed with this set.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "aspect_type_id": {
+            "description": "Set exactly when type is aspect; null otherwise.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "normal",
+              "aspect"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "type",
+          "aspect_type_id",
+          "archived_at"
+        ],
+        "type": "object"
+      },
+      "LinkedTicketBody": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "description": "Null while live. A link survives an archive, so an archived ticket is listed with this set.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "archived_at"
         ],
         "type": "object"
       },
@@ -3010,6 +3200,120 @@
         ],
         "type": "object"
       },
+      "TicketDetailBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/TicketDetailBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "assignee_id": {
+            "description": "Null is normal - an unassigned ticket.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "documents": {
+            "description": "The documents linked to this ticket, oldest link first, archived ones included. Never null; empty for none.",
+            "items": {
+              "$ref": "#/components/schemas/LinkedDocumentBody"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "epic_id": {
+            "description": "The ticket's epic. Null is normal - the hierarchy is flexible and a ticket needs no parent.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "label_ids": {
+            "description": "The ticket's labels, in id order. Never null; empty for none.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "milestone_id": {
+            "description": "The ticket's milestone. Null is normal.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "description": "Order within a board column: sort by position, then id. A hint, not a slot - duplicates are legal. Written by POST /tickets/{id}/move; a new ticket goes to the end of its project.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "status_id": {
+            "description": "Null is normal - no status is sacred, so a ticket may have none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "When the ticket last changed - an edit, an archive or a restore. For display; to compare versions use version.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "description": "The account that made the last change. Null when it was not recorded (tickets from before this field existed) or that account has since been deleted - show it as someone.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "description": "Starts at 1 and rises by exactly 1 on every update, archive and restore. Send it back as If-Match to make a write conditional; also in the ETag header. See the If-Match parameter.",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "documents",
+          "id",
+          "project_id",
+          "title",
+          "description",
+          "status_id",
+          "assignee_id",
+          "epic_id",
+          "milestone_id",
+          "label_ids",
+          "updated_at",
+          "updated_by",
+          "position",
+          "version"
+        ],
+        "type": "object"
+      },
       "UpdateColumnInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -4541,7 +4845,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentBody"
+                  "$ref": "#/components/schemas/DocumentDetailBody"
                 }
               }
             },
@@ -6673,7 +6977,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TicketBody"
+                  "$ref": "#/components/schemas/TicketDetailBody"
                 }
               }
             },
@@ -6778,6 +7082,91 @@
           }
         },
         "summary": "Replace a ticket's writable fields"
+      }
+    },
+    "/api/v1/tickets/{id}/documents": {
+      "post": {
+        "description": "Idempotent: linking a pair that is already linked is a 204 and changes nothing. An archived ticket or document links like a live one, and archiving either later does not remove the link. Both must be in a workspace the caller belongs to, and the same one; otherwise `not_found`, which does not say which was missing. Publishes `ticket.document_linked` when a link was made.",
+        "operationId": "link-ticket-document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkDocumentInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Link a document to a ticket"
+      }
+    },
+    "/api/v1/tickets/{id}/documents/{document_id}": {
+      "delete": {
+        "description": "Idempotent: unlinking a pair that is not linked is a 204. Only an unknown ticket, or one outside the caller's workspaces, is `not_found`. Publishes `ticket.document_unlinked` when a link was removed.",
+        "operationId": "unlink-ticket-document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Unlink a document from a ticket"
       }
     },
     "/api/v1/tickets/{id}/move": {

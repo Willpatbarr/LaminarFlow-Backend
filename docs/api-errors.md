@@ -42,7 +42,7 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 
 | Code | Status | Raised by |
 | --- | --- | --- |
-| `not_found` | 404 | An unmatched path under `/api/` |
+| `not_found` | 404 | An unmatched path under `/api/`. Also `POST /tickets/{id}/documents` and `DELETE /tickets/{id}/documents/{document_id}` (LAM-111): the ticket, or for the POST the document, is absent, outside your workspaces, or the two are in different workspaces. One code for all of them, so it does not say which |
 | `invalid_login` | 401 | Wrong email or wrong password — one answer for both. A *missing* credential is the derived `unauthorized` instead, and the pair is what lets a caller tell "log in" from "you got that wrong" |
 | `email_taken` | 409 | Registration with an address that already has an account, compared case-insensitively. Log in instead, or use another address. This reveals the address is registered — see ADR 0004 for why that is accepted |
 | `password_too_short` | 422 | Registration with a password under 10 characters (characters, not bytes). Nothing was created |

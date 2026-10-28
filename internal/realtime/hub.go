@@ -82,6 +82,10 @@ const (
 	DocumentUpdated    = "document.updated"
 	DocumentArchived   = "document.archived"
 	DocumentUnarchived = "document.unarchived"
+
+	// LAM-111. A link between a ticket and a document; carries both ids, see Event.
+	TicketDocumentLinked   = "ticket.document_linked"
+	TicketDocumentUnlinked = "ticket.document_unlinked"
 )
 
 // helloFrame is the first frame on every connection. A socket that is open is not a
@@ -160,6 +164,10 @@ type Event struct {
 	// (above) as the ticket events do: a client applies the event only if it is newer than
 	// its copy. ProjectID and TeamID (above) are set when the document is filed under one.
 	// On document.archived the body is the document as archived, archived_at set.
+	//
+	// LAM-111. ticket.document_linked and ticket.document_unlinked carry TicketID and
+	// DocumentID and nothing else of either: a link is neither's version, so there is no
+	// Version and no body.
 	DocumentID string `json:"document_id,omitempty"`
 	Document   any    `json:"document,omitempty"`
 }

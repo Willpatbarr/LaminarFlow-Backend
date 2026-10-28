@@ -24,6 +24,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/document"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
 
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -58,6 +59,28 @@ type documentBody struct {
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at" doc:"When the document last changed - an edit, an archive or a restore. For display; to compare versions use version."`
 	ArchivedAt   *time.Time     `json:"archived_at" doc:"Null while live. Set on an archived document, which only a 409's current and a document.archived event ever show."`
+}
+
+// linkedTicketBody is a ticket as a document lists it (LAM-111).
+type linkedTicketBody struct {
+	ID         string     `json:"id"`
+	Title      string     `json:"title"`
+	ArchivedAt *time.Time `json:"archived_at" doc:"Null while live. A link survives an archive, so an archived ticket is listed with this set."`
+}
+
+// documentDetailBody is what GET /documents/{id} returns: the document plus the tickets linked
+// to it. Only that read carries them; writes, lists, conflicts and events keep documentBody.
+// DocumentBody is documentBody under an exported name so it can be embedded; see TicketBody.
+type DocumentBody = documentBody
+
+type documentDetailBody struct {
+	DocumentBody
+	Tickets []linkedTicketBody `json:"tickets" doc:"The tickets linked to this document, oldest link first, archived ones included. Never null; empty for none."`
+}
+
+type documentDetailOutput struct {
+	ETag string `header:"ETag" doc:"The document's version in quotes, as If-Match takes it back."`
+	Body documentDetailBody
 }
 
 type documentOutput struct {
@@ -294,7 +317,7 @@ func bodyValues(in map[string]string) map[string]any {
 │      →  POST /api/v1/documents, GET /api/v1/documents/{id}
 */
 
-func registerDocuments(api huma.API, svc *document.Service, feed ticketFeed) {
+func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Service, feed ticketFeed) {
 	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
@@ -333,7 +356,7 @@ func registerDocuments(api huma.API, svc *document.Service, feed ticketFeed) {
 		Path:        V1 + "/documents/{id}",
 		Summary:     "Fetch one document",
 		Metadata:    requires,
-	}, func(ctx context.Context, in *getDocumentInput) (*documentOutput, error) {
+	}, func(ctx context.Context, in *getDocumentInput) (*documentDetailOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
 		d, err := svc.Get(ctx, me.AccountID, in.ID)
@@ -341,7 +364,19 @@ func registerDocuments(api huma.API, svc *document.Service, feed ticketFeed) {
 			return nil, documentError(err)
 		}
 
-		return asDocumentOutput(d), nil
+		// The document is read first: it is the check that the caller may see this document
+		// at all, and LinkedTickets scopes only the tickets.
+		linked, err := tickets.LinkedTickets(ctx, me.AccountID, in.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		out := make([]linkedTicketBody, len(linked))
+		for i, t := range linked {
+			out[i] = linkedTicketBody{ID: t.ID, Title: t.Title, ArchivedAt: utcOrNil(t.ArchivedAt)}
+		}
+
+		return &documentDetailOutput{ETag: etag(d.Version), Body: documentDetailBody{DocumentBody: asDocumentBody(d), Tickets: out}}, nil
 	})
 
 	huma.Register(api, huma.Operation{
