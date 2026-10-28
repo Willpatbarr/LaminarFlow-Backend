@@ -15,25 +15,86 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"time"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/search"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ErrNotFound is returned when Save targets a document ID that does not exist.
+// ErrNotFound covers three cases on purpose: no such document, a document in a workspace
+// the caller is not a member of, and an archived document that the call may not see. A
+// caller learns only that it cannot have this row - never that it exists.
 var ErrNotFound = errors.New("document not found")
+
+// ErrAspectTypeNotFound means the aspect type a write named is absent or belongs to
+// another workspace - one answer for both, the collapse internal/aspect makes.
+var ErrAspectTypeNotFound = errors.New("document: aspect type not found")
+
+// The reasons a write is refused as invalid. Each is the Kind of a *FieldError, which says
+// where; the API maps the pair to a 422 naming the field.
+var (
+	// ErrUnknownField: a body key that is not an aspect_type_field id of the document's
+	// type. FieldError.Field is that key.
+	ErrUnknownField = errors.New("document: body key is not a field of the document's type")
+
+	// ErrNoFields: a normal document cannot become an aspect of a type that has no fields,
+	// because its body would have nowhere to go. Field is aspect_type_id.
+	ErrNoFields = errors.New("document: the aspect type has no fields to move the body into")
+
+	// ErrTypeShape: aspect_type_id missing on an aspect document, or present on a normal
+	// one. The database enforces the same biconditional (document_aspect_type_matches_type);
+	// checking it here turns a constraint violation into a 422 that names the field.
+	ErrTypeShape = errors.New("document: aspect_type_id must be set exactly when type is aspect")
+
+	// ErrScopeNotFound: team_id or project_id names nothing the caller can use. One cause
+	// for absent and for another workspace's, so it cannot be used to probe for ids.
+	ErrScopeNotFound = errors.New("document: scope not found")
+
+	// ErrScopeAmbiguous: both team_id and project_id. The database allows at most one
+	// (document_at_most_one_scope).
+	ErrScopeAmbiguous = errors.New("document: at most one of team_id and project_id")
+)
+
+// FieldError is a write refused as invalid, and which input it was about.
+type FieldError struct {
+	// Kind is one of the Err* values above.
+	Kind error
+	// Field is the request member, or for ErrUnknownField the offending body key.
+	Field string
+}
+
+func (e *FieldError) Error() string { return fmt.Sprintf("%v (%s)", e.Kind, e.Field) }
+func (e *FieldError) Unwrap() error { return e.Kind }
+
+// MaxTitleLength is the longest title a write accepts, in characters (internal/textlimit).
+// Enforced here and not as a CHECK, for the reason ticket's limits are: rows written before
+// the limit existed must stay writable.
+const MaxTitleLength = 200
+
+// ContentKey is the one body key a normal document uses: its text, as Markdown. A normal
+// document has no aspect type and so no field ids, and this is what the "body moves into
+// the type's first field" rule moves. docs/adr/0006 records the choice.
+const ContentKey = "content"
 
 // Service is the only type permitted to write document bodies. Handlers depend on
 // this; they never reach for the pool themselves.
 type Service struct {
 	pool *pgxpool.Pool
+
+	// aspects answers "which body keys does this type allow". internal/aspect owns the
+	// tables, document may not read them (aspect/boundary_test.go), so it asks. Built
+	// from the same pool: aspect.Service holds nothing else.
+	aspects *aspect.Service
 }
 
 // NewService returns a Service backed by pool.
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool}
+	return &Service{pool: pool, aspects: aspect.NewService(pool)}
 }
 
 // Document type values. The database enforces this same closed set in
@@ -42,6 +103,50 @@ const (
 	TypeNormal = "normal"
 	TypeAspect = "aspect"
 )
+
+// Document is one row as a caller sees it.
+type Document struct {
+	ID          string
+	WorkspaceID string
+	Title       string
+	Type        string
+	// AspectTypeID, TeamID and ProjectID are null when unset. A document with neither team
+	// nor project is a workspace-level document.
+	AspectTypeID *string
+	TeamID       *string
+	ProjectID    *string
+	Body         map[string]any
+
+	// Version starts at 1 and rises by exactly 1 on every update, archive and unarchive,
+	// in the statement that writes. See 0035.
+	Version    int
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	ArchivedAt *time.Time
+}
+
+// columns and dest are written once because the row is scanned from four statements.
+const columns = `d.id::text, d.workspace_id::text, d.title, d.type, d.aspect_type_id::text,
+	d.team_id::text, d.project_id::text, d.body::text, d.version, d.created_at, d.updated_at, d.archived_at`
+
+func (d *Document) scan(row pgx.Row) error {
+	var raw string
+	if err := row.Scan(&d.ID, &d.WorkspaceID, &d.Title, &d.Type, &d.AspectTypeID,
+		&d.TeamID, &d.ProjectID, &raw, &d.Version, &d.CreatedAt, &d.UpdatedAt, &d.ArchivedAt); err != nil {
+		return err
+	}
+
+	return d.decode(raw)
+}
+
+func (d *Document) decode(raw string) error {
+	d.Body = map[string]any{}
+	if err := json.Unmarshal([]byte(raw), &d.Body); err != nil {
+		return fmt.Errorf("decode body %s: %w", d.ID, err)
+	}
+
+	return nil
+}
 
 // SaveParams is one document's writable state.
 //
@@ -53,8 +158,13 @@ const (
 // inserts, an empty Title is an untitled document, an empty Type is
 // TypeNormal, and an empty AspectTypeID is SQL NULL.
 type SaveParams struct {
-	// WorkspaceID scopes the write. Required.
+	// WorkspaceID scopes the write. Either this or AccountID is required; with both, the
+	// write is scoped to this workspace and the account must belong to it.
 	WorkspaceID string
+	// AccountID is the caller, for the API. It scopes the write to the workspaces the
+	// account is a member of, and on an insert with no WorkspaceID, team or project names
+	// the workspace: the account's oldest membership (ADR 0004).
+	AccountID string
 	// ID selects an existing document. Empty inserts a new one.
 	ID string
 	// Title may be empty; the column is NOT NULL DEFAULT ''.
@@ -65,8 +175,20 @@ type SaveParams struct {
 	// The database enforces both directions in
 	// document_aspect_type_matches_type.
 	AspectTypeID string
-	// Body is the field map. Keys are aspect_type_field IDs.
+	// ProjectID and TeamID file a new document under one of them; at most one. They are
+	// read on insert only. A document's scope is chosen when it is made and is not part of
+	// the PUT that replaces everything else, so an update leaves it alone - which also
+	// answers the old question of how a caller says "leave the scope" versus "clear it":
+	// there is no way to do either, because nothing asks.
+	ProjectID string
+	TeamID    string
+	// Body is the field map. Keys are aspect_type_field IDs; for an aspect document each
+	// one must be a field of AspectTypeID (ErrUnknownField). A normal document's body is
+	// not checked, and by convention holds ContentKey.
 	Body map[string]any
+	// IfVersion makes an update conditional on the document still being at that version.
+	// Nil means unconditional, the rule internal/ticket.Update has. Ignored on an insert.
+	IfVersion *int
 }
 
 // normalize fills in the defaults the columns would apply, so the same values
@@ -82,91 +204,362 @@ func (p SaveParams) normalize() SaveParams {
 // aspectType returns AspectTypeID as a value pgx will write as SQL NULL when
 // it is unset, since an empty string is not a valid uuid.
 func (p SaveParams) aspectType() *string {
-	if p.AspectTypeID == "" {
+	return nilIfEmpty(p.AspectTypeID)
+}
+
+func nilIfEmpty(s string) *string {
+	if s == "" {
 		return nil
 	}
-	return &p.AspectTypeID
+	return &s
 }
 
 // Save writes a document and regenerates that document's search_index rows in
-// one transaction. An empty p.ID inserts a new document into p.WorkspaceID;
-// otherwise the existing document is replaced. It returns the document's ID.
+// one transaction. An empty p.ID inserts a new document; otherwise the existing
+// document is replaced. It returns the document's ID.
 //
-// Every write is scoped to p.WorkspaceID. Updating a document owned by a
-// different workspace returns ErrNotFound rather than a distinct error, so a
-// caller outside the owning workspace learns nothing about whether it exists.
+// Save is Write for the callers that want only the id. They are the same write.
+func (s *Service) Save(ctx context.Context, p SaveParams) (string, error) {
+	d, err := s.Write(ctx, p)
+	if err != nil {
+		return "", err
+	}
+
+	return d.ID, nil
+}
+
+// Write is Save returning the row as written - its version above all, which the caller
+// needs for the ETag and cannot get from a read without racing the next writer.
+//
+// Every write is scoped, to p.WorkspaceID or to the workspaces p.AccountID belongs to.
+// Updating a document outside that scope returns ErrNotFound rather than a distinct
+// error, so a caller outside the owning workspace learns nothing about whether it exists.
 //
 // This is the single write path required by LAM-3: the blob and the index move
 // together or not at all. LAM-23 widened it from the body alone to the whole
 // row, so that "the service owns document writes" stays true of the columns
 // added around the blob rather than only of the blob. LAM-45 moved the index
-// half to internal/search without loosening either property.
+// half to internal/search without loosening either property. LAM-87 added the scope,
+// the version and the checks of an aspect document's body against its type.
 //
-// Scope columns (project_id, team_id) are deliberately absent. Nothing sets
-// them yet, and adding them here would mean choosing how a caller expresses
-// "leave the scope alone" versus "clear it" - a question no caller has asked.
-func (s *Service) Save(ctx context.Context, p SaveParams) (string, error) {
+// On an update, a document that is archived is not found, unless IfVersion is set, in
+// which case it is a *Conflict with Archived set - the answer internal/ticket gives, for
+// the same reason: a client holding unsynced edits needs to hear "gone", not "never was".
+func (s *Service) Write(ctx context.Context, p SaveParams) (Document, error) {
 	p = p.normalize()
-	workspaceID, id, body := p.WorkspaceID, p.ID, p.Body
+
+	if p.WorkspaceID == "" && p.AccountID == "" {
+		return Document{}, errors.New("document: a write needs a WorkspaceID or an AccountID")
+	}
+
+	if err := textlimit.Optional("title", p.Title, MaxTitleLength); err != nil {
+		return Document{}, err
+	}
+	if err := p.checkShape(); err != nil {
+		return Document{}, err
+	}
+
 	// Round-trip the body through JSON before extracting text. The rebuild
 	// reads values back out of Postgres as decoded JSON, so normalizing here
 	// guarantees both paths extract from identical Go values - an int 42 from a
 	// handler and a float64 42 from the database cannot diverge.
-	raw, err := json.Marshal(body)
+	raw, err := json.Marshal(p.Body)
 	if err != nil {
-		return "", fmt.Errorf("marshal body: %w", err)
+		return Document{}, fmt.Errorf("marshal body: %w", err)
 	}
 
 	var normalized map[string]any
 	if err := json.Unmarshal(raw, &normalized); err != nil {
-		return "", fmt.Errorf("normalize body: %w", err)
+		return Document{}, fmt.Errorf("normalize body: %w", err)
+	}
+	if normalized == nil {
+		normalized = map[string]any{}
 	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return "", fmt.Errorf("begin: %w", err)
+		return Document{}, fmt.Errorf("begin: %w", err)
 	}
 	// Safe to call unconditionally - a rollback after a successful commit is a
 	// no-op. This guarantees no early return can leak an open transaction.
 	defer tx.Rollback(ctx)
 
-	if id == "" {
-		err = tx.QueryRow(ctx,
-			`INSERT INTO document (workspace_id, body, title, type, aspect_type_id)
-			 VALUES ($1::uuid, $2::jsonb, $3, $4, $5::uuid) RETURNING id::text`,
-			workspaceID, string(raw), p.Title, p.Type, p.aspectType(),
-		).Scan(&id)
+	var d Document
+	if p.ID == "" {
+		d, err = s.insert(ctx, tx, p, normalized)
 	} else {
-		err = tx.QueryRow(ctx,
-			`UPDATE document
-			    SET body = $1::jsonb, title = $2, type = $3,
-			        aspect_type_id = $4::uuid, updated_at = now()
-			 WHERE id = $5::uuid AND workspace_id = $6::uuid
-			 RETURNING id::text`,
-			string(raw), p.Title, p.Type, p.aspectType(), id, workspaceID,
-		).Scan(&id)
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
+		d, err = s.update(ctx, tx, p, normalized)
 	}
 	if err != nil {
-		return "", fmt.Errorf("write body: %w", err)
+		return Document{}, err
 	}
 
 	// Both index calls take this transaction, so the blob and its rows still move
 	// together or not at all. That invariant is the point of Save and survived the
 	// move to internal/search unchanged.
-	if err := search.ClearDocument(ctx, tx, id); err != nil {
-		return "", err
+	if err := search.ClearDocument(ctx, tx, d.ID); err != nil {
+		return Document{}, err
 	}
 
-	if err := search.IndexDocument(ctx, tx, id, normalized); err != nil {
-		return "", err
+	if err := search.IndexDocument(ctx, tx, d.ID, d.Body); err != nil {
+		return Document{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return "", fmt.Errorf("commit: %w", err)
+		return Document{}, fmt.Errorf("commit: %w", err)
 	}
 
-	return id, nil
+	return d, nil
+}
+
+// checkShape is the part of validation that needs no database.
+func (p SaveParams) checkShape() error {
+	if (p.Type == TypeAspect) != (p.AspectTypeID != "") {
+		return &FieldError{Kind: ErrTypeShape, Field: "aspect_type_id"}
+	}
+	if p.ProjectID != "" && p.TeamID != "" {
+		return &FieldError{Kind: ErrScopeAmbiguous, Field: "team_id"}
+	}
+
+	return nil
+}
+
+// checkBody is the rule that a body key must be a field of the document's type, and the
+// move of a normal document's text into the type's first field when it becomes an aspect.
+// It returns the body to store.
+//
+// current is the stored body of the document being converted, nil unless the write turns
+// a normal document into an aspect one. The text moves from the request's ContentKey if
+// the request carries one - that is the newer copy - and otherwise from the stored body,
+// into the type's first field unless the request already filled it. Whatever else the
+// normal body held is not carried: it is not a field id, and keeping it would store a key
+// the next write would refuse.
+func (s *Service) checkBody(ctx context.Context, workspaceID string, p SaveParams, body, current map[string]any, converting bool) (map[string]any, error) {
+	if p.Type != TypeAspect {
+		return body, nil
+	}
+
+	ids, err := s.aspects.FieldIDs(ctx, workspaceID, p.AspectTypeID)
+	if errors.Is(err, aspect.ErrNotFound) {
+		return nil, ErrAspectTypeNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("document: read aspect fields: %w", err)
+	}
+
+	if converting {
+		if len(ids) == 0 {
+			return nil, &FieldError{Kind: ErrNoFields, Field: "aspect_type_id"}
+		}
+
+		content, ok := body[ContentKey]
+		if ok {
+			delete(body, ContentKey)
+		} else {
+			content, ok = current[ContentKey]
+		}
+		if _, filled := body[ids[0]]; ok && !filled {
+			body[ids[0]] = content
+		}
+	}
+
+	allowed := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		allowed[id] = true
+	}
+	// Sorted, so the key named in the 422 is the same one on every run.
+	keys := make([]string, 0, len(body))
+	for key := range body {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if !allowed[key] {
+			return nil, &FieldError{Kind: ErrUnknownField, Field: key}
+		}
+	}
+
+	return body, nil
+}
+
+// insert makes the row. The workspace comes from, in order: the team or project it is filed
+// under, WorkspaceID, the caller's oldest membership.
+func (s *Service) insert(ctx context.Context, tx pgx.Tx, p SaveParams, body map[string]any) (Document, error) {
+	workspaceID, err := s.insertWorkspace(ctx, tx, p)
+	if err != nil {
+		return Document{}, err
+	}
+
+	body, err = s.checkBody(ctx, workspaceID, p, body, nil, false)
+	if err != nil {
+		return Document{}, err
+	}
+
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return Document{}, fmt.Errorf("marshal body: %w", err)
+	}
+
+	var d Document
+	err = d.scan(tx.QueryRow(ctx,
+		`WITH d AS (
+		     INSERT INTO document (workspace_id, body, title, type, aspect_type_id, project_id, team_id)
+		     VALUES ($1::uuid, $2::jsonb, $3, $4, $5::uuid, $6::uuid, $7::uuid)
+		     RETURNING *)
+		 SELECT `+columns+` FROM d`,
+		workspaceID, string(raw), p.Title, p.Type, p.aspectType(),
+		nilIfEmpty(p.ProjectID), nilIfEmpty(p.TeamID),
+	))
+	if err != nil {
+		return Document{}, fmt.Errorf("write body: %w", err)
+	}
+
+	return d, nil
+}
+
+// insertWorkspace settles which workspace a new document goes in, and that the writer may
+// put it there.
+func (s *Service) insertWorkspace(ctx context.Context, tx pgx.Tx, p SaveParams) (string, error) {
+	workspaceID := p.WorkspaceID
+
+	scope := func(field, query, id string) error {
+		var ws string
+		err := tx.QueryRow(ctx, query, id).Scan(&ws)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &FieldError{Kind: ErrScopeNotFound, Field: field}
+		}
+		if err != nil {
+			return fmt.Errorf("document: read scope: %w", err)
+		}
+		if workspaceID != "" && workspaceID != ws {
+			return &FieldError{Kind: ErrScopeNotFound, Field: field}
+		}
+		workspaceID = ws
+
+		return nil
+	}
+
+	switch {
+	case p.TeamID != "":
+		if err := scope("team_id", `SELECT workspace_id::text FROM team WHERE id = $1::uuid`, p.TeamID); err != nil {
+			return "", err
+		}
+	case p.ProjectID != "":
+		if err := scope("project_id",
+			`SELECT tm.workspace_id::text FROM project pr JOIN team tm ON tm.id = pr.team_id
+			  WHERE pr.id = $1::uuid`, p.ProjectID); err != nil {
+			return "", err
+		}
+	}
+
+	if p.AccountID == "" {
+		return workspaceID, nil
+	}
+
+	if workspaceID == "" {
+		// ADR 0004: the oldest membership is the account's workspace.
+		err := tx.QueryRow(ctx,
+			`SELECT w.id::text FROM workspace w
+			   JOIN workspace_member wm ON wm.workspace_id = w.id AND wm.account_id = $1::uuid
+			  ORDER BY w.created_at, w.id LIMIT 1`, p.AccountID,
+		).Scan(&workspaceID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		if err != nil {
+			return "", fmt.Errorf("document: read workspace: %w", err)
+		}
+
+		return workspaceID, nil
+	}
+
+	var member bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM workspace_member
+		                 WHERE workspace_id = $1::uuid AND account_id = $2::uuid)`,
+		workspaceID, p.AccountID,
+	).Scan(&member); err != nil {
+		return "", fmt.Errorf("document: read membership: %w", err)
+	}
+	if !member {
+		// A team or project the caller cannot reach is not found; so is a workspace.
+		switch {
+		case p.TeamID != "":
+			return "", &FieldError{Kind: ErrScopeNotFound, Field: "team_id"}
+		case p.ProjectID != "":
+			return "", &FieldError{Kind: ErrScopeNotFound, Field: "project_id"}
+		}
+
+		return "", ErrNotFound
+	}
+
+	return workspaceID, nil
+}
+
+// update replaces the row under a lock, so the version it checks is the version it writes
+// over: two writers holding the same version both reach the lock, and the second reads the
+// first's commit.
+func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[string]any) (Document, error) {
+	cur, err := s.lock(ctx, tx, p.ID, p.WorkspaceID, p.AccountID)
+	if err != nil {
+		return Document{}, err
+	}
+	if err := cur.refuse(p.IfVersion, false); err != nil {
+		return Document{}, err
+	}
+
+	converting := cur.Type == TypeNormal && p.Type == TypeAspect
+	body, err = s.checkBody(ctx, cur.WorkspaceID, p, body, cur.Body, converting)
+	if err != nil {
+		return Document{}, err
+	}
+
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return Document{}, fmt.Errorf("marshal body: %w", err)
+	}
+
+	var d Document
+	err = d.scan(tx.QueryRow(ctx,
+		`WITH d AS (
+		     UPDATE document
+		        SET body = $1::jsonb, title = $2, type = $3, aspect_type_id = $4::uuid,
+		            updated_at = now(), version = version + 1
+		      WHERE id = $5::uuid
+		  RETURNING *)
+		 SELECT `+columns+` FROM d`,
+		string(raw), p.Title, p.Type, p.aspectType(), p.ID,
+	))
+	if err != nil {
+		return Document{}, fmt.Errorf("write body: %w", err)
+	}
+
+	return d, nil
+}
+
+// memberOf is the caller-scoping predicate, for the one place it is composed into a list.
+// lock and the others pass the same two optional scopes as arguments instead.
+const memberOf = `EXISTS (SELECT 1 FROM workspace_member wm
+	         WHERE wm.workspace_id = d.workspace_id AND wm.account_id = %s::uuid)`
+
+// lock reads a document FOR UPDATE, archived or not, within the scope given. A document
+// outside it is ErrNotFound.
+func (s *Service) lock(ctx context.Context, tx pgx.Tx, id, workspaceID, accountID string) (Document, error) {
+	var d Document
+	err := d.scan(tx.QueryRow(ctx,
+		`SELECT `+columns+` FROM document d
+		  WHERE d.id = $1::uuid
+		    AND ($2::uuid IS NULL OR d.workspace_id = $2::uuid)
+		    AND ($3::uuid IS NULL OR `+fmt.Sprintf(memberOf, "$3")+`)
+		    FOR UPDATE OF d`,
+		id, nilIfEmpty(workspaceID), nilIfEmpty(accountID),
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Document{}, ErrNotFound
+	}
+	if err != nil {
+		return Document{}, fmt.Errorf("document: lock: %w", err)
+	}
+
+	return d, nil
 }

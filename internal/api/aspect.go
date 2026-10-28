@@ -18,6 +18,7 @@ import (
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/document"
 
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -105,6 +106,12 @@ type renameFieldInput struct {
 	}
 }
 
+type fieldUsageOutput struct {
+	Body struct {
+		DocumentCount int `json:"document_count" doc:"Documents of this type that hold a value under the field's id, archived ones included. Zero means removing the field loses nothing."`
+	}
+}
+
 type reorderInput struct {
 	ID   string `path:"id" format:"uuid"`
 	Body struct {
@@ -154,11 +161,12 @@ func aspectError(err error) error {
 ├─ in ────────────────────────────────────────────
 │      api    huma.API
 │      svc    *aspect.Service    nil only for cmd/openapi
+│      docs   *document.Service  counts a field's use; nil only for cmd/openapi
 ├─ example ───────────────────────────────────────
 │      →  POST /api/v1/aspect-types/{id}/fields
 */
 
-func registerAspectTypes(api huma.API, svc *aspect.Service) {
+func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Service) {
 	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
@@ -289,6 +297,41 @@ func registerAspectTypes(api huma.API, svc *aspect.Service) {
 		}
 
 		return nil, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-aspect-type-field-usage",
+		Method:      http.MethodGet,
+		Path:        V1 + "/aspect-types/{id}/fields/{field_id}/usage",
+		Summary:     "Count the documents that hold a value in a field",
+		Description: "For the warning before a field is removed: removing it leaves the values in every body, unrendered, so this says how many there are. " +
+			"A field of another type, or one already removed, is `aspect_type_not_found` like the type itself.",
+		Metadata: requires,
+	}, func(ctx context.Context, in *fieldInput) (*fieldUsageOutput, error) {
+		me, _ := auth.FromContext(ctx)
+
+		t, err := svc.Get(ctx, me.AccountID, in.ID)
+		if err != nil {
+			return nil, aspectError(err)
+		}
+
+		found := false
+		for _, f := range t.Fields {
+			found = found || f.ID == in.FieldID
+		}
+		if !found {
+			return nil, aspectError(aspect.ErrNotFound)
+		}
+
+		n, err := docs.CountFieldUsage(ctx, me.AccountID, t.ID, in.FieldID)
+		if err != nil {
+			return nil, err
+		}
+
+		out := &fieldUsageOutput{}
+		out.Body.DocumentCount = n
+
+		return out, nil
 	})
 
 	// POST rather than PUT on a /fields/order path: "order" would sit where a field

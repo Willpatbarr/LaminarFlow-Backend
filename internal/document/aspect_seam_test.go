@@ -181,6 +181,16 @@ func TestSaveWritesNormalAndAspectDocuments(t *testing.T) {
 
 	aspectTypeID := newAspectType(t, pool, ws, "both-kinds")
 
+	// An aspect document's body keys are checked against its type (LAM-87), so the key
+	// has to be a real field of it.
+	var noteField string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO aspect_type_field (aspect_type_id, label, position)
+		 VALUES ($1::uuid, 'Note', 1) RETURNING id::text`, aspectTypeID,
+	).Scan(&noteField); err != nil {
+		t.Fatalf("create aspect type field: %v", err)
+	}
+
 	normalID, err := svc.Save(ctx, SaveParams{
 		WorkspaceID: ws,
 		Title:       "Meeting notes",
@@ -195,7 +205,7 @@ func TestSaveWritesNormalAndAspectDocuments(t *testing.T) {
 		Title:        "User Service",
 		Type:         TypeAspect,
 		AspectTypeID: aspectTypeID,
-		Body:         map[string]any{"f_note": "handles auth"},
+		Body:         map[string]any{noteField: "handles auth"},
 	})
 	if err != nil {
 		t.Fatalf("save an aspect document: %v", err)
@@ -243,7 +253,7 @@ func TestSaveWritesNormalAndAspectDocuments(t *testing.T) {
 	if index[normalID+"|f_note"] != "shipped LAM-23" {
 		t.Errorf("normal document not indexed: %v", index)
 	}
-	if index[aspectID+"|f_note"] != "handles auth" {
+	if index[aspectID+"|"+noteField] != "handles auth" {
 		t.Errorf("aspect document not indexed: %v", index)
 	}
 }

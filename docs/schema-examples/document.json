@@ -10,5 +10,7 @@
     "99999999-9999-4999-8999-999999999999": "Columns currently assume one status each, which breaks the In Review / QA split."
   },
   "created_at": "2026-09-05T09:00:00+00:00",
-  "updated_at": "2026-09-12T16:05:00+00:00"
+  "updated_at": "2026-09-12T16:05:00+00:00",
+  "version": 4,
+  "archived_at": null
 }

@@ -171,7 +171,19 @@ their `version` does not move. The database nulls `epic_id` / `milestone_id` and
 `milestone.deleted` or `label.deleted`, and a re-list shows the same. A sprint delete drops the memberships
 the same way (read through the `sprint` filter, so a re-list shows them).
 
+## Document events (LAM-87)
+
+`document.created`, `document.updated`, `document.archived` and `document.unarchived` carry
+`type`, `document_id`, `version` (the document's version after the change), `actor_id`, `at` (the
+document's `updated_at`, UTC) and `document` — the whole document in exactly the shape of
+`DocumentBody` (`GET /documents/{id}`). `project_id` and `team_id` are set when the document is
+filed under one. They have **no** `ticket_id` or `ticket`.
+
+Apply them as ticket events are applied: upsert `document` if `version` is newer than the local
+copy's, remove it on `archived`. `document` is complete on `archived` — the archived document
+(`archived_at` set) is otherwise unreadable. Only successful writes publish.
+
 ## Not here yet
 
-No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones and labels,
+No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones, labels and documents,
 no client-to-server messages, no resume. Each is additive.

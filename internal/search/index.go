@@ -215,11 +215,16 @@ type documentBody struct {
 	body map[string]any
 }
 
-// readDocumentBodies loads every document before any insert runs. A pgx connection can
+// readDocumentBodies loads every live document before any insert runs. Archived ones are
+// left out for the reason archived tickets are (0029, 0035): archiving removes the rows
+// (document.Archive clears them), so a rebuild that put them back would disagree with the
+// live index.
+//
+// It loads them all first because a pgx connection can
 // only have one query in flight, so writing inside the rows.Next loop would fail on
 // the same transaction.
 func readDocumentBodies(ctx context.Context, tx pgx.Tx) ([]documentBody, error) {
-	rows, err := tx.Query(ctx, `SELECT id::text, body::text FROM document`)
+	rows, err := tx.Query(ctx, `SELECT id::text, body::text FROM document WHERE archived_at IS NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("search: read documents: %w", err)
 	}
