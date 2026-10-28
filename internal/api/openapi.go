@@ -22,6 +22,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/milestone"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/project"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/savedview"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/setting"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/sprint"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
@@ -49,6 +50,7 @@ import (
 │      milestoneSvc *milestone.Service nil only for cmd/openapi
 │      labelSvc     *label.Service     nil only for cmd/openapi
 │      documentSvc  *document.Service  nil only for cmd/openapi
+│      savedViewSvc *savedview.Service nil only for cmd/openapi
 │      hub          *realtime.Hub      nil publishes nothing
 ├─ out ───────────────────────────────────────────
 │      huma.API    the same API cmd/openapi emits
@@ -59,7 +61,8 @@ import (
 func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Service, aspectSvc *aspect.Service,
 	settingSvc *setting.Service, teamSvc *team.Service, projSvc *project.Service,
 	accountSvc *account.Service, boardSvc *board.Service, epicSvc *epic.Service, sprintSvc *sprint.Service,
-	milestoneSvc *milestone.Service, labelSvc *label.Service, documentSvc *document.Service, hub *realtime.Hub) huma.API {
+	milestoneSvc *milestone.Service, labelSvc *label.Service, documentSvc *document.Service,
+	savedViewSvc *savedview.Service, hub *realtime.Hub) huma.API {
 	// Before anything can raise an error. huma.NewError is a global, so this
 	// is the one place that sets it - see useErrorEnvelope.
 	useErrorEnvelope()
@@ -107,6 +110,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	registerMilestones(api, milestoneSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerLabels(api, labelSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerDocuments(api, documentSvc, ticketFeed{hub: hub, projects: projSvc})
+	registerSavedViews(api, savedViewSvc)
 
 	registerPing(api)
 

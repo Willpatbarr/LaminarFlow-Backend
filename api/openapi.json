@@ -244,6 +244,40 @@
         ],
         "type": "object"
       },
+      "Config": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "description": "The visible columns, in order, by ticket field name. Each at most once.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "filter": {
+            "$ref": "#/components/schemas/Group",
+            "description": "The filter language of POST /tickets/list, over the ticket vocabulary. Omit for none."
+          },
+          "group": {
+            "description": "A ticket filter field to group by. Multi-valued fields (label, sprint) cannot be grouped. Omit for ungrouped.",
+            "type": "string"
+          },
+          "sort": {
+            "description": "Sort keys, most significant first, over the ticket vocabulary.",
+            "items": {
+              "$ref": "#/components/schemas/Order"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "CreateAspectTypeInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -502,6 +536,61 @@
         "required": [
           "team_id",
           "name"
+        ],
+        "type": "object"
+      },
+      "CreateSavedViewInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/CreateSavedViewInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "board_id": {
+            "description": "Required when layout is board, and refused when it is list. A board of the team, and of the project when one is given.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "config": {
+            "$ref": "#/components/schemas/Config",
+            "description": "Omit for an empty config."
+          },
+          "is_shared": {
+            "description": "Default false: private to you.",
+            "type": "boolean"
+          },
+          "layout": {
+            "enum": [
+              "list",
+              "board"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "1 to 100 characters (not bytes), and not only whitespace.",
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Scope the view to one project of the team. Omit for the whole team.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "team_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_id",
+          "name",
+          "layout"
         ],
         "type": "object"
       },
@@ -1490,6 +1579,45 @@
         ],
         "type": "object"
       },
+      "ListEnvelopeSavedViewBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ListEnvelopeSavedViewBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SavedViewBody"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_cursor": {
+            "description": "Pass back as cursor for the next page. Null when there is none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "type": "object"
+      },
       "ListEnvelopeSprintBody": {
         "additionalProperties": false,
         "properties": {
@@ -1711,6 +1839,44 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "ListSavedViewsInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ListSavedViewsInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "cursor": {
+            "description": "next_cursor from the previous page. Opaque - do not construct or parse it.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Rows per page. Omitted means 50. Over the maximum is rejected, not clamped.",
+            "format": "int64",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project_id": {
+            "description": "With it, that project's views plus the team-wide ones. Omit for every view of the team.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "team_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_id"
+        ],
         "type": "object"
       },
       "ListSprintsInputBody": {
@@ -2282,6 +2448,86 @@
         },
         "required": [
           "status_ids"
+        ],
+        "type": "object"
+      },
+      "SavedViewBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/SavedViewBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "board_id": {
+            "description": "Set exactly when layout is board.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "config": {
+            "$ref": "#/components/schemas/Config"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_shared": {
+            "description": "false is private to the owner; true is visible to the whole team.",
+            "type": "boolean"
+          },
+          "layout": {
+            "enum": [
+              "list",
+              "board"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_account_id": {
+            "description": "Null for a team's own view: the one team creation seeds, or a shared view whose owner's account was deleted. Any member who can reach the team may edit or delete such a view.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "project_id": {
+            "description": "Null for a view of the whole team.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "team_id",
+          "project_id",
+          "board_id",
+          "owner_account_id",
+          "name",
+          "layout",
+          "config",
+          "is_shared",
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -2910,6 +3156,40 @@
               "string",
               "null"
             ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateSavedViewInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/UpdateSavedViewInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "config": {
+            "$ref": "#/components/schemas/Config",
+            "description": "Replaces the whole config; it is not merged."
+          },
+          "is_shared": {
+            "type": "boolean"
+          },
+          "layout": {
+            "enum": [
+              "list",
+              "board"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
           }
         },
         "type": "object"
@@ -5215,6 +5495,203 @@
           }
         },
         "summary": "Create a board on a project"
+      }
+    },
+    "/api/v1/saved-views": {
+      "post": {
+        "description": "Owned by the caller; private unless `is_shared`. `config` holds `filter` (the language of the ticket list), `group`, `sort` and `columns`, all over the ticket vocabulary, and is checked the way a ticket list request would be: a config that would not run is a 422 `filter_invalid` whose `errors[].location` is `body.config...`. A board view needs `board_id`; a list view must not have one.",
+        "operationId": "create-saved-view",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSavedViewInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedViewBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Save a list or board setup"
+      }
+    },
+    "/api/v1/saved-views/list": {
+      "post": {
+        "description": "The caller's own private views plus every shared view of the team, by name. With `project_id`, that project's views and the team-wide ones; without it, every view of the team. Keyset pagination as the other lists: pass `next_cursor` back as `cursor`.",
+        "operationId": "list-saved-views",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListSavedViewsInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListEnvelopeSavedViewBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List the views the caller can open (a read - POST for the body)"
+      }
+    },
+    "/api/v1/saved-views/{id}": {
+      "delete": {
+        "description": "Owner only, with the same exception for a team's own view as update-saved-view. Nothing else is touched: a view holds no tickets.",
+        "operationId": "delete-saved-view",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a saved view"
+      },
+      "get": {
+        "description": "`saved_view_not_found` for an absent view, one outside your workspace, and another person's private view alike.",
+        "operationId": "get-saved-view",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedViewBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Fetch one saved view"
+      },
+      "put": {
+        "description": "Owner only: a shared view the caller does not own is 403 `saved_view_not_owner`. A view with no owner (`owner_account_id` null) is the team's own, and any member may edit it, but it cannot be made private. Each member is optional; an omitted one is left alone, and a `config` replaces the old one whole. `layout: list` on a board view clears its `board_id`; `layout: board` on a list view is refused, since this body cannot name a board. A config that does not compile is 422 `filter_invalid` located at `body.config...`.",
+        "operationId": "update-saved-view",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSavedViewInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedViewBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Rename a view, change its config, or share or unshare it"
       }
     },
     "/api/v1/settings": {

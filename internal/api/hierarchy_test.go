@@ -715,7 +715,7 @@ func TestHierarchyWritesAreAnnounced(t *testing.T) {
 }
 
 func TestTheOpenAPIDocumentCarriesTheHierarchy(t *testing.T) {
-	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI()
+	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI()
 	body := doc.Components.Schemas.Map()["UpdateTicketInputBody"]
 	if body == nil {
 		t.Fatal("no UpdateTicketInputBody")
