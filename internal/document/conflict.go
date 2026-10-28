@@ -14,10 +14,18 @@ import "fmt"
 // there is no ChangedBy; ChangedAt is updated_at, which an archive moves too.
 type Conflict struct {
 	Archived bool
-	Current  Document
+
+	// Replay is set when this is not a refused write but a create whose Idempotency-Key
+	// had already made a document, which has since been archived. Current is that document.
+	Replay bool
+
+	Current Document
 }
 
 func (c *Conflict) Error() string {
+	if c.Replay {
+		return "document: the idempotency key created a document that has since been archived"
+	}
 	if c.Archived {
 		return "document: archived since the version the caller saw"
 	}

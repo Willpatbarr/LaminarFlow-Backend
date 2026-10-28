@@ -230,7 +230,8 @@ duplicate; not retrying loses the work. LAM-75.
 
 1 to 128 printable ASCII characters (space to `~`); a UUID is the obvious choice. Anything
 else — empty, longer than 128, non-ASCII or a control character, or the header sent twice —
-is a `422` on `header.Idempotency-Key`. Only `POST /tickets` takes it; the other writes are
+is a `422` on `header.Idempotency-Key`. `POST /tickets` and `POST /documents` (LAM-126) take it;
+the other writes are
 already safe to repeat (`PUT` replaces, archive and unarchive are refused when repeated, and
 all three can carry `If-Match`).
 
@@ -283,6 +284,18 @@ concurrent test fires 16 at once.
 **No expiry.** A key lives as long as its ticket; nothing deletes or recycles it. A client
 must not reuse a key for an unrelated create, ever. A retention window is a possible later
 change to the stored column, not to this contract.
+
+**Documents (LAM-126).** `POST /documents` follows every rule above with "document" for
+"ticket": the same key from the same account returns the original document as it is now with
+`Idempotent-Replayed: true` and publishes no second `document.created`; a key used by another
+account is independent; the body of a replay is ignored; the key is looked up before the
+team, project and aspect type are checked, so a replay still answers after they are gone. The
+one difference is the archived original: it answers `409 document_conflict` (the only code a
+document conflict has) with `current` the archived document (`archived_at` set) and
+`changed_at` its `updated_at`; unarchiving it makes the key live again. The key is stored on
+`document.created_by` / `document.idempotency_key` (migration 0039) under the same partial
+unique index and `ON CONFLICT … DO NOTHING` insert. Enforced by `internal/api`'s
+`document_idempotency_test.go`.
 
 ## 11. A named id must exist, and belong to the right place
 

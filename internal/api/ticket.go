@@ -225,6 +225,11 @@ type createTicketInput struct {
 // Everything else about the key's shape (printable ASCII, the length) is in the tag, so
 // it is also in the OpenAPI document.
 func (in *createTicketInput) Resolve(ctx huma.Context) []error {
+	return resolveIdempotencyKey(ctx)
+}
+
+// resolveIdempotencyKey is Resolve for every create that takes the header.
+func resolveIdempotencyKey(ctx huma.Context) []error {
 	var values []string
 	ctx.EachHeader(func(name, value string) {
 		if strings.EqualFold(name, idempotencyHeader) {

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
@@ -135,7 +136,8 @@ func asDocumentOutput(d document.Document) *documentOutput {
 }
 
 type createDocumentInput struct {
-	Body struct {
+	IdempotencyKey string `header:"Idempotency-Key" maxLength:"128" pattern:"^[ -~]+$" example:"2b0a7c9e-5d1f-4c8e-9a53-0f2f8d6b1e47" doc:"Makes the create safe to retry. The same key from the same account returns the document the first call created instead of creating another - the original's current state, with Idempotent-Replayed: true. 1 to 128 printable ASCII characters; a UUID is ideal. Keys are per account and never expire. A replay ignores the body it carries: send a new key for a different document. Omit it for a plain create."`
+	Body           struct {
 		Title        string            `json:"title,omitempty" maxLength:"200" doc:"Up to 200 characters (not bytes). Omit for an untitled document."`
 		Type         string            `json:"type,omitempty" enum:"normal,aspect" default:"normal"`
 		AspectTypeID *string           `json:"aspect_type_id,omitempty" format:"uuid" nullable:"true" doc:"Required when type is aspect, forbidden otherwise (422 at body.aspect_type_id). An aspect type that is absent or another workspace's is a 404 aspect_type_not_found."`
@@ -143,6 +145,27 @@ type createDocumentInput struct {
 		ProjectID    *string           `json:"project_id,omitempty" format:"uuid" nullable:"true" doc:"File the document under a project. Not the caller's: 422 project_not_found at body.project_id."`
 		Body         map[string]string `json:"body,omitempty" doc:"Field id to Markdown string. For an aspect document every key must be a field id of its type, or the answer is a 422 document_field_unknown at body.<key>. A normal document keeps its text under content."`
 	}
+}
+
+// Resolve rejects the two shapes of the header huma cannot see; see createTicketInput.
+func (in *createDocumentInput) Resolve(ctx huma.Context) []error {
+	return resolveIdempotencyKey(ctx)
+}
+
+func (in *createDocumentInput) key() *string {
+	if in.IdempotencyKey == "" {
+		return nil
+	}
+
+	return &in.IdempotencyKey
+}
+
+// createDocumentOutput is documentOutput plus whether the response is a replay; 200 for
+// both, for createTicketOutput's reason.
+type createDocumentOutput struct {
+	ETag     string `header:"ETag" doc:"The document's version in quotes, as If-Match takes it back."`
+	Replayed string `header:"Idempotent-Replayed" enum:"true,false" doc:"Only when Idempotency-Key was sent. true: that key had been used, nothing was created, and the body is the original document as it is now. false: this request created the document."`
+	Body     documentBody
 }
 
 type getDocumentInput struct {
@@ -216,7 +239,10 @@ func documentError(err error) error {
 	var conflict *document.Conflict
 	if errors.As(err, &conflict) {
 		detail := "the document has changed since the version you sent"
-		if conflict.Archived {
+		switch {
+		case conflict.Archived && conflict.Replay:
+			detail = "the document this Idempotency-Key created has since been archived"
+		case conflict.Archived:
 			detail = "the document has been archived since the version you sent"
 		}
 
@@ -286,6 +312,8 @@ func documentConflictResponses(api huma.API, description string) map[string]*hum
 	}
 }
 
+const documentReplayConflict = "Conflict. Only when Idempotency-Key was sent and had already created a document that has since been archived: code is document_conflict, current is that document with archived_at set. Nothing was written, and no second document exists - restore the original or discard the local copy."
+
 const documentIfMatchConflict = "Conflict. Only when If-Match was sent: code is document_conflict, current is the server's copy (archived_at says if it was archived). Nothing was written."
 
 func strOrEmpty(s *string) string {
@@ -323,30 +351,45 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 		OperationID: "create-document",
 		Method:      http.MethodPost,
 		Path:        V1 + "/documents",
-		Summary:     "Create a document",
+		Summary:     "Create a document (safe to retry with Idempotency-Key)",
 		Description: "A normal document keeps its text under `content`; an aspect document's body is keyed by the field ids of its aspect type. " +
-			"The body is indexed for search in the same transaction.",
+			"The body is indexed for search in the same transaction. " +
+			"Send `Idempotency-Key` to make the create safe to retry after a lost response. " +
+			"The first request with a key creates the document and answers `Idempotent-Replayed: false`; " +
+			"any later request with the same key from the same account creates nothing and answers " +
+			"`Idempotent-Replayed: true` with the original document as it is now - same status, 200, as a " +
+			"fresh create. A replay publishes nothing on the change feed. If the original has been archived " +
+			"the answer is a 409 `document_conflict` carrying it. The body of a replay is ignored.",
 		Metadata:  needs(auth.TicketWrite),
-		Responses: documentConflictResponses(api, documentIfMatchConflict),
-	}, func(ctx context.Context, in *createDocumentInput) (*documentOutput, error) {
+		Responses: documentConflictResponses(api, documentReplayConflict),
+	}, func(ctx context.Context, in *createDocumentInput) (*createDocumentOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
-		d, err := svc.Write(ctx, document.SaveParams{
-			AccountID:    me.AccountID,
-			Title:        in.Body.Title,
-			Type:         in.Body.Type,
-			AspectTypeID: strOrEmpty(in.Body.AspectTypeID),
-			TeamID:       strOrEmpty(in.Body.TeamID),
-			ProjectID:    strOrEmpty(in.Body.ProjectID),
-			Body:         bodyValues(in.Body.Body),
+		d, replayed, err := svc.WriteIdempotent(ctx, document.SaveParams{
+			IdempotencyKey: in.key(),
+			AccountID:      me.AccountID,
+			Title:          in.Body.Title,
+			Type:           in.Body.Type,
+			AspectTypeID:   strOrEmpty(in.Body.AspectTypeID),
+			TeamID:         strOrEmpty(in.Body.TeamID),
+			ProjectID:      strOrEmpty(in.Body.ProjectID),
+			Body:           bodyValues(in.Body.Body),
 		})
 		if err != nil {
 			return nil, documentError(err)
 		}
 
-		feed.publishDocument(realtime.DocumentCreated, me.AccountID, d)
+		// A replay wrote nothing, so there is nothing to announce; see create-ticket.
+		if !replayed {
+			feed.publishDocument(realtime.DocumentCreated, me.AccountID, d)
+		}
 
-		return asDocumentOutput(d), nil
+		out := &createDocumentOutput{ETag: etag(d.Version), Body: asDocumentBody(d)}
+		if in.key() != nil {
+			out.Replayed = strconv.FormatBool(replayed)
+		}
+
+		return out, nil
 	})
 
 	huma.Register(api, huma.Operation{
