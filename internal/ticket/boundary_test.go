@@ -26,3 +26,14 @@ func TestNoTicketSQLOutsideThisPackage(t *testing.T) {
 		Fixtures: []string{"account", "document", "migrate", "search"},
 	})
 }
+
+// ticket_document (LAM-111) is the link between a ticket and a document. internal/ticket owns
+// it, though the row names a document too: a link is written against a ticket's reach and
+// listed from the ticket's side, and internal/document gets the tickets of a document through
+// Service.LinkedTickets rather than SQL of its own. Nobody else reads or writes it.
+func TestNoTicketDocumentSQLOutsideThisPackage(t *testing.T) {
+	sqlguard.Assert(t, sqlguard.Rule{
+		Owner:  "ticket",
+		Tables: []string{"ticket_document"},
+	})
+}

@@ -82,6 +82,66 @@ type ticketBody struct {
 	Version   int       `json:"version" minimum:"1" doc:"Starts at 1 and rises by exactly 1 on every update, archive and restore. Send it back as If-Match to make a write conditional; also in the ETag header. See the If-Match parameter."`
 }
 
+// linkedDocumentBody is a document as a ticket lists it (LAM-111): a row's worth, not the body.
+type linkedDocumentBody struct {
+	ID           string     `json:"id"`
+	Title        string     `json:"title"`
+	Type         string     `json:"type" enum:"normal,aspect"`
+	AspectTypeID *string    `json:"aspect_type_id" doc:"Set exactly when type is aspect; null otherwise."`
+	ArchivedAt   *time.Time `json:"archived_at" doc:"Null while live. A link survives an archive, so an archived document is listed with this set."`
+}
+
+// ticketDetailBody is what GET /tickets/{id} returns: the ticket, plus the documents linked
+// to it (LAM-111). Only that read carries them - lists, writes and change-feed events keep
+// ticketBody, because a link is neither the ticket's version nor cheap to fetch for a page of
+// rows - so a client learns of a changed link from ticket.document_linked and _unlinked.
+// TicketBody is ticketBody under an exported name, only so it can be embedded: huma skips
+// unexported embedded fields (see Preconditioned), and the detail would lose every ticket
+// member. An alias, so the schema and the members are exactly ticketBody's.
+type TicketBody = ticketBody
+
+type ticketDetailBody struct {
+	TicketBody
+	Documents []linkedDocumentBody `json:"documents" doc:"The documents linked to this ticket, oldest link first, archived ones included. Never null; empty for none."`
+}
+
+type ticketDetailOutput struct {
+	ETag string `header:"ETag" doc:"The ticket's version in quotes, as If-Match takes it back."`
+	Body ticketDetailBody
+}
+
+func asLinkedDocuments(docs []ticket.LinkedDocument) []linkedDocumentBody {
+	out := make([]linkedDocumentBody, len(docs))
+	for i, d := range docs {
+		out[i] = linkedDocumentBody{ID: d.ID, Title: d.Title, Type: d.Type, AspectTypeID: d.AspectTypeID, ArchivedAt: utcOrNil(d.ArchivedAt)}
+	}
+
+	return out
+}
+
+// linkNotFound is the one 404 of the link operations. Unlike the rest of the ticket API they
+// answer not_found, not ticket_not_found: the missing thing may be the ticket or the document,
+// and a code naming one would tell the caller which, which for a foreign id is a probe.
+func linkNotFound(err error) error {
+	if errors.Is(err, ticket.ErrNotFound) {
+		return NewError(http.StatusNotFound, CodeNotFound, "no such ticket or document")
+	}
+
+	return err
+}
+
+type linkDocumentInput struct {
+	ID   string `path:"id" format:"uuid"`
+	Body struct {
+		DocumentID string `json:"document_id" required:"true" format:"uuid" doc:"The document to link. Unknown, or in another workspace than the ticket: 404 not_found. Archived is fine."`
+	}
+}
+
+type unlinkDocumentInput struct {
+	ID         string `path:"id" format:"uuid"`
+	DocumentID string `path:"document_id" format:"uuid"`
+}
+
 type ticketOutput struct {
 	ETag string `header:"ETag" doc:"The ticket's version in quotes, as If-Match takes it back."`
 	Body ticketBody
@@ -537,7 +597,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		Path:        V1 + "/tickets/{id}",
 		Summary:     "Fetch one ticket",
 		Metadata:    requires,
-	}, func(ctx context.Context, in *getTicketInput) (*ticketOutput, error) {
+	}, func(ctx context.Context, in *getTicketInput) (*ticketDetailOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
 		t, err := svc.Get(ctx, me.AccountID, in.ID)
@@ -545,7 +605,58 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 			return nil, ticketError(ctx, accounts, err)
 		}
 
-		return asOutput(t), nil
+		docs, err := svc.LinkedDocuments(ctx, me.AccountID, in.ID)
+		if err != nil {
+			return nil, ticketError(ctx, accounts, err)
+		}
+
+		return &ticketDetailOutput{ETag: etag(t.Version), Body: ticketDetailBody{TicketBody: asBody(t), Documents: asLinkedDocuments(docs)}}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "link-ticket-document",
+		Method:        http.MethodPost,
+		Path:          V1 + "/tickets/{id}/documents",
+		Summary:       "Link a document to a ticket",
+		Description:   "Idempotent: linking a pair that is already linked is a 204 and changes nothing. An archived ticket or document links like a live one, and archiving either later does not remove the link. Both must be in a workspace the caller belongs to, and the same one; otherwise `not_found`, which does not say which was missing. Publishes `ticket.document_linked` when a link was made.",
+		DefaultStatus: http.StatusNoContent,
+		Metadata:      requires,
+	}, func(ctx context.Context, in *linkDocumentInput) (*struct{}, error) {
+		me, _ := auth.FromContext(ctx)
+
+		res, err := svc.LinkDocument(ctx, me.AccountID, in.ID, in.Body.DocumentID)
+		if err != nil {
+			return nil, linkNotFound(err)
+		}
+
+		if res.Changed {
+			feed.publishLink(ctx, realtime.TicketDocumentLinked, me.AccountID, res.ProjectID, in.ID, in.Body.DocumentID)
+		}
+
+		return nil, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "unlink-ticket-document",
+		Method:        http.MethodDelete,
+		Path:          V1 + "/tickets/{id}/documents/{document_id}",
+		Summary:       "Unlink a document from a ticket",
+		Description:   "Idempotent: unlinking a pair that is not linked is a 204. Only an unknown ticket, or one outside the caller's workspaces, is `not_found`. Publishes `ticket.document_unlinked` when a link was removed.",
+		DefaultStatus: http.StatusNoContent,
+		Metadata:      requires,
+	}, func(ctx context.Context, in *unlinkDocumentInput) (*struct{}, error) {
+		me, _ := auth.FromContext(ctx)
+
+		res, err := svc.UnlinkDocument(ctx, me.AccountID, in.ID, in.DocumentID)
+		if err != nil {
+			return nil, linkNotFound(err)
+		}
+
+		if res.Changed {
+			feed.publishLink(ctx, realtime.TicketDocumentUnlinked, me.AccountID, res.ProjectID, in.ID, in.DocumentID)
+		}
+
+		return nil, nil
 	})
 
 	huma.Register(api, huma.Operation{

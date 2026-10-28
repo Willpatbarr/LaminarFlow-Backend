@@ -183,6 +183,17 @@ Apply them as ticket events are applied: upsert `document` if `version` is newer
 copy's, remove it on `archived`. `document` is complete on `archived` — the archived document
 (`archived_at` set) is otherwise unreadable. Only successful writes publish.
 
+## Ticket-document link events (LAM-111)
+
+`ticket.document_linked` and `ticket.document_unlinked` carry `type`, `ticket_id`, `document_id`,
+`project_id` (the ticket's), `actor_id` and `at` (server time). They have **no** `version`, `ticket` or
+`document`: a link is neither's version. Apply one by adding or removing `document_id` in the linked
+documents you hold for `ticket_id` (and `ticket_id` in the document's linked tickets); re-fetch
+`GET /tickets/{id}` or `GET /documents/{id}` on doubt.
+
+Only a link that actually changed publishes: a repeated `POST` or `DELETE` (both 204) is silent. Archiving
+or unarchiving either end publishes its own `*.archived` / `*.unarchived` and leaves the link alone.
+
 ## Not here yet
 
 No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones, labels and documents,

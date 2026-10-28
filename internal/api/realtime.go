@@ -382,6 +382,35 @@ func (f ticketFeed) publishLabel(workspaceID, kind, actorID string, l label.Labe
 	})
 }
 
+// publishLink announces a ticket-document link made or removed (LAM-111): ticket.document_linked
+// or ticket.document_unlinked, with both ids and no body. Only called when the link actually
+// changed, so a repeat of an idempotent request publishes nothing. The workspace is the
+// ticket's, found as publish finds it; after the commit, best-effort, as above.
+func (f ticketFeed) publishLink(ctx context.Context, kind, actorID, projectID, ticketID, documentID string) {
+	if f.hub == nil || f.projects == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), feedTimeout)
+	defer cancel()
+
+	workspace, err := f.projects.WorkspaceID(ctx, projectID)
+	if err != nil {
+		log.Printf("realtime: no workspace for project %s, %s on ticket %s not published: %v",
+			projectID, kind, ticketID, err)
+		return
+	}
+
+	f.hub.Publish(workspace, realtime.Event{
+		Type:       kind,
+		ActorID:    actorID,
+		At:         time.Now().UTC(),
+		TicketID:   ticketID,
+		DocumentID: documentID,
+		ProjectID:  projectID,
+	})
+}
+
 // publishDocument announces a document as the REST body: document.created, .updated,
 // .archived and .unarchived (LAM-87). The workspace is the document's own. After the
 // commit, best-effort, as above.
