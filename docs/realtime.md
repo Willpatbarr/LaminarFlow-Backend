@@ -118,7 +118,16 @@ says nothing.
 * On server shutdown every connection receives a close frame with status 1001 (going away).
 * A client that sees any close or error: reconnect with backoff, wait for `hello`, list.
 
+## Status events (LAM-83)
+
+`status.created`, `status.updated` and `status.deleted` carry `type`, `actor_id`, `at` (server
+time), `team_id`, `status_id` and `status` (the whole `StatusBody`; on `deleted`, the status as it
+was). They have **no** `ticket_id`, `version` or `ticket`. A reorder sends `status.updated` for
+each status whose position changed. A delete that moves tickets also sends one `ticket.updated`
+per moved ticket (archived ones included) at their new version. Apply `status.*` by upsert or
+remove on `status_id`; there is no version, so re-list on doubt.
+
 ## Not here yet
 
-No per-connection filtering (a project, a status), no events for resources other than tickets,
+No per-connection filtering (a project, a status), no events for resources other than tickets and statuses,
 no client-to-server messages, no resume. Each is additive.

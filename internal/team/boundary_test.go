@@ -23,7 +23,7 @@ import (
 func TestNoTeamSQLOutsideThisPackage(t *testing.T) {
 	sqlguard.Assert(t, sqlguard.Rule{
 		Owner:   "team",
-		Tables:  []string{"team"},
+		Tables:  []string{"team", "status"},
 		Readers: []string{sqlguard.AnyReader},
 		// Longer than most fixture lists, and worth stating rather than leaving
 		// someone to notice: nearly every scoping assertion in this codebase
