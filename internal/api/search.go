@@ -70,7 +70,7 @@ func registerSearch(api huma.API, svc *search.Service) {
 			"A document is searched by title and by each aspect field's value, and a result names the field that matched in `field_label`. " +
 			"Archived tickets and documents are not searched. Returns the top `limit` results: there is no cursor. " +
 			"A `q` that is empty or only whitespace is a 422 at `body.q`.",
-		Metadata: map[string]any{RequireAuth: true},
+		Metadata: needs(auth.TicketRead),
 	}, func(ctx context.Context, in *searchInput) (*searchOutput, error) {
 		me, _ := auth.FromContext(ctx)
 

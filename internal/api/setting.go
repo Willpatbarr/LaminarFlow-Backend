@@ -126,7 +126,6 @@ func resolve(in settingKeyInput) (setting.Target, setting.Key, error) {
 */
 
 func registerSettings(api huma.API, svc *setting.Service) {
-	requires := map[string]any{RequireAuth: true}
 	registered := registryDescription()
 
 	huma.Register(api, huma.Operation{
@@ -136,7 +135,7 @@ func registerSettings(api huma.API, svc *setting.Service) {
 		Summary:     "List the settings on one workspace or team",
 		Description: "Registered keys only. A stored row whose key is not registered is skipped rather than " +
 			"returned or raised - one bad row must not break the settings screen for everyone.\n\n" + registered,
-		Metadata: requires,
+		Metadata: needs(auth.SettingRead),
 	}, func(ctx context.Context, in *settingTargetInput) (*settingListOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -162,7 +161,7 @@ func registerSettings(api huma.API, svc *setting.Service) {
 		Summary:     "Read one setting",
 		Description: "404 with code setting_not_set means nothing is configured - fall back to the default. " +
 			"That is a different answer from an unknown key, which is a 422.\n\n" + registered,
-		Metadata: requires,
+		Metadata: needs(auth.SettingRead),
 	}, func(ctx context.Context, in *settingKeyInput) (*settingOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -190,7 +189,7 @@ func registerSettings(api huma.API, svc *setting.Service) {
 		Description: "The key, its scope and the value's shape are all checked before anything is stored. " +
 			"A misspelt key, a key at the wrong level, or a value of the wrong shape is a 422 here - " +
 			"previously each of those stored a row that nothing ever read.\n\n" + registered,
-		Metadata: requires,
+		Metadata: needs(auth.SettingWrite),
 	}, func(ctx context.Context, in *setSettingInput) (*settingOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -216,7 +215,7 @@ func registerSettings(api huma.API, svc *setting.Service) {
 		Summary:     "Remove one setting, restoring its default",
 		Description: "Deletes the row. There is no value that means \"the default\" - absence is the default, " +
 			"and writing one would freeze today's default into the row.\n\n" + registered,
-		Metadata: requires,
+		Metadata: needs(auth.SettingWrite),
 	}, func(ctx context.Context, in *settingKeyInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 

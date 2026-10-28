@@ -99,7 +99,6 @@ func epicError(err error) error {
 */
 
 func registerEpics(api huma.API, svc *epic.Service, feed ticketFeed) {
-	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-epic",
@@ -107,7 +106,7 @@ func registerEpics(api huma.API, svc *epic.Service, feed ticketFeed) {
 		Path:        V1 + "/epics",
 		Summary:     "Create an epic in a project",
 		Description: "Announced as `epic.created`.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *createEpicInput) (*epicOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -127,7 +126,7 @@ func registerEpics(api huma.API, svc *epic.Service, feed ticketFeed) {
 		Path:        V1 + "/epics/list",
 		Summary:     "List a project's epics (a read - POST for the body)",
 		Description: "Oldest first. Always one page: `next_cursor` is null and `has_more` false.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *listEpicsInput) (*listOutput[epicBody], error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -150,7 +149,7 @@ func registerEpics(api huma.API, svc *epic.Service, feed ticketFeed) {
 		Method:      http.MethodGet,
 		Path:        V1 + "/epics/{id}",
 		Summary:     "Fetch one epic",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *epicInput) (*epicOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -168,7 +167,7 @@ func registerEpics(api huma.API, svc *epic.Service, feed ticketFeed) {
 		Path:        V1 + "/epics/{id}",
 		Summary:     "Rename an epic or change its description",
 		Description: "Each member is optional and an omitted one is left alone. Announced as `epic.updated`.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *updateEpicInput) (*epicOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -190,7 +189,7 @@ func registerEpics(api huma.API, svc *epic.Service, feed ticketFeed) {
 		Description: "Sets `epic_id` to null on the epic's tickets (SET NULL, not cascade). Those tickets' rows are not rewritten, " +
 			"so their `version` does not move and no `ticket.updated` is sent: `epic.deleted` is the announcement, and a client " +
 			"clears `epic_id` on the tickets it holds for that epic.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *epicInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 

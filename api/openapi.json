@@ -788,6 +788,105 @@
         ],
         "type": "object"
       },
+      "CreateTokenInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/CreateTokenInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "Must be in the future. Null or omitted never expires.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "description": "Shown in the token list. 1 to 100 characters, and not only whitespace.",
+            "examples": [
+              "CI deploy key"
+            ],
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "scopes": {
+            "description": "Permission names, as in the permissions of GET /auth/me. An unknown name is 422 unknown_scope. An empty list makes a token that can do nothing.",
+            "examples": [
+              [
+                "ticket:read"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "scopes"
+        ],
+        "type": "object"
+      },
+      "CreatedTokenBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/CreatedTokenBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "Null never expires.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "token": {
+            "description": "The credential, for the Authorization: Bearer header. Shown here and nowhere else; it cannot be recovered.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "scopes",
+          "created_at",
+          "expires_at",
+          "token"
+        ],
+        "type": "object"
+      },
       "DeleteAccountOutputBody": {
         "additionalProperties": false,
         "properties": {
@@ -2091,6 +2190,31 @@
         ],
         "type": "object"
       },
+      "ListTokensOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ListTokensOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "tokens": {
+            "description": "Active tokens only, newest first. Never the token itself.",
+            "items": {
+              "$ref": "#/components/schemas/TokenBody"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tokens"
+        ],
+        "type": "object"
+      },
       "LoginInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -2166,7 +2290,7 @@
             "type": "string"
           },
           "permissions": {
-            "description": "Everything this credential may do, as resource:action. Gate UI on membership in this list, not on its length: there is no authority model yet, so today every credential holds the full set, and roles will narrow it without changing its shape.",
+            "description": "Everything this credential may do, as resource:action. For a token, exactly its scopes; for a session, the full set today (roles will narrow it without changing its shape). Gate UI on membership in this list, not on its length.",
             "examples": [
               [
                 "ticket:write"
@@ -2176,6 +2300,21 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "scopes": {
+            "description": "What a token was issued with. Null for a session.",
+            "examples": [
+              [
+                "ticket:read"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "via": {
             "description": "Which credential authenticated this request.",
@@ -2198,7 +2337,8 @@
           "email",
           "display_name",
           "workspace_id",
-          "permissions"
+          "permissions",
+          "scopes"
         ],
         "type": "object"
       },
@@ -3448,6 +3588,53 @@
         ],
         "type": "object"
       },
+      "TokenBody": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "Null never expires.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_used_at": {
+            "description": "Null until first used. Updated at most once a minute, so it can trail the real last use.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scopes": {
+            "description": "Permission names, as resource:action.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "scopes",
+          "created_at",
+          "expires_at",
+          "last_used_at"
+        ],
+        "type": "object"
+      },
       "UpdateColumnInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -4385,6 +4572,107 @@
           }
         },
         "summary": "Create an account and log in as it"
+      }
+    },
+    "/api/v1/auth/tokens": {
+      "post": {
+        "description": "Session only: a token caller gets 403 `insufficient_scope`, so a leaked token cannot mint more. The response carries the credential in `token`; it is returned this once and only a hash is kept.\n\nA token may do only what its `scopes` name. An unknown scope is 422 `unknown_scope` and nothing is created.",
+        "operationId": "create-api-token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTokenInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedTokenBody"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create an API token"
+      }
+    },
+    "/api/v1/auth/tokens/list": {
+      "post": {
+        "description": "Session only. Revoked and expired tokens are left out. Never returns a token or its hash.",
+        "operationId": "list-api-tokens",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListTokensOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List your active API tokens"
+      }
+    },
+    "/api/v1/auth/tokens/{id}": {
+      "delete": {
+        "description": "Session only. The token stops authenticating at once. 404 `token_not_found` for a token that is absent, another account's, or already revoked.",
+        "operationId": "revoke-api-token",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Revoke an API token"
       }
     },
     "/api/v1/boards/list": {

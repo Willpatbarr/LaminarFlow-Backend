@@ -106,6 +106,7 @@ type listPage[T any] struct {
 ┃      OperationID    string
 ┃      Path           string          V1 + "/…/list"
 ┃      Summary        string
+┃      Permission     auth.Permission  scope a token needs
 ┃      Fields         filter.Schema   the vocabulary, for the docs
 ┃      Run            func            the service call
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -116,6 +117,7 @@ type listSpec[T any] struct {
 	OperationID string
 	Path        string
 	Summary     string
+	Permission  auth.Permission
 	Fields      filter.Schema
 	Run         func(ctx context.Context, accountID string, req listRequest) (listPage[T], error)
 }
@@ -140,7 +142,7 @@ func registerList[T any](api huma.API, spec listSpec[T]) {
 		Path:        spec.Path,
 		Summary:     spec.Summary,
 		Description: listDescription(spec.Fields),
-		Metadata:    map[string]any{RequireAuth: true},
+		Metadata:    needs(spec.Permission),
 	}, func(ctx context.Context, in *listInput) (*listOutput[T], error) {
 		me, _ := auth.FromContext(ctx)
 

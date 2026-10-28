@@ -419,8 +419,8 @@ func TestMeReportsTheSameShapeForAnAPIToken(t *testing.T) {
 	if got.WorkspaceID == nil || *got.WorkspaceID != out.WorkspaceID {
 		t.Errorf("workspace_id = %v, want %s", got.WorkspaceID, out.WorkspaceID)
 	}
-	if !slices.Equal(got.Permissions, auth.Permissions(auth.Identity{})) {
-		t.Errorf("permissions = %v, want the full set (no authority model yet)", got.Permissions)
+	if len(got.Permissions) != 0 {
+		t.Errorf("permissions = %v, want none: a token issued with no scopes can do nothing", got.Permissions)
 	}
 }
 

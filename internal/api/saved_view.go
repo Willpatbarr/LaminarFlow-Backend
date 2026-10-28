@@ -152,7 +152,6 @@ func savedViewError(err error) error {
 */
 
 func registerSavedViews(api huma.API, svc *savedview.Service) {
-	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-saved-view",
@@ -162,7 +161,7 @@ func registerSavedViews(api huma.API, svc *savedview.Service) {
 		Description: "Owned by the caller; private unless `is_shared`. `config` holds `filter` (the language of the ticket list), `group`, `sort` and `columns`, " +
 			"all over the ticket vocabulary, and is checked the way a ticket list request would be: a config that would not run is a 422 `filter_invalid` " +
 			"whose `errors[].location` is `body.config...`. A board view needs `board_id`; a list view must not have one.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *createSavedViewInput) (*savedViewOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -184,7 +183,7 @@ func registerSavedViews(api huma.API, svc *savedview.Service) {
 		Summary:     "List the views the caller can open (a read - POST for the body)",
 		Description: "The caller's own private views plus every shared view of the team, by name. With `project_id`, that project's views and the team-wide ones; " +
 			"without it, every view of the team. Keyset pagination as the other lists: pass `next_cursor` back as `cursor`.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketRead),
 	}, func(ctx context.Context, in *listSavedViewsInput) (*listOutput[savedViewBody], error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -219,7 +218,7 @@ func registerSavedViews(api huma.API, svc *savedview.Service) {
 		Path:        V1 + "/saved-views/{id}",
 		Summary:     "Fetch one saved view",
 		Description: "`saved_view_not_found` for an absent view, one outside your workspace, and another person's private view alike.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *savedViewInput) (*savedViewOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -240,7 +239,7 @@ func registerSavedViews(api huma.API, svc *savedview.Service) {
 			"and any member may edit it, but it cannot be made private. Each member is optional; an omitted one is left alone, and a `config` replaces the old one whole. " +
 			"`layout: list` on a board view clears its `board_id`; `layout: board` on a list view is refused, since this body cannot name a board. " +
 			"A config that does not compile is 422 `filter_invalid` located at `body.config...`.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *updateSavedViewInput) (*savedViewOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -260,7 +259,7 @@ func registerSavedViews(api huma.API, svc *savedview.Service) {
 		Path:        V1 + "/saved-views/{id}",
 		Summary:     "Delete a saved view",
 		Description: "Owner only, with the same exception for a team's own view as update-saved-view. Nothing else is touched: a view holds no tickets.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *savedViewInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 

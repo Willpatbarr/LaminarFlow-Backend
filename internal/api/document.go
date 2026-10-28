@@ -318,7 +318,6 @@ func bodyValues(in map[string]string) map[string]any {
 */
 
 func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Service, feed ticketFeed) {
-	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-document",
@@ -327,7 +326,7 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 		Summary:     "Create a document",
 		Description: "A normal document keeps its text under `content`; an aspect document's body is keyed by the field ids of its aspect type. " +
 			"The body is indexed for search in the same transaction.",
-		Metadata:  requires,
+		Metadata:  needs(auth.TicketWrite),
 		Responses: documentConflictResponses(api, documentIfMatchConflict),
 	}, func(ctx context.Context, in *createDocumentInput) (*documentOutput, error) {
 		me, _ := auth.FromContext(ctx)
@@ -355,7 +354,7 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 		Method:      http.MethodGet,
 		Path:        V1 + "/documents/{id}",
 		Summary:     "Fetch one document",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *getDocumentInput) (*documentDetailOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -387,7 +386,7 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 		Description: "PUT replaces wholesale, so send the complete body. Last write wins unless `If-Match` is sent; with it the write happens only if the document is still at that version, otherwise it is a 409 `document_conflict` carrying the current copy. " +
 			"Without it, a write to an archived document is `document_not_found`. The team or project a document is filed under is fixed at creation and not part of this request. " +
 			"Sending `type: aspect` with an `aspect_type_id` on a normal document turns it into an aspect document: see `body`.",
-		Metadata:  requires,
+		Metadata:  needs(auth.TicketWrite),
 		Responses: documentConflictResponses(api, documentIfMatchConflict),
 	}, func(ctx context.Context, in *updateDocumentInput) (*documentOutput, error) {
 		me, _ := auth.FromContext(ctx)
@@ -422,7 +421,7 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 		Path:        V1 + "/documents/{id}",
 		Summary:     "Archive a document (soft delete - the row survives)",
 		Description: "Takes `If-Match` like the update does. The archived document drops out of reads, lists and search. An already-archived document answers `document_conflict` when `If-Match` is sent and `document_not_found` when it is not. The new version is in the `ETag` header.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 		Responses:   documentConflictResponses(api, documentIfMatchConflict),
 	}, func(ctx context.Context, in *writeDocumentInput) (*documentVersionOutput, error) {
 		me, _ := auth.FromContext(ctx)
@@ -448,7 +447,7 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 		Path:        V1 + "/documents/{id}/unarchive",
 		Summary:     "Restore an archived document",
 		Description: "Takes `If-Match`: the version of the archived document you last saw. Restoring a document that is not archived is `document_not_found`. It is indexed for search again. The new version is in the `ETag` header.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 		Responses:   documentConflictResponses(api, documentIfMatchConflict),
 	}, func(ctx context.Context, in *writeDocumentInput) (*documentVersionOutput, error) {
 		me, _ := auth.FromContext(ctx)
@@ -477,7 +476,7 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 			"Filters are the optional members `project_id`, `team_id`, `type` and `aspect_type_id`, all of which must match. " +
 			"Live documents only unless `archived` is true, which lists archived ones only.\n\n" +
 			"Pagination is keyset: pass the previous page's `next_cursor` back as `cursor`. A cursor is only valid for the filters it was minted under; changing one restarts from the first page.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketRead),
 	}, func(ctx context.Context, in *listDocumentsInput) (*listOutput[documentBody], error) {
 		me, _ := auth.FromContext(ctx)
 

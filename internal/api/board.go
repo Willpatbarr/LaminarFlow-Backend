@@ -202,7 +202,6 @@ func boardError(err error, indexed bool) error {
 */
 
 func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
-	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-board",
@@ -211,7 +210,7 @@ func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
 		Summary:     "Create a board on a project",
 		Description: "Starts with one column per status the team has, each mapped to its status, like the board a project is created with. " +
 			"Many boards per project; none is privileged. Announced as `board.created`.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *createBoardInput) (*boardOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -232,7 +231,7 @@ func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
 		Method:      http.MethodGet,
 		Path:        V1 + "/boards/{id}",
 		Summary:     "Fetch one board with its columns",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *boardInput) (*boardOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -250,7 +249,7 @@ func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
 		Path:        V1 + "/boards/{id}",
 		Summary:     "Rename a board",
 		Description: "Announced as `board.updated`.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *renameBoardInput) (*boardOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -271,7 +270,7 @@ func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
 		Summary:     "Delete a board",
 		Description: "Its columns, their mappings and the saved views that point at it go with it. Tickets are not touched. " +
 			"A project's last board may be deleted; a project with no board is legal. Announced as `board.deleted`.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *boardInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -292,7 +291,7 @@ func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
 		Summary:     "Add a column to a board",
 		Description: "Appended after the last column. `status_ids` is optional; a status outside the board's team is a 422 `status_not_found` and one " +
 			"another column of this board holds is a 422 `status_already_mapped`, both at `body.status_ids[i]`. Announced as `board.column.updated`.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *addColumnInput) (*columnOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -312,7 +311,7 @@ func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
 		Path:        V1 + "/boards/{id}/columns/{column_id}",
 		Summary:     "Rename a column or show or hide it",
 		Description: "Each member is optional and an omitted one is left alone. `is_visible` is stored on the column, which belongs to one board, so hiding it affects that board only. Announced as `board.column.updated`.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *updateColumnInput) (*columnOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -333,7 +332,7 @@ func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
 		Summary:     "Set the statuses a column holds",
 		Description: "The full set for this column; an empty list unmaps every status. A status outside the board's team is a 422 `status_not_found`; " +
 			"one another column of this board holds is a 422 `status_already_mapped`, both at `body.status_ids`. Announced as `board.column.updated`.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *setColumnStatusesInput) (*columnOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -353,7 +352,7 @@ func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
 		Path:        V1 + "/boards/{id}/columns/{column_id}",
 		Summary:     "Delete a column",
 		Description: "Its statuses are unmapped. Tickets are not touched. Announced as `board.updated`, carrying the board without the column.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *columnInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -375,7 +374,7 @@ func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
 		Path:        V1 + "/boards/{id}/columns/reorder",
 		Summary:     "Set the order of every column",
 		Description: "Send the complete list, in the order wanted; positions become 1..n. A partial, duplicated or foreign list is a 422 `column_set_mismatch` at `body.column_ids`. Announced as `board.updated`.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *reorderColumnsInput) (*boardOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -400,7 +399,7 @@ func registerBoardList(api huma.API, svc *board.Service) {
 		Path:        V1 + "/boards/list",
 		Summary:     "List a project's boards, columns included (a read - POST for the body)",
 		Description: "Oldest first. Always one page: `next_cursor` is null and `has_more` false.",
-		Metadata:    map[string]any{RequireAuth: true},
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *listBoardsInput) (*listOutput[boardBody], error) {
 		me, _ := auth.FromContext(ctx)
 

@@ -36,6 +36,14 @@ import (
 // expired token was once real.
 var ErrInvalidToken = errors.New("auth: invalid token")
 
+// ErrTokenNotFound is Revoke's answer for a token that is absent, another account's, or
+// already revoked - one error, so the three cannot be told apart.
+var ErrTokenNotFound = errors.New("auth: token not found")
+
+// A token's last_used_at moves at most this often, so a busy script does not turn every
+// request into a write.
+const lastUsedInterval = time.Minute
+
 const (
 	tokenPrefixBytes = 6  // 10 base32 chars, the lookup key, not secret
 	tokenSecretBytes = 32 // 256 bits, all of the entropy
@@ -131,13 +139,14 @@ func (s *Service) Validate(ctx context.Context, presented string) (Identity, err
 		hash      string
 		scopes    []string
 		expiresAt *time.Time
+		revokedAt *time.Time
 	)
 
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, account_id, token_hash, scopes, expires_at
+		`SELECT id, account_id, token_hash, scopes, expires_at, revoked_at
 		   FROM api_token
 		  WHERE token_prefix = $1`, prefix,
-	).Scan(&id, &accountID, &hash, &scopes, &expiresAt)
+	).Scan(&id, &accountID, &hash, &scopes, &expiresAt, &revokedAt)
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -154,10 +163,19 @@ func (s *Service) Validate(ctx context.Context, presented string) (Identity, err
 	}
 
 	// In Go, not in the WHERE clause: a SQL predicate would skip the comparison above
-	// and hand back the timing difference dummyHash exists to remove.
-	if expiresAt != nil && !expiresAt.After(time.Now()) {
+	// and hand back the timing difference dummyHash exists to remove. Revocation is
+	// checked here for the same reason.
+	if revokedAt != nil || (expiresAt != nil && !expiresAt.After(time.Now())) {
 		return Identity{}, ErrInvalidToken
 	}
+
+	// Best effort: a failed write must not fail a request whose credential is good.
+	// The predicate makes it at most one write per token per interval.
+	_, _ = s.pool.Exec(ctx,
+		`UPDATE api_token SET last_used_at = now()
+		  WHERE id = $1
+		    AND (last_used_at IS NULL OR last_used_at < now() - $2::interval)`,
+		id, lastUsedInterval.String())
 
 	return Identity{AccountID: accountID, TokenID: id, Scopes: toScopes(scopes)}, nil
 }
@@ -179,19 +197,58 @@ func (s *Service) Validate(ctx context.Context, presented string) (Identity, err
 */
 
 func (s *Service) Issue(ctx context.Context, accountID, label string, scopes []Scope, expiresAt *time.Time) (string, error) {
+	_, secret, err := s.Create(ctx, accountID, label, scopes, expiresAt)
+
+	return secret, err
+}
+
+/*
+┏━ Token ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+┃  what may be shown about a token after it is issued
+┣━ attributes ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+┃      ID, Label    string
+┃      Scopes       []Scope          never nil
+┃      CreatedAt    time.Time
+┃      ExpiresAt    *time.Time       nil never expires
+┃      LastUsedAt   *time.Time       nil never used
+┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+┃      Create · List                 no hash, no secret, no prefix
+*/
+
+type Token struct {
+	ID         string
+	Label      string
+	Scopes     []Scope
+	CreatedAt  time.Time
+	ExpiresAt  *time.Time
+	LastUsedAt *time.Time
+}
+
+/*
+┌─ auth ──────────────────────────────────────────
+│  Issue, keeping the row's metadata for the caller
+├─ in ────────────────────────────────────────────
+│      as Issue
+├─ out ───────────────────────────────────────────
+│      Token                          id, label, scopes, dates
+│      string                         scheme_prefix_secret, once
+│      error
+*/
+
+func (s *Service) Create(ctx context.Context, accountID, label string, scopes []Scope, expiresAt *time.Time) (Token, string, error) {
 	prefix, err := randomString(tokenPrefixBytes)
 	if err != nil {
-		return "", fmt.Errorf("auth: generate prefix: %w", err)
+		return Token{}, "", fmt.Errorf("auth: generate prefix: %w", err)
 	}
 
 	secret, err := randomString(tokenSecretBytes)
 	if err != nil {
-		return "", fmt.Errorf("auth: generate secret: %w", err)
+		return Token{}, "", fmt.Errorf("auth: generate secret: %w", err)
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
 	if err != nil {
-		return "", fmt.Errorf("auth: hash secret: %w", err)
+		return Token{}, "", fmt.Errorf("auth: hash secret: %w", err)
 	}
 
 	names := make([]string, len(scopes))
@@ -199,15 +256,90 @@ func (s *Service) Issue(ctx context.Context, accountID, label string, scopes []S
 		names[i] = string(sc)
 	}
 
-	if _, err := s.pool.Exec(ctx,
-		`INSERT INTO api_token (account_id, label, token_prefix, token_hash, scopes, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		accountID, label, prefix, string(hash), names, expiresAt,
-	); err != nil {
-		return "", fmt.Errorf("auth: insert token: %w", err)
+	t := Token{Label: label, Scopes: toScopes(names), ExpiresAt: expiresAt}
+	if t.Scopes == nil {
+		t.Scopes = []Scope{}
 	}
 
-	return tokenScheme + "_" + prefix + "_" + secret, nil
+	if err := s.pool.QueryRow(ctx,
+		`INSERT INTO api_token (account_id, label, token_prefix, token_hash, scopes, expires_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, created_at`,
+		accountID, label, prefix, string(hash), names, expiresAt,
+	).Scan(&t.ID, &t.CreatedAt); err != nil {
+		return Token{}, "", fmt.Errorf("auth: insert token: %w", err)
+	}
+
+	return t, tokenScheme + "_" + prefix + "_" + secret, nil
+}
+
+/*
+┌─ auth ──────────────────────────────────────────
+│  an account's active tokens, newest first
+├─ in ────────────────────────────────────────────
+│      ctx          context.Context
+│      accountID    string
+├─ out ───────────────────────────────────────────
+│      []Token                        revoked and expired are left out
+│      error
+*/
+
+func (s *Service) List(ctx context.Context, accountID string) ([]Token, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, label, scopes, created_at, expires_at, last_used_at
+		   FROM api_token
+		  WHERE account_id = $1
+		    AND revoked_at IS NULL
+		    AND (expires_at IS NULL OR expires_at > now())
+		  ORDER BY created_at DESC, id`, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("auth: list tokens: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Token{}
+	for rows.Next() {
+		var (
+			t      Token
+			scopes []string
+		)
+		if err := rows.Scan(&t.ID, &t.Label, &scopes, &t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt); err != nil {
+			return nil, fmt.Errorf("auth: scan token: %w", err)
+		}
+		t.Scopes = toScopes(scopes)
+		if t.Scopes == nil {
+			t.Scopes = []Scope{}
+		}
+		out = append(out, t)
+	}
+
+	return out, rows.Err()
+}
+
+/*
+┌─ auth ──────────────────────────────────────────
+│  revokes a token, keeping its row
+├─ in ────────────────────────────────────────────
+│      ctx          context.Context
+│      accountID    string
+│      tokenID      string
+├─ out ───────────────────────────────────────────
+│      error        ErrTokenNotFound for absent, another account's, or already revoked
+*/
+
+func (s *Service) Revoke(ctx context.Context, accountID, tokenID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE api_token SET revoked_at = now(), updated_at = now()
+		  WHERE id = $1 AND account_id = $2 AND revoked_at IS NULL`,
+		tokenID, accountID)
+	if err != nil {
+		return fmt.Errorf("auth: revoke token: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTokenNotFound
+	}
+
+	return nil
 }
 
 /*

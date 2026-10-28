@@ -16,6 +16,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -34,6 +35,30 @@ import (
 // sits with the operation a reader is already looking at, and a route cannot
 // be protected in one file and registered in another.
 const RequireAuth = "auth:required"
+
+// RequirePermission names the auth.Permission an operation needs. A token that lacks it
+// as a scope is refused with 403 insufficient_scope; a session holds every permission.
+// Set it with needs, beside RequireAuth, so the two cannot be declared apart.
+const RequirePermission = "auth:permission"
+
+// RequireSession marks an operation only a browser session may call. A token caller gets
+// 403 insufficient_scope, so a leaked token cannot mint or revoke tokens.
+const RequireSession = "auth:session"
+
+// needs is the metadata for an operation that requires a caller holding p.
+func needs(p auth.Permission) map[string]any {
+	return map[string]any{RequireAuth: true, RequirePermission: p}
+}
+
+// forbid answers 403 insufficient_scope from the middleware, in the same envelope a
+// handler's error gets.
+func forbid(ctx huma.Context, detail string) {
+	e := NewError(http.StatusForbidden, CodeInsufficientScope, detail)
+
+	ctx.SetHeader("Content-Type", "application/problem+json")
+	ctx.SetStatus(e.Status)
+	_ = json.NewEncoder(ctx.BodyWriter()).Encode(e)
+}
 
 // A missing credential and a wrong password are both 401, and a caller has to
 // tell them apart: one means "log in", the other means "you got it wrong".
@@ -85,7 +110,8 @@ type meOutput struct {
 		Email       string   `json:"email"`
 		DisplayName string   `json:"display_name" doc:"What the app shows for this person."`
 		WorkspaceID *string  `json:"workspace_id" doc:"The workspace this account belongs to. Null only for an account with no membership."`
-		Permissions []string `json:"permissions" nullable:"false" doc:"Everything this credential may do, as resource:action. Gate UI on membership in this list, not on its length: there is no authority model yet, so today every credential holds the full set, and roles will narrow it without changing its shape." example:"ticket:write"`
+		Permissions []string `json:"permissions" nullable:"false" doc:"Everything this credential may do, as resource:action. For a token, exactly its scopes; for a session, the full set today (roles will narrow it without changing its shape). Gate UI on membership in this list, not on its length." example:"ticket:write"`
+		Scopes      []string `json:"scopes" nullable:"true" doc:"What a token was issued with. Null for a session." example:"ticket:read"`
 	}
 }
 
@@ -263,6 +289,9 @@ func registerAuth(api huma.API, svc *auth.Service, accounts *account.Service) {
 			out.Body.WorkspaceID = &profile.WorkspaceID
 		}
 		out.Body.Permissions = auth.Permissions(id)
+		if id.TokenID != "" {
+			out.Body.Scopes = asScopeNames(id.Scopes)
+		}
 
 		return out, nil
 	})
@@ -282,9 +311,14 @@ func registerAuth(api huma.API, svc *auth.Service, accounts *account.Service) {
 
 func authenticate(api huma.API, svc *auth.Service) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		required := false
+		required, sessionOnly := false, false
+		var need *auth.Permission
 		if op := ctx.Operation(); op != nil {
 			required, _ = op.Metadata[RequireAuth].(bool)
+			sessionOnly, _ = op.Metadata[RequireSession].(bool)
+			if p, ok := op.Metadata[RequirePermission].(auth.Permission); ok {
+				need = &p
+			}
 		}
 
 		var cookie string
@@ -298,6 +332,17 @@ func authenticate(api huma.API, svc *auth.Service) func(huma.Context, func(huma.
 			// Resolved. Attached whether or not the operation demanded it, so a
 			// public endpoint can still personalise without its own lookup.
 			ctx = huma.WithContext(ctx, auth.NewContext(ctx.Context(), id))
+
+			// After authentication, so an unauthenticated caller still gets 401 and
+			// 403 means "valid credential, not enough of it".
+			if required && sessionOnly && id.TokenID != "" {
+				forbid(ctx, "this endpoint is available to a signed-in session only")
+				return
+			}
+			if required && need != nil && !auth.Allows(id, *need) {
+				forbid(ctx, "this token lacks the "+need.String()+" scope")
+				return
+			}
 		case required:
 			_ = huma.WriteErr(api, ctx, http.StatusUnauthorized,
 				"this endpoint requires a credential")
