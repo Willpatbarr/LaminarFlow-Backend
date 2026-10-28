@@ -108,7 +108,7 @@ func snapshot(t *testing.T, pool *pgxpool.Pool) map[string]string {
 	rows, err := pool.Query(context.Background(),
 		`SELECT coalesce(document_id::text, '') , coalesce(field_id, ''),
 		        coalesce(ticket_id::text, ''), coalesce(comment_id::text, ''),
-		        content, coalesce(parent_reference, ''), workspace_id::text
+		        coalesce(project_source_id::text, ''), content, coalesce(parent_reference, ''), workspace_id::text
 		   FROM search_index`)
 	if err != nil {
 		t.Fatalf("read index: %v", err)
@@ -117,11 +117,11 @@ func snapshot(t *testing.T, pool *pgxpool.Pool) map[string]string {
 
 	out := map[string]string{}
 	for rows.Next() {
-		var doc, field, ticket, comment, content, parent, ws string
-		if err := rows.Scan(&doc, &field, &ticket, &comment, &content, &parent, &ws); err != nil {
+		var doc, field, ticket, comment, project, content, parent, ws string
+		if err := rows.Scan(&doc, &field, &ticket, &comment, &project, &content, &parent, &ws); err != nil {
 			t.Fatalf("scan: %v", err)
 		}
-		out[fmt.Sprintf("d=%s|f=%s|t=%s|c=%s", doc, field, ticket, comment)] =
+		out[fmt.Sprintf("d=%s|f=%s|t=%s|c=%s|p=%s", doc, field, ticket, comment, project)] =
 			fmt.Sprintf("%s|parent=%s|ws=%s", content, parent, ws)
 	}
 	if err := rows.Err(); err != nil {
@@ -209,8 +209,8 @@ func TestRebuildMatchesLiveIndex(t *testing.T) {
 		t.Errorf("rebuild disagrees with the previous index\n live = %v\n  new = %v", live, rebuilt)
 	}
 
-	if counts.Documents != 1 || counts.Tickets != 1 || counts.Comments != 2 {
-		t.Errorf("counts = %+v, want 1 document, 1 ticket, 2 comments", counts)
+	if counts.Documents != 1 || counts.Tickets != 1 || counts.Comments != 2 || counts.Projects != 1 {
+		t.Errorf("counts = %+v, want 1 document, 1 ticket, 2 comments, 1 project", counts)
 	}
 }
 
@@ -227,11 +227,12 @@ func TestRebuildIndexesEverySource(t *testing.T) {
 	index := snapshot(t, pool)
 
 	for _, tc := range []struct{ name, key, wantContains string }{
-		{"document field", fmt.Sprintf("d=%s|f=f_summary|t=|c=", f.doc), "Handles sign in"},
-		{"ticket", fmt.Sprintf("d=|f=|t=%s|c=", f.ticket), "Fix login"},
-		{"ticket description", fmt.Sprintf("d=|f=|t=%s|c=", f.ticket), "The button does nothing"},
-		{"ticket comment", fmt.Sprintf("d=|f=|t=|c=%s", f.ticketComment), "Reproduced on Firefox"},
-		{"document comment", fmt.Sprintf("d=|f=|t=|c=%s", f.docComment), "Needs a sequence diagram"},
+		{"document field", fmt.Sprintf("d=%s|f=f_summary|t=|c=|p=", f.doc), "Handles sign in"},
+		{"ticket", fmt.Sprintf("d=|f=|t=%s|c=|p=", f.ticket), "Fix login"},
+		{"ticket description", fmt.Sprintf("d=|f=|t=%s|c=|p=", f.ticket), "The button does nothing"},
+		{"project", fmt.Sprintf("d=|f=|t=|c=|p=%s", f.project), "Core"},
+		{"ticket comment", fmt.Sprintf("d=|f=|t=|c=%s|p=", f.ticketComment), "Reproduced on Firefox"},
+		{"document comment", fmt.Sprintf("d=|f=|t=|c=%s|p=", f.docComment), "Needs a sequence diagram"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := index[tc.key]
@@ -258,8 +259,8 @@ func TestCommentsCarryTheirParentReference(t *testing.T) {
 	index := snapshot(t, pool)
 
 	for _, tc := range []struct{ name, key, wantParent string }{
-		{"on a ticket", fmt.Sprintf("d=|f=|t=|c=%s", f.ticketComment), "parent=Fix login"},
-		{"on a document", fmt.Sprintf("d=|f=|t=|c=%s", f.docComment), "parent=User Service"},
+		{"on a ticket", fmt.Sprintf("d=|f=|t=|c=%s|p=", f.ticketComment), "parent=Fix login"},
+		{"on a document", fmt.Sprintf("d=|f=|t=|c=%s|p=", f.docComment), "parent=User Service"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := index[tc.key]
@@ -290,9 +291,10 @@ func TestEveryRowCarriesItsWorkspace(t *testing.T) {
 	}
 }
 
-// search_index_document_rows_carry_a_field is a biconditional, so a ticket or comment
-// row carrying a field_id fails the check rather than being ignored. Asserted because
-// the insert statements are the only thing keeping it true.
+// search_index_field_belongs_to_document: a ticket or comment row carrying a field_id
+// fails the check rather than being ignored. (A document row may have no field - the
+// title row of an empty document, 0037.) Asserted because the insert statements are the
+// only thing keeping it true.
 func TestOnlyDocumentRowsCarryAFieldID(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -305,11 +307,11 @@ func TestOnlyDocumentRowsCarryAFieldID(t *testing.T) {
 	var bad int
 	if err := pool.QueryRow(ctx,
 		`SELECT count(*) FROM search_index
-		  WHERE (document_id IS NOT NULL) <> (field_id IS NOT NULL)`).Scan(&bad); err != nil {
+		  WHERE field_id IS NOT NULL AND document_id IS NULL`).Scan(&bad); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if bad != 0 {
-		t.Errorf("%d rows break the document/field biconditional", bad)
+		t.Errorf("%d rows carry a field_id without a document", bad)
 	}
 }
 

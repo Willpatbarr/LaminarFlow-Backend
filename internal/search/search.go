@@ -56,6 +56,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 ┃      Documents    int          documents, not rows
 ┃      Tickets      int
 ┃      Comments     int
+┃      Projects     int
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      Rebuild                   one per run
 */
@@ -64,11 +65,12 @@ type Counts struct {
 	Documents int
 	Tickets   int
 	Comments  int
+	Projects  int
 }
 
 /*
 ┌─ search ────────────────────────────────────────
-│  discards every index row and regenerates all three sources
+│  discards every index row and regenerates every source
 ├─ in ────────────────────────────────────────────
 │      ctx    context.Context
 ├─ out ───────────────────────────────────────────
@@ -116,6 +118,10 @@ func (s *Service) Rebuild(ctx context.Context) (Counts, error) {
 		return counts, err
 	}
 	if counts.Comments, err = indexAllComments(ctx, tx); err != nil {
+		return counts, err
+	}
+
+	if counts.Projects, err = indexAllProjects(ctx, tx); err != nil {
 		return counts, err
 	}
 
