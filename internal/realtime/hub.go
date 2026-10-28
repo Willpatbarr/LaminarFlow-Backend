@@ -76,6 +76,12 @@ const (
 	LabelCreated     = "label.created"
 	LabelUpdated     = "label.updated"
 	LabelDeleted     = "label.deleted"
+
+	// LAM-87. A document event carries the document in `document`; see Event.
+	DocumentCreated    = "document.created"
+	DocumentUpdated    = "document.updated"
+	DocumentArchived   = "document.archived"
+	DocumentUnarchived = "document.unarchived"
 )
 
 // helloFrame is the first frame on every connection. A socket that is open is not a
@@ -149,6 +155,13 @@ type Event struct {
 	Milestone   any    `json:"milestone,omitempty"`
 	LabelID     string `json:"label_id,omitempty"`
 	Label       any    `json:"label,omitempty"`
+
+	// LAM-87. document.* carries DocumentID and Document, the REST body whole, and Version
+	// (above) as the ticket events do: a client applies the event only if it is newer than
+	// its copy. ProjectID and TeamID (above) are set when the document is filed under one.
+	// On document.archived the body is the document as archived, archived_at set.
+	DocumentID string `json:"document_id,omitempty"`
+	Document   any    `json:"document,omitempty"`
 }
 
 /*

@@ -127,6 +127,7 @@ type Field struct {
 ┃      RenameField(ctx, accountID, fieldID, label)   →  Field, error
 ┃      RemoveField(ctx, accountID, fieldID)          →  error
 ┃      Reorder(ctx, accountID, typeID, ids)          →  []Field, error
+┃      FieldIDs(ctx, workspaceID, typeID)            →  []string, error
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      NewService                  one per process
 */
@@ -511,6 +512,60 @@ func (s *Service) Reorder(ctx context.Context, accountID, typeID string, fieldID
 	}
 
 	return out, nil
+}
+
+/*
+┌─ aspect ────────────────────────────────────────
+│  a type's field ids, first field first
+├─ in ────────────────────────────────────────────
+│      ctx            context.Context
+│      workspaceID    string
+│      typeID         string
+├─ out ───────────────────────────────────────────
+│      []string                   by (position, label, id); empty for a type with none
+│      error                      ErrNotFound: absent, or in another workspace
+*/
+
+// FieldIDs exists for internal/document, which has to know which body keys a type allows
+// and may not SELECT these tables itself (boundary_test.go). It returns ids and nothing
+// else: a document stores a field's id and never its label.
+//
+// Scoped by workspace rather than by account, because the caller is a document write that
+// has already settled which workspace it is in - a type of any other workspace is
+// ErrNotFound, the same collapse Get makes.
+//
+// The order is the rule "the first field" means: position, then label, then id. Position
+// is a hint and duplicates are legal (Field.Position), so label breaks the tie a person
+// can see and id breaks the one they cannot, which makes the order total.
+func (s *Service) FieldIDs(ctx context.Context, workspaceID, typeID string) ([]string, error) {
+	var found bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT true FROM aspect_type at
+		   JOIN team tm ON tm.id = at.team_id
+		  WHERE at.id = $1::uuid AND tm.workspace_id = $2::uuid`,
+		typeID, workspaceID,
+	).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("aspect: field ids: %w", err)
+	}
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT f.id::text FROM aspect_type_field f
+		  WHERE f.aspect_type_id = $1::uuid
+		  ORDER BY f.position, f.label, f.id`, typeID)
+	if err != nil {
+		return nil, fmt.Errorf("aspect: field ids: %w", err)
+	}
+
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("aspect: field ids: %w", err)
+	}
+
+	return ids, nil
 }
 
 // querier is whatever can run a query - the pool, or a transaction. fields is read

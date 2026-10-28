@@ -27,6 +27,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/account"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/board"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/document"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/epic"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/label"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/milestone"
@@ -379,6 +380,32 @@ func (f ticketFeed) publishLabel(workspaceID, kind, actorID string, l label.Labe
 		LabelID: l.ID,
 		Label:   asLabelBody(l),
 	})
+}
+
+// publishDocument announces a document as the REST body: document.created, .updated,
+// .archived and .unarchived (LAM-87). The workspace is the document's own. After the
+// commit, best-effort, as above.
+func (f ticketFeed) publishDocument(kind, actorID string, d document.Document) {
+	if f.hub == nil {
+		return
+	}
+
+	e := realtime.Event{
+		Type:       kind,
+		Version:    d.Version,
+		ActorID:    actorID,
+		At:         d.UpdatedAt.UTC(),
+		DocumentID: d.ID,
+		Document:   asDocumentBody(d),
+	}
+	if d.ProjectID != nil {
+		e.ProjectID = *d.ProjectID
+	}
+	if d.TeamID != nil {
+		e.TeamID = *d.TeamID
+	}
+
+	f.hub.Publish(d.WorkspaceID, e)
 }
 
 // publishColumn announces a column write as board.column.updated: the column and the

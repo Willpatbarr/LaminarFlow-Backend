@@ -55,7 +55,7 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `filter_invalid` | 422 | A list body whose filter, sort or page size was rejected. `errors[]` names each problem |
 | `cursor_mismatch` | 400 | A list cursor replayed under a different filter or sort. Start again from the first page |
 | `bad_cursor` | 400 | A list cursor that does not decode. Pass back a `next_cursor` unchanged |
-| `aspect_type_not_found` | 404 | An aspect type or one of its fields: absent, or outside your scope |
+| `aspect_type_not_found` | 404 | An aspect type or one of its fields: absent, or outside your scope. Also a document create or update (LAM-87) whose `aspect_type_id` names no type in your workspace, and the field usage count for a field the type does not have |
 | `field_set_mismatch` | 409 | A field reorder that did not name every field exactly once. Refetch and retry |
 | `status_in_use` | 422 | Deleting a status would strand tickets: tickets use it and `move_to` is absent, or it is the team's last status and tickets exist. `detail` says how many. `errors[0].location` is `query.move_to`. Nothing was deleted |
 | `status_set_mismatch` | 422 | A status reorder that did not name every status of the team exactly once. `errors[0].location` is `body.status_ids`. Refetch and retry |
@@ -74,9 +74,13 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `setting_unknown_key` | 422 | A key that is not in the registry. Previously this stored a row nobody read |
 | `setting_wrong_scope` | 422 | A real key written at the wrong level — team key at workspace scope, or the reverse |
 | `setting_invalid_value` | 422 | A value whose shape is not what the key holds |
-| `team_not_found` | 404 | The workspace a team was created in, or a team outside your scope |
+| `team_not_found` | 404 / 422 | The workspace a team was created in, or a team outside your scope. 422 at `body.team_id` on a document create (LAM-87) whose `team_id` is not a team of your workspace |
 | `team_name_taken` | 409 | Team names are unique per workspace. Send it again under another name |
-| `project_not_found` | 404 | The team a project was created in, or a project outside your scope |
+| `project_not_found` | 404 / 422 | The team a project was created in, or a project outside your scope. 422 at `body.project_id` on a document create (LAM-87) whose `project_id` is not a project of your workspace |
+| `document_not_found` | 404 | Any document operation (LAM-87): absent, archived, or outside your scope. Also the answer to a write that sent no `If-Match` to an archived document, and to unarchiving a document that is not archived |
+| `document_conflict` | 409 | A document write that sent `If-Match` and lost: the document was edited, or archived, since that version. Nothing was written. The body carries `current` and `changed_at`; `current.archived_at` is set when it was archived — see [Conflicts carry the other side](#conflicts-carry-the-other-side) |
+| `document_field_unknown` | 422 | An aspect document's `body` has a key that is not a field id of its aspect type. `errors[0].location` is `body.body.<that key>`. Nothing was written. Fields are added with `POST /aspect-types/{id}/fields` first |
+| `aspect_type_has_no_fields` | 422 | A normal document turned into an aspect one whose type has no fields, so its text has nowhere to go. `errors[0].location` is `body.aspect_type_id`. Add a field to the type, or choose another |
 | `origin_not_allowed` | 403 | `GET /api/v1/ws` from a page whose `Origin` is not this host. Raised before the credential is looked at. See [docs/realtime.md](realtime.md) |
 | `no_workspace` | 403 | `GET /api/v1/ws` by a valid credential whose account belongs to no workspace, so there is nothing to watch |
 | `account_not_found` | 404 | An account deletion that found nothing. A retried delete is the ordinary way to see it |
@@ -85,7 +89,7 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 
 ## Conflicts carry the other side
 
-`ticket_conflict` and `ticket_archived` are the only failures with members beyond the table above. They are RFC 9457 *extension members*, so they sit at the top level beside `code`:
+`ticket_conflict`, `ticket_archived` and `document_conflict` are the only failures with members beyond the table above. They are RFC 9457 *extension members*, so they sit at the top level beside `code`:
 
 ```json
 {
@@ -115,6 +119,8 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 
 The members are declared in the OpenAPI document as the `TicketConflict` schema, on the 409 of `update-ticket`, `archive-ticket` and `unarchive-ticket`, so generated client types include them. See `docs/api-conventions.md` §9 for the precondition itself.
 
+`document_conflict` (LAM-87) is the same idea with one code: `current` is the `DocumentBody`, `changed_at` is `current.updated_at`, and there is no `changed_by` (documents do not record their writer yet). It does not split edited from archived — read `current.archived_at`. Its schema is `DocumentConflict`, on the 409 of `update-document`, `archive-document` and `unarchive-document`.
+
 ## Length limits
 
 A string a person writes has a ceiling, counted in **characters, not bytes** (Unicode code
@@ -127,6 +133,7 @@ as two.
 | `ticket.title` (create and update) | 1 to 200, and not only whitespace |
 | `ticket.description` (create and update) | up to 50,000; empty is fine |
 | `team.name`, `project.name` (create) | 1 to 100, and not only whitespace |
+| `document.title` (create and update) | up to 200; empty is fine (an untitled document) |
 
 A value outside the rule is a `422` with the derived code `unprocessable_entity` and one
 `errors[]` entry whose `location` is `body.title`, `body.description` or `body.name`, whether
