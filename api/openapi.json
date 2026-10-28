@@ -2721,6 +2721,123 @@
         ],
         "type": "object"
       },
+      "SearchInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/SearchInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "limit": {
+            "description": "How many results. Omitted means 20. Over the maximum is rejected, not clamped.",
+            "format": "int64",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "q": {
+            "description": "What to look for: 1 to 200 characters (not bytes), and not only whitespace. Words are stemmed and all must match; \"quoted phrases\", or, and -minus work as in a web search.",
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "description": "Only results of this kind. Omit for all.",
+            "enum": [
+              "ticket",
+              "document",
+              "comment",
+              "project"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "q"
+        ],
+        "type": "object"
+      },
+      "SearchItem": {
+        "additionalProperties": false,
+        "properties": {
+          "field_label": {
+            "description": "The label of the aspect field that matched. Null except for a document result.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "The ticket, document, comment or project the result is.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "score": {
+            "description": "Higher is better. For ordering only: the number itself means nothing and can change.",
+            "format": "double",
+            "type": "number"
+          },
+          "snippet": {
+            "description": "HTML-safe: the matched text is escaped, then \u003cmark\u003e is put around the matches. Safe to render as HTML as it is.",
+            "type": "string"
+          },
+          "title": {
+            "description": "Plain text - escape it when rendering as HTML. A comment shows its first 120 characters.",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "ticket",
+              "document",
+              "comment",
+              "project"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "title",
+          "snippet",
+          "field_label",
+          "score"
+        ],
+        "type": "object"
+      },
+      "SearchOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/SearchOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "description": "Best first. One entry per ticket, document, comment or project, however many of its fields matched.",
+            "items": {
+              "$ref": "#/components/schemas/SearchItem"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "SetColumnStatusesInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -5996,6 +6113,45 @@
           }
         },
         "summary": "Rename a view, change its config, or share or unshare it"
+      }
+    },
+    "/api/v1/search/list": {
+      "post": {
+        "description": "The best matches for `q` across every workspace you belong to, best first. A title match ranks above a match in the text. A document is searched by title and by each aspect field's value, and a result names the field that matched in `field_label`. Archived tickets and documents are not searched. Returns the top `limit` results: there is no cursor. A `q` that is empty or only whitespace is a 422 at `body.q`.",
+        "operationId": "search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Search tickets, projects, documents and comments (a read - POST for the body)"
       }
     },
     "/api/v1/settings": {

@@ -10,13 +10,15 @@ import (
 // A field edit written anywhere else would compile, run, and skip the scoping predicate
 // that keeps one team's editor out of another team's types.
 //
-// No readers. Nothing outside this package needs to read either table today -
-// internal/document stores aspect_type_field.id as a key inside body and never joins
+// One reader: internal/search joins aspect_type_field for a field's label, so a search
+// hit on a document field can say which field matched (LAM-100). internal/document is
+// still not one - it stores aspect_type_field.id as a key inside body and never joins
 // to the table to do it, which is what makes the seam a seam.
 func TestNoAspectSQLOutsideThisPackage(t *testing.T) {
 	sqlguard.Assert(t, sqlguard.Rule{
-		Owner:  "aspect",
-		Tables: []string{"aspect_type", "aspect_type_field"},
+		Owner:   "aspect",
+		Tables:  []string{"aspect_type", "aspect_type_field"},
+		Readers: []string{"search"},
 		// internal/document's tests build an aspect type and a field to hang a
 		// document off, and read them back to prove the id/body-key seam holds.
 		// internal/team's count the types its bootstrap seeded and delete them,

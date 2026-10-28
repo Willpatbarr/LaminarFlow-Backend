@@ -6,9 +6,12 @@
 ║      ClearDocument      func
 ║      IndexTicket        func
 ║      IndexComment       func
+║      IndexProject       func
+║      ClearProject       func
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
 ║      internal/document.Save  →  ClearDocument then IndexDocument
-║      Rebuild                 →  all four
+║      internal/project.Create →  IndexProject, inside its transaction
+║      Rebuild                 →  all of them
 ╚═══════════════════════════════════════════════════════════════════════════════════════
 */
 
@@ -266,6 +269,73 @@ func ClearTicket(ctx context.Context, tx pgx.Tx, ticketID string) error {
 		`DELETE FROM search_index WHERE ticket_id = $1::uuid`, ticketID,
 	); err != nil {
 		return fmt.Errorf("search: clear ticket %s: %w", ticketID, err)
+	}
+
+	return nil
+}
+
+/*
+┌─ search ────────────────────────────────────────
+│  one row for a project, its name
+├─ in ────────────────────────────────────────────
+│      ctx          context.Context
+│      tx           pgx.Tx
+│      projectID    string
+├─ out ───────────────────────────────────────────
+│      error
+├─ example ───────────────────────────────────────
+│      "Core"  →  content "Core"
+*/
+
+// IndexProject writes the row that makes a project findable by name (LAM-100). The
+// source column is project_source_id, not project_id: project_id is the scope column and
+// a project row is not scoped under a project (0037). team_id is set, project_id is
+// not, which is the same shape a team-level document has.
+//
+// There is no archive for projects and no rename yet, so nothing calls ClearProject
+// today. It exists so the day a rename lands, the clear-then-index pair every other
+// source has is already there.
+func IndexProject(ctx context.Context, tx pgx.Tx, projectID string) error {
+	if _, err := tx.Exec(ctx, projectInsert+` AND p.id = $1::uuid`, projectID); err != nil {
+		return fmt.Errorf("search: index project %s: %w", projectID, err)
+	}
+
+	return nil
+}
+
+func indexAllProjects(ctx context.Context, tx pgx.Tx) (int, error) {
+	tag, err := tx.Exec(ctx, projectInsert)
+	if err != nil {
+		return 0, fmt.Errorf("search: index projects: %w", err)
+	}
+
+	return int(tag.RowsAffected()), nil
+}
+
+const projectInsert = `
+	INSERT INTO search_index
+	     (project_source_id, content, workspace_id, team_id, title_or_preview)
+	SELECT p.id, p.name, tm.workspace_id, p.team_id, p.name
+	  FROM project p
+	  JOIN team tm ON tm.id = p.team_id
+	 WHERE true`
+
+/*
+┌─ search ────────────────────────────────────────
+│  removes one project's row, before reindexing it
+├─ in ────────────────────────────────────────────
+│      ctx          context.Context
+│      tx           pgx.Tx
+│      projectID    string
+├─ out ───────────────────────────────────────────
+│      error
+*/
+
+func ClearProject(ctx context.Context, tx pgx.Tx, projectID string) error {
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM search_index WHERE project_source_id = $1::uuid`, projectID,
+	); err != nil {
+		return fmt.Errorf("search: clear project %s: %w", projectID, err)
 	}
 
 	return nil

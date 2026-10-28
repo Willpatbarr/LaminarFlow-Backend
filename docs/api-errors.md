@@ -86,7 +86,7 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `origin_not_allowed` | 403 | `GET /api/v1/ws` from a page whose `Origin` is not this host. Raised before the credential is looked at. See [docs/realtime.md](realtime.md) |
 | `no_workspace` | 403 | `GET /api/v1/ws` by a valid credential whose account belongs to no workspace, so there is nothing to watch |
 | `account_not_found` | 404 | An account deletion that found nothing. A retried delete is the ordinary way to see it |
-| `unprocessable_entity` (derived) | 422 | Includes the length and blank rules on `title`, `description` and team and project `name` — see [Length limits](#length-limits) — and a malformed `Idempotency-Key` (`header.Idempotency-Key`) |
+| `unprocessable_entity` (derived) | 422 | Includes the length and blank rules on `title`, `description` and team and project `name` — see [Length limits](#length-limits) — a malformed `Idempotency-Key` (`header.Idempotency-Key`), and a search (LAM-100) whose `q` is empty, only whitespace or over 200 characters, or whose `limit` is over 50 (`body.q`, `body.limit`). Search adds no code of its own |
 | *derived* | any | Everything huma raises on its own behalf — `defaultCode` turns the status text into a code |
 
 ## Conflicts carry the other side
@@ -136,6 +136,7 @@ as two.
 | `ticket.description` (create and update) | up to 50,000; empty is fine |
 | `team.name`, `project.name` (create) | 1 to 100, and not only whitespace |
 | `document.title` (create and update) | up to 200; empty is fine (an untitled document) |
+| `search.q` (`POST /search/list`) | 1 to 200, and not only whitespace |
 
 A value outside the rule is a `422` with the derived code `unprocessable_entity` and one
 `errors[]` entry whose `location` is `body.title`, `body.description` or `body.name`, whether

@@ -16,6 +16,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/project"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/savedview"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/search"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/setting"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/sprint"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
@@ -36,7 +37,7 @@ func NewMux(pool *pgxpool.Pool, bundle fs.FS, hub *realtime.Hub) *http.ServeMux 
 	NewHumaAPI(mux, authSvc, ticket.NewService(pool), aspect.NewService(pool), setting.NewService(pool),
 		team.NewService(pool), project.NewService(pool), accountSvc, board.NewService(pool),
 		epic.NewService(pool), sprint.NewService(pool), milestone.NewService(pool), label.NewService(pool), document.NewService(pool),
-		savedview.NewService(pool), hub)
+		savedview.NewService(pool), search.NewService(pool), hub)
 
 	// Handlers huma cannot describe. Registered before the /api/ catch-all below for
 	// readability only: the mux picks the most specific pattern whatever the order, so

@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/search"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
 
@@ -180,6 +181,12 @@ func (s *Service) Create(ctx context.Context, accountID string, p CreateParams) 
 	}
 	if err != nil {
 		return Project{}, fmt.Errorf("project: insert: %w", err)
+	}
+
+	// In the transaction that creates the project, so the index cannot lack a project
+	// that exists or hold one that was rolled back (ADR 0001).
+	if err := search.IndexProject(ctx, tx, pr.ID); err != nil {
+		return Project{}, err
 	}
 
 	if !p.Bare {
