@@ -3822,7 +3822,7 @@
     },
     "/api/v1/tickets/{id}/move": {
       "post": {
-        "description": "One write per drop: sets `status_id` and `position` together. Send at most one of `position`, `before_id` and `after_id` (more is a 422); none puts the ticket at the end of the column. `before_id`/`after_id` name a live ticket in the target column, or the answer is a 422 `neighbour_not_found` at that member. Written like any edit: version + 1, announced as `ticket.updated`, and `If-Match` makes it conditional. When there is no room between two neighbours the target column's other tickets are renumbered; that does not change their version and is not announced, so re-list if the order looks wrong.",
+        "description": "One write per drop: sets `status_id` and `position` together. Send at most one of `position`, `before_id` and `after_id` (more is a 422); none puts the ticket at the end of the column. `before_id`/`after_id` name a live ticket in the target column, or the answer is a 422 `neighbour_not_found` at that member. Written like any edit: version + 1, announced as `ticket.updated`, and `If-Match` makes it conditional. When there is no room between two neighbours the target column's other tickets are renumbered; each of those is written like an edit (version + 1) and announced as `ticket.updated`, before the moved ticket's own event.",
         "operationId": "move-ticket",
         "parameters": [
           {
