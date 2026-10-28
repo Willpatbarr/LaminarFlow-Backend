@@ -64,7 +64,8 @@ func TestMinimalHierarchyHoldsTogether(t *testing.T) {
 	// pointing at a table that did not exist; LAM-46 added it with a real
 	// reference, and master spec 3.2 makes that level optional - so a ticket
 	// filed under no epic is a complete ticket, not an incomplete one.
-	// milestone/release is still absent, deferred to LAM-47.
+	// LAM-47 added milestone_id the same way, under LAM-82's decision that
+	// only Milestone ships.
 	var ticket string
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO ticket (project_id, title) VALUES ($1::uuid, 'Minimal ticket')
@@ -73,16 +74,16 @@ func TestMinimalHierarchyHoldsTogether(t *testing.T) {
 		t.Fatalf("ticket with only a project and a title: %v", err)
 	}
 
-	var statusID, assignee, epicID *string
+	var statusID, assignee, epicID, milestoneID *string
 	if err := pool.QueryRow(ctx,
-		`SELECT status_id::text, assignee_account_id::text, epic_id::text
+		`SELECT status_id::text, assignee_account_id::text, epic_id::text, milestone_id::text
            FROM ticket WHERE id = $1::uuid`, ticket,
-	).Scan(&statusID, &assignee, &epicID); err != nil {
+	).Scan(&statusID, &assignee, &epicID, &milestoneID); err != nil {
 		t.Fatalf("read the ticket back: %v", err)
 	}
-	if statusID != nil || assignee != nil || epicID != nil {
-		t.Errorf("minimal ticket came back with status=%v assignee=%v epic=%v, want all NULL",
-			statusID, assignee, epicID)
+	if statusID != nil || assignee != nil || epicID != nil || milestoneID != nil {
+		t.Errorf("minimal ticket came back with status=%v assignee=%v epic=%v milestone=%v, want all NULL",
+			statusID, assignee, epicID, milestoneID)
 	}
 
 	// It must also be absent from ticket_sprint rather than in some default
@@ -245,6 +246,8 @@ func TestOptionalParentsStayOptional(t *testing.T) {
 		"ticket.status_id":              "LAM-17: no status is sacred, so deleting one must not be blocked - which means tickets must be able to hold none",
 		"ticket.assignee_account_id":    "LAM-18: work outlives the people assigned to it",
 		"ticket.epic_id":                "LAM-46: master spec 3.2 makes epic an optional level, and deleting an epic must leave its tickets standing",
+		"ticket.milestone_id":           "LAM-47: master spec 3.2 makes milestone an optional level, and deleting a milestone must leave its tickets standing",
+		"epic.milestone_id":             "LAM-47: an epic need not sit under a milestone, and deleting a milestone must leave its epics standing",
 		"document.project_id":           "LAM-23: a document may be workspace-level",
 		"document.team_id":              "LAM-23: a document may be workspace-level",
 		"document.aspect_type_id":       "LAM-23: a normal document has no aspect type",
@@ -315,6 +318,7 @@ func TestTheOptionalParentGuardNamesRealColumns(t *testing.T) {
 
 	for _, column := range []string{
 		"ticket.status_id", "ticket.assignee_account_id", "ticket.epic_id",
+		"ticket.milestone_id", "epic.milestone_id",
 		"document.project_id", "document.team_id", "document.aspect_type_id",
 		"comment.ticket_id", "comment.document_id", "comment.field_id",
 		"comment.author_id", "comment.review_status",

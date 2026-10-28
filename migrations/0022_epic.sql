@@ -2,8 +2,9 @@
 --
 -- The optional structural level between project and ticket. Master spec 3.2
 -- makes both intermediate levels independently optional, so an epic sits
--- directly in a project and project_id is NOT NULL. Whatever builds
--- milestone/release (LAM-47) adds a nullable epic.milestone_id then.
+-- directly in a project and project_id is NOT NULL. LAM-82 decided only
+-- Milestone ships (no Release), and LAM-47 adds the nullable
+-- epic.milestone_id in 0033_milestone.sql.
 --
 -- This table was missed by E-LAM-0003 the first time round. 0011_ticket.sql
 -- deliberately omitted epic_id rather than ship a uuid pointing at nothing,
