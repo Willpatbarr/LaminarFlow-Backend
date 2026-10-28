@@ -16,9 +16,13 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/board"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/epic"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/label"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/milestone"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/project"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/setting"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/sprint"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
 
@@ -39,6 +43,10 @@ import (
 │      projSvc      *project.Service   nil only for cmd/openapi
 │      accountSvc   *account.Service   nil only for cmd/openapi
 │      boardSvc     *board.Service     nil only for cmd/openapi
+│      epicSvc      *epic.Service      nil only for cmd/openapi
+│      sprintSvc    *sprint.Service    nil only for cmd/openapi
+│      milestoneSvc *milestone.Service nil only for cmd/openapi
+│      labelSvc     *label.Service     nil only for cmd/openapi
 │      hub          *realtime.Hub      nil publishes nothing
 ├─ out ───────────────────────────────────────────
 │      huma.API    the same API cmd/openapi emits
@@ -48,7 +56,8 @@ import (
 
 func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Service, aspectSvc *aspect.Service,
 	settingSvc *setting.Service, teamSvc *team.Service, projSvc *project.Service,
-	accountSvc *account.Service, boardSvc *board.Service, hub *realtime.Hub) huma.API {
+	accountSvc *account.Service, boardSvc *board.Service, epicSvc *epic.Service, sprintSvc *sprint.Service,
+	milestoneSvc *milestone.Service, labelSvc *label.Service, hub *realtime.Hub) huma.API {
 	// Before anything can raise an error. huma.NewError is a global, so this
 	// is the one place that sets it - see useErrorEnvelope.
 	useErrorEnvelope()
@@ -91,6 +100,10 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	registerStatuses(api, teamSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerAccounts(api, accountSvc)
 	registerBoards(api, boardSvc, ticketFeed{hub: hub, projects: projSvc})
+	registerEpics(api, epicSvc, ticketFeed{hub: hub, projects: projSvc})
+	registerSprints(api, sprintSvc, ticketSvc, ticketFeed{hub: hub, projects: projSvc})
+	registerMilestones(api, milestoneSvc, ticketFeed{hub: hub, projects: projSvc})
+	registerLabels(api, labelSvc, ticketFeed{hub: hub, projects: projSvc})
 
 	registerPing(api)
 

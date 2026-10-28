@@ -148,7 +148,30 @@ whole number between two neighbours), every other ticket whose `position` change
 (version + 1) and gets its own `ticket.updated`, sent before the moved ticket's. Apply them by version as
 usual; no new event type.
 
+## Hierarchy and label events (LAM-93)
+
+`epic.*`, `sprint.*`, `milestone.*` and `label.*` (each `created`, `updated`, `deleted`) carry `type`,
+`actor_id`, `at` (server time) and the resource under its own name, whole, as its REST body (`EpicBody`,
+`SprintBody`, `MilestoneBody`, `LabelBody`; on `deleted`, the resource as it was). Epic, sprint and milestone
+events also carry `project_id` and `epic_id` / `sprint_id` / `milestone_id`; label events carry `team_id` and
+`label_id`. They have **no** `ticket_id`, `version` or `ticket`. There is no version: replace the resource you
+hold, and re-list on doubt.
+
+| Write | Event |
+| --- | --- |
+| create-epic, create-sprint, create-milestone, create-label | `<resource>.created` |
+| update-epic, update-sprint, update-milestone, update-label | `<resource>.updated` |
+| delete-epic, delete-sprint, delete-milestone, delete-label | `<resource>.deleted` |
+| add-ticket-to-sprint, remove-ticket-from-sprint | `ticket.updated` (version + 1), only when membership changed |
+| a ticket create or update that carries `epic_id`, `milestone_id` or `label_ids` | the usual `ticket.created` / `ticket.updated`, with those members in `ticket` |
+
+A delete does **not** rewrite the tickets that pointed at the resource, so no `ticket.updated` follows and
+their `version` does not move. The database nulls `epic_id` / `milestone_id` and drops the label from
+`label_ids`; a client applies the same to the tickets it holds when it sees `epic.deleted`,
+`milestone.deleted` or `label.deleted`, and a re-list shows the same. A sprint delete drops the memberships
+the same way (read through the `sprint` filter, so a re-list shows them).
+
 ## Not here yet
 
-No per-connection filtering (a project, a status), no events for resources other than tickets, statuses and boards,
+No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones and labels,
 no client-to-server messages, no resume. Each is additive.
