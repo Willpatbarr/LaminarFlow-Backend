@@ -197,6 +197,51 @@
         ],
         "type": "object"
       },
+      "CreateStatusInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/CreateStatusInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "not_started",
+              "in_progress",
+              "done"
+            ],
+            "type": "string"
+          },
+          "color": {
+            "description": "Any string up to 32 characters; nothing reads it but the client.",
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "description": "1 to 100 characters, and not only whitespace.",
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "position": {
+            "description": "An ordering hint; duplicates are legal. Omitted means last.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "color",
+          "category"
+        ],
+        "type": "object"
+      },
       "CreateTeamInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -975,6 +1020,34 @@
         ],
         "type": "object"
       },
+      "ReorderStatusesInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ReorderStatusesInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "status_ids": {
+            "description": "Every status of this team, exactly once, in the order wanted.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "status_ids"
+        ],
+        "type": "object"
+      },
       "SetSettingInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -1045,6 +1118,15 @@
       "StatusBody": {
         "additionalProperties": false,
         "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/StatusBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
           "category": {
             "description": "not_started, in_progress or done. Reporting depends on it, and it survives a rename.",
             "type": "string"
@@ -1302,6 +1384,39 @@
           "changed_by",
           "changed_at"
         ],
+        "type": "object"
+      },
+      "UpdateStatusInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/UpdateStatusInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "not_started",
+              "in_progress",
+              "done"
+            ],
+            "type": "string"
+          },
+          "color": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "UpdateTicketInputBody": {
@@ -2343,6 +2458,216 @@
           }
         },
         "summary": "Fetch one team with its statuses"
+      }
+    },
+    "/api/v1/teams/{id}/statuses": {
+      "post": {
+        "description": "No status is sacred, so there is no special case and no 409: name and position are not unique.",
+        "operationId": "create-status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateStatusInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add a status to a team"
+      }
+    },
+    "/api/v1/teams/{id}/statuses/reorder": {
+      "post": {
+        "description": "Send the complete list, in the order wanted; positions become 1..n. A partial, duplicated or foreign list is a 422 at body.status_ids. Each status whose position changed is announced as `status.updated`.",
+        "operationId": "reorder-statuses",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderStatusesInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set the order of every status"
+      }
+    },
+    "/api/v1/teams/{id}/statuses/{status_id}": {
+      "delete": {
+        "description": "Tickets that use the status need a `move_to` status, or the answer is a 422 `status_in_use` at `query.move_to` naming how many. Deleting a team's last status is allowed only while the team has no tickets. Tickets that move are written like any edit (version + 1) and each is announced as `ticket.updated`. Board columns mapped to the deleted status are mapped to `move_to` instead when tickets move, and unmapped otherwise.",
+        "operationId": "delete-status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "status_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Another status of this team to move the tickets to. Required when tickets use this one.",
+            "explode": false,
+            "in": "query",
+            "name": "move_to",
+            "schema": {
+              "description": "Another status of this team to move the tickets to. Required when tickets use this one.",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a status, moving its tickets"
+      },
+      "put": {
+        "description": "Each member is optional and an omitted one is left alone. The id never changes, so tickets keep their status.",
+        "operationId": "update-status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "status_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateStatusInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Rename, recolour or recategorise a status"
       }
     },
     "/api/v1/tickets": {

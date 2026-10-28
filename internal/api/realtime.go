@@ -28,6 +28,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/project"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
 )
 
@@ -243,4 +244,54 @@ func (f ticketFeed) publish(ctx context.Context, kind, actorID string, t ticket.
 		At:       t.UpdatedAt.UTC(),
 		Ticket:   asBody(t),
 	})
+}
+
+/*
+┌─ ticketFeed ────────────────────────────────────
+│  tells a workspace a team's status changed
+├─ in ────────────────────────────────────────────
+│      workspaceID    string               the team's, already known to the caller
+│      kind           string               a realtime.Status* type
+│      actorID        string
+│      teamID         string
+│      st             team.Status          as written; as it was, for a delete
+├─ example ───────────────────────────────────────
+│      rename  →  status.updated, status.name the new name
+*/
+
+// LAM-83. Same rules as publish: after the commit, best-effort, nothing returned. The
+// workspace comes from the caller because the status service already resolved it while
+// proving the caller could reach the team.
+func (f ticketFeed) publishStatus(workspaceID, kind, actorID, teamID string, st team.Status) {
+	if f.hub == nil {
+		return
+	}
+
+	f.hub.Publish(workspaceID, realtime.Event{
+		Type:     kind,
+		ActorID:  actorID,
+		At:       time.Now().UTC(),
+		TeamID:   teamID,
+		StatusID: st.ID,
+		Status:   asStatusBody(st),
+	})
+}
+
+// publishMoved announces tickets a status delete re-pointed, one ticket.updated each,
+// exactly as an edit would be announced.
+func (f ticketFeed) publishMoved(workspaceID, actorID string, moved []ticket.Ticket) {
+	if f.hub == nil {
+		return
+	}
+
+	for _, t := range moved {
+		f.hub.Publish(workspaceID, realtime.Event{
+			Type:     realtime.TicketUpdated,
+			TicketID: t.ID,
+			Version:  t.Version,
+			ActorID:  actorID,
+			At:       t.UpdatedAt.UTC(),
+			Ticket:   asBody(t),
+		})
+	}
 }

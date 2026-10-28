@@ -98,6 +98,10 @@ type projectInput struct {
 	ID string `path:"id" format:"uuid"`
 }
 
+func asStatusBody(st team.Status) statusBody {
+	return statusBody{ID: st.ID, Name: st.Name, Color: st.Color, Position: st.Position, Category: st.Category}
+}
+
 func asTeamBody(t team.Team) teamBody {
 	out := teamBody{
 		ID:          t.ID,
@@ -107,10 +111,7 @@ func asTeamBody(t team.Team) teamBody {
 		AspectTypes: t.AspectTypes,
 	}
 	for i, st := range t.Statuses {
-		out.Statuses[i] = statusBody{
-			ID: st.ID, Name: st.Name, Color: st.Color,
-			Position: st.Position, Category: st.Category,
-		}
+		out.Statuses[i] = asStatusBody(st)
 	}
 	if out.AspectTypes == nil {
 		out.AspectTypes = []string{}

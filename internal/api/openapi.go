@@ -86,6 +86,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	registerAspectTypes(api, aspectSvc)
 	registerSettings(api, settingSvc)
 	registerBootstrap(api, teamSvc, projSvc)
+	registerStatuses(api, teamSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerAccounts(api, accountSvc)
 
 	registerPing(api)

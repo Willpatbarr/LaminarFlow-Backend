@@ -49,6 +49,12 @@ const (
 	TicketUpdated    = "ticket.updated"
 	TicketArchived   = "ticket.archived"
 	TicketUnarchived = "ticket.unarchived"
+
+	// LAM-83. A status event carries the status in `status` and leaves the ticket
+	// members off; see Event.
+	StatusCreated = "status.created"
+	StatusUpdated = "status.updated"
+	StatusDeleted = "status.deleted"
 )
 
 // helloFrame is the first frame on every connection. A socket that is open is not a
@@ -89,11 +95,18 @@ const (
 // already holds.
 type Event struct {
 	Type     string    `json:"type"`
-	TicketID string    `json:"ticket_id"`
-	Version  int       `json:"version"`
+	TicketID string    `json:"ticket_id,omitempty"`
+	Version  int       `json:"version,omitempty"`
 	ActorID  string    `json:"actor_id"`
 	At       time.Time `json:"at"`
-	Ticket   any       `json:"ticket"`
+	Ticket   any       `json:"ticket,omitempty"`
+
+	// TeamID, StatusID and Status are set on status.* events and absent on ticket.*
+	// ones, the way the ticket members are absent on status.* ones. Status is the REST
+	// StatusBody; on status.deleted it is the status as it was.
+	TeamID   string `json:"team_id,omitempty"`
+	StatusID string `json:"status_id,omitempty"`
+	Status   any    `json:"status,omitempty"`
 }
 
 /*
