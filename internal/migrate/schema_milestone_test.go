@@ -164,6 +164,34 @@ func TestMilestoneConstraints(t *testing.T) {
 		}
 	})
 
+	// Nullable: a milestone can be named before its date is settled. When set,
+	// it is a date, not a timestamp.
+	t.Run("target_date is optional and stores a date", func(t *testing.T) {
+		project := newProject(t, "target-date")
+		undated := newMilestone(t, project, "Undated")
+
+		var got *string
+		if err := pool.QueryRow(ctx,
+			`SELECT target_date::text FROM milestone WHERE id = $1::uuid`, undated,
+		).Scan(&got); err != nil {
+			t.Fatalf("read target_date: %v", err)
+		}
+		if got != nil {
+			t.Errorf("target_date = %q on a milestone created without one, want NULL", *got)
+		}
+
+		var dated *string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO milestone (project_id, name, target_date)
+             VALUES ($1::uuid, 'Dated', '2026-12-01') RETURNING target_date::text`, project,
+		).Scan(&dated); err != nil {
+			t.Fatalf("create a dated milestone: %v", err)
+		}
+		if dated == nil || *dated != "2026-12-01" {
+			t.Errorf("target_date = %v, want 2026-12-01", dated)
+		}
+	})
+
 	t.Run("accepts two milestones with the same name in one project", func(t *testing.T) {
 		project := newProject(t, "duplicate-names")
 

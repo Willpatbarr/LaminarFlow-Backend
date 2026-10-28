@@ -58,8 +58,13 @@
 --
 -- description is text NOT NULL DEFAULT '', following epic and ticket. No
 -- UNIQUE (project_id, name): epic, project, sprint and status all decline
--- one, and LAM-47 does not ask for it. No dates: the ticket does not ask for
--- them and a column can be added later; a milestone is just a named scope.
+-- one, and LAM-47 does not ask for it.
+--
+-- target_date is a nullable date, not a timestamp: a milestone is aimed at a
+-- day, not an instant. It is nullable because a milestone can be named before
+-- its date is settled (sprint.start_date and end_date make the same call), and
+-- it carries no check against any other column, since a milestone is not a
+-- timebox and nothing else holds a date to compare it with.
 
 -- +migrate Up
 
@@ -68,6 +73,7 @@ CREATE TABLE milestone (
     project_id  uuid        NOT NULL REFERENCES project(id) ON DELETE CASCADE,
     name        text        NOT NULL,
     description text        NOT NULL DEFAULT '',
+    target_date date,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
 
