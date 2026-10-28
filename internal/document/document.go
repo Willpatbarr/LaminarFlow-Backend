@@ -189,6 +189,11 @@ type SaveParams struct {
 	// IfVersion makes an update conditional on the document still being at that version.
 	// Nil means unconditional, the rule internal/ticket.Update has. Ignored on an insert.
 	IfVersion *int
+	// IdempotencyKey, when set on an insert, makes the create safe to retry: the same key
+	// from the same AccountID returns the document the first call made. It needs an
+	// AccountID (a key is scoped to its creator) and is ignored on an update. See
+	// WriteIdempotent. Nil is an ordinary create.
+	IdempotencyKey *string
 }
 
 // normalize fills in the defaults the columns would apply, so the same values
@@ -246,17 +251,33 @@ func (s *Service) Save(ctx context.Context, p SaveParams) (string, error) {
 // which case it is a *Conflict with Archived set - the answer internal/ticket gives, for
 // the same reason: a client holding unsynced edits needs to hear "gone", not "never was".
 func (s *Service) Write(ctx context.Context, p SaveParams) (Document, error) {
+	d, _, err := s.WriteIdempotent(ctx, p)
+
+	return d, err
+}
+
+// WriteIdempotent is Write that also says whether the key had been used (LAM-126). When it
+// had, nothing was written - no row, no version bump, no reindex - and the document is the
+// original as it is now. An original archived since is a *Conflict with Replay set, so a
+// client that lost the create's response learns the document exists instead of making
+// another. The key is looked up before the write's own checks, so a replay returns what the
+// first call made even if its team, project or aspect type has gone since; the INSERT's
+// ON CONFLICT is what makes two concurrent requests with one key write exactly once.
+func (s *Service) WriteIdempotent(ctx context.Context, p SaveParams) (Document, bool, error) {
 	p = p.normalize()
 
 	if p.WorkspaceID == "" && p.AccountID == "" {
-		return Document{}, errors.New("document: a write needs a WorkspaceID or an AccountID")
+		return Document{}, false, errors.New("document: a write needs a WorkspaceID or an AccountID")
+	}
+	if p.ID == "" && p.IdempotencyKey != nil && p.AccountID == "" {
+		return Document{}, false, errors.New("document: an IdempotencyKey needs an AccountID")
 	}
 
 	if err := textlimit.Optional("title", p.Title, MaxTitleLength); err != nil {
-		return Document{}, err
+		return Document{}, false, err
 	}
 	if err := p.checkShape(); err != nil {
-		return Document{}, err
+		return Document{}, false, err
 	}
 
 	// Round-trip the body through JSON before extracting text. The rebuild
@@ -265,12 +286,12 @@ func (s *Service) Write(ctx context.Context, p SaveParams) (Document, error) {
 	// handler and a float64 42 from the database cannot diverge.
 	raw, err := json.Marshal(p.Body)
 	if err != nil {
-		return Document{}, fmt.Errorf("marshal body: %w", err)
+		return Document{}, false, fmt.Errorf("marshal body: %w", err)
 	}
 
 	var normalized map[string]any
 	if err := json.Unmarshal(raw, &normalized); err != nil {
-		return Document{}, fmt.Errorf("normalize body: %w", err)
+		return Document{}, false, fmt.Errorf("normalize body: %w", err)
 	}
 	if normalized == nil {
 		normalized = map[string]any{}
@@ -278,7 +299,7 @@ func (s *Service) Write(ctx context.Context, p SaveParams) (Document, error) {
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return Document{}, fmt.Errorf("begin: %w", err)
+		return Document{}, false, fmt.Errorf("begin: %w", err)
 	}
 	// Safe to call unconditionally - a rollback after a successful commit is a
 	// no-op. This guarantees no early return can leak an open transaction.
@@ -286,30 +307,39 @@ func (s *Service) Write(ctx context.Context, p SaveParams) (Document, error) {
 
 	var d Document
 	if p.ID == "" {
-		d, err = s.insert(ctx, tx, p, normalized)
+		var replayed bool
+		d, replayed, err = s.insert(ctx, tx, p, normalized)
+		if err != nil {
+			return Document{}, false, err
+		}
+		if replayed {
+			// Nothing was written, so nothing is reindexed: the original create's rows
+			// are still there. The deferred rollback ends the transaction.
+			return d, true, nil
+		}
 	} else {
 		d, err = s.update(ctx, tx, p, normalized)
-	}
-	if err != nil {
-		return Document{}, err
+		if err != nil {
+			return Document{}, false, err
+		}
 	}
 
 	// Both index calls take this transaction, so the blob and its rows still move
 	// together or not at all. That invariant is the point of Save and survived the
 	// move to internal/search unchanged.
 	if err := search.ClearDocument(ctx, tx, d.ID); err != nil {
-		return Document{}, err
+		return Document{}, false, err
 	}
 
 	if err := search.IndexDocument(ctx, tx, d.ID, d.Body); err != nil {
-		return Document{}, err
+		return Document{}, false, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return Document{}, fmt.Errorf("commit: %w", err)
+		return Document{}, false, fmt.Errorf("commit: %w", err)
 	}
 
-	return d, nil
+	return d, false, nil
 }
 
 // checkShape is the part of validation that needs no database.
@@ -383,38 +413,85 @@ func (s *Service) checkBody(ctx context.Context, workspaceID string, p SaveParam
 }
 
 // insert makes the row. The workspace comes from, in order: the team or project it is filed
-// under, WorkspaceID, the caller's oldest membership.
-func (s *Service) insert(ctx context.Context, tx pgx.Tx, p SaveParams, body map[string]any) (Document, error) {
+// under, WorkspaceID, the caller's oldest membership. The bool is true for a replay of an
+// Idempotency-Key, in which case nothing was written.
+func (s *Service) insert(ctx context.Context, tx pgx.Tx, p SaveParams, body map[string]any) (Document, bool, error) {
+	// A used key answers first, before the scope and body are checked against today's
+	// state: a retry of a create that succeeded must not turn into a 404 because the
+	// team was deleted since. The ON CONFLICT below still guards the race this read cannot.
+	if p.IdempotencyKey != nil {
+		if d, found, err := s.byKey(ctx, tx, p); err != nil || found {
+			return d, found, err
+		}
+	}
+
 	workspaceID, err := s.insertWorkspace(ctx, tx, p)
 	if err != nil {
-		return Document{}, err
+		return Document{}, false, err
 	}
 
 	body, err = s.checkBody(ctx, workspaceID, p, body, nil, false)
 	if err != nil {
-		return Document{}, err
+		return Document{}, false, err
 	}
 
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return Document{}, fmt.Errorf("marshal body: %w", err)
+		return Document{}, false, fmt.Errorf("marshal body: %w", err)
 	}
 
 	var d Document
 	err = d.scan(tx.QueryRow(ctx,
 		`WITH d AS (
-		     INSERT INTO document (workspace_id, body, title, type, aspect_type_id, project_id, team_id)
-		     VALUES ($1::uuid, $2::jsonb, $3, $4, $5::uuid, $6::uuid, $7::uuid)
+		     INSERT INTO document (workspace_id, body, title, type, aspect_type_id, project_id, team_id,
+		                           created_by, idempotency_key)
+		     VALUES ($1::uuid, $2::jsonb, $3, $4, $5::uuid, $6::uuid, $7::uuid, $8::uuid, $9::text)
+		     ON CONFLICT (created_by, idempotency_key) WHERE idempotency_key IS NOT NULL
+		     DO NOTHING
 		     RETURNING *)
 		 SELECT `+columns+` FROM d`,
 		workspaceID, string(raw), p.Title, p.Type, p.aspectType(),
-		nilIfEmpty(p.ProjectID), nilIfEmpty(p.TeamID),
+		nilIfEmpty(p.ProjectID), nilIfEmpty(p.TeamID), nilIfEmpty(p.AccountID), p.IdempotencyKey,
 	))
+	if errors.Is(err, pgx.ErrNoRows) && p.IdempotencyKey != nil {
+		// Lost the race to a concurrent create with the same key: its row is committed
+		// now, and this new statement sees it.
+		d, found, err := s.byKey(ctx, tx, p)
+		if err == nil && !found {
+			err = ErrNotFound
+		}
+
+		return d, found, err
+	}
 	if err != nil {
-		return Document{}, fmt.Errorf("write body: %w", err)
+		return Document{}, false, fmt.Errorf("write body: %w", err)
 	}
 
-	return d, nil
+	return d, false, nil
+}
+
+// byKey reads the document p.AccountID created under p.IdempotencyKey. Scoped by the
+// creator and by membership, so it finds only this account's own document and only while
+// the account can still reach its workspace. Archived is read on purpose - whether the
+// document is archived is half of the answer - so it is a *Conflict with Replay set.
+func (s *Service) byKey(ctx context.Context, tx pgx.Tx, p SaveParams) (Document, bool, error) {
+	var d Document
+	err := d.scan(tx.QueryRow(ctx,
+		`SELECT `+columns+` FROM document d
+		  WHERE d.created_by = $1::uuid AND d.idempotency_key = $2::text AND `+fmt.Sprintf(memberOf, "$1"),
+		p.AccountID, *p.IdempotencyKey,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Document{}, false, nil
+	}
+	if err != nil {
+		return Document{}, false, fmt.Errorf("document: read by key: %w", err)
+	}
+	if d.ArchivedAt != nil {
+		return Document{}, false, &Conflict{Archived: true, Replay: true, Current: d}
+	}
+
+	return d, true, nil
 }
 
 // insertWorkspace settles which workspace a new document goes in, and that the writer may

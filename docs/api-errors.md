@@ -78,7 +78,7 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 | `team_name_taken` | 409 | Team names are unique per workspace. Send it again under another name |
 | `project_not_found` | 404 / 422 | The team a project was created in, or a project outside your scope. 422 at `body.project_id` on a document create (LAM-87) whose `project_id` is not a project of your workspace; the same at `body.project_id` on a saved view create (LAM-86) naming a project outside the view's team |
 | `document_not_found` | 404 | Any document operation (LAM-87): absent, archived, or outside your scope. Also the answer to a write that sent no `If-Match` to an archived document, and to unarchiving a document that is not archived |
-| `document_conflict` | 409 | A document write that sent `If-Match` and lost: the document was edited, or archived, since that version. Nothing was written. The body carries `current` and `changed_at`; `current.archived_at` is set when it was archived — see [Conflicts carry the other side](#conflicts-carry-the-other-side) |
+| `document_conflict` | 409 | A document write that sent `If-Match` and lost: the document was edited, or archived, since that version. Also a `POST /documents` replaying an `Idempotency-Key` whose document has since been archived (LAM-126; `current.archived_at` is set). Nothing was written. The body carries `current` and `changed_at`; `current.archived_at` is set when it was archived — see [Conflicts carry the other side](#conflicts-carry-the-other-side) |
 | `document_field_unknown` | 422 | An aspect document's `body` has a key that is not a field id of its aspect type. `errors[0].location` is `body.body.<that key>`. Nothing was written. Fields are added with `POST /aspect-types/{id}/fields` first |
 | `aspect_type_has_no_fields` | 422 | A normal document turned into an aspect one whose type has no fields, so its text has nowhere to go. `errors[0].location` is `body.aspect_type_id`. Add a field to the type, or choose another |
 | `saved_view_not_found` | 404 | Any saved view operation (LAM-86): absent, outside your workspace, or another person's private view - indistinguishable on purpose |
@@ -124,7 +124,7 @@ prose, so it has no `omitempty` and the OpenAPI document marks it required.
 
 The members are declared in the OpenAPI document as the `TicketConflict` schema, on the 409 of `update-ticket`, `archive-ticket` and `unarchive-ticket`, so generated client types include them. See `docs/api-conventions.md` §9 for the precondition itself.
 
-`document_conflict` (LAM-87) is the same idea with one code: `current` is the `DocumentBody`, `changed_at` is `current.updated_at`, and there is no `changed_by` (documents do not record their writer yet). It does not split edited from archived — read `current.archived_at`. Its schema is `DocumentConflict`, on the 409 of `update-document`, `archive-document` and `unarchive-document`.
+`document_conflict` (LAM-87) is the same idea with one code: `current` is the `DocumentBody`, `changed_at` is `current.updated_at`, and there is no `changed_by` (documents do not record their writer yet). It does not split edited from archived — read `current.archived_at`. Its schema is `DocumentConflict`, on the 409 of `create-document` (a replay of an archived original), `update-document`, `archive-document` and `unarchive-document`.
 
 ## Length limits
 

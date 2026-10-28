@@ -510,6 +510,7 @@ type eventWire struct {
 	ActorID  string         `json:"actor_id"`
 	At       time.Time      `json:"at"`
 	Ticket   map[string]any `json:"ticket"`
+	Document map[string]any `json:"document"`
 	TeamID   string         `json:"team_id"`
 	StatusID string         `json:"status_id"`
 
