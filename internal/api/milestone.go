@@ -102,7 +102,6 @@ func milestoneError(err error) error {
 */
 
 func registerMilestones(api huma.API, svc *milestone.Service, feed ticketFeed) {
-	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-milestone",
@@ -110,7 +109,7 @@ func registerMilestones(api huma.API, svc *milestone.Service, feed ticketFeed) {
 		Path:        V1 + "/milestones",
 		Summary:     "Create a milestone in a project",
 		Description: "Announced as `milestone.created`.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *createMilestoneInput) (*milestoneOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -130,7 +129,7 @@ func registerMilestones(api huma.API, svc *milestone.Service, feed ticketFeed) {
 		Path:        V1 + "/milestones/list",
 		Summary:     "List a project's milestones (a read - POST for the body)",
 		Description: "Dated milestones soonest first, then undated ones, oldest first. Always one page: `next_cursor` is null and `has_more` false.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *listMilestonesInput) (*listOutput[milestoneBody], error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -153,7 +152,7 @@ func registerMilestones(api huma.API, svc *milestone.Service, feed ticketFeed) {
 		Method:      http.MethodGet,
 		Path:        V1 + "/milestones/{id}",
 		Summary:     "Fetch one milestone",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *milestoneInput) (*milestoneOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -171,7 +170,7 @@ func registerMilestones(api huma.API, svc *milestone.Service, feed ticketFeed) {
 		Path:        V1 + "/milestones/{id}",
 		Summary:     "Rename a milestone, change its description or move its date",
 		Description: "Each member is optional and an omitted one is left alone; `target_date: null` clears the date. Announced as `milestone.updated`.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *updateMilestoneInput) (*milestoneOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -197,7 +196,7 @@ func registerMilestones(api huma.API, svc *milestone.Service, feed ticketFeed) {
 		Description: "Sets `milestone_id` to null on the milestone's tickets (SET NULL, not cascade). Those tickets' rows are not rewritten, " +
 			"so their `version` does not move and no `ticket.updated` is sent: `milestone.deleted` is the announcement, and a client " +
 			"clears `milestone_id` on the tickets it holds for that milestone.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *milestoneInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 

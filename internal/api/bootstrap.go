@@ -180,7 +180,6 @@ func projectError(err error) error {
 */
 
 func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Service) {
-	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-team",
@@ -191,7 +190,7 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 			"transaction that creates the team - so a team is never observable half-configured. " +
 			"Everything seeded is an ordinary row: rename it, delete it, replace it. Nothing is privileged, " +
 			"and no default labels are seeded, because a label vocabulary is a team's own.",
-		Metadata: requires,
+		Metadata: needs(auth.TeamWrite),
 	}, func(ctx context.Context, in *createTeamInput) (*teamOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -212,7 +211,7 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 		Method:      http.MethodGet,
 		Path:        V1 + "/teams/{id}",
 		Summary:     "Fetch one team with its statuses",
-		Metadata:    requires,
+		Metadata:    needs(auth.TeamRead),
 	}, func(ctx context.Context, in *teamInput) (*teamOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -230,6 +229,7 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 	// answer is POST /statuses/list beside this, not a heavier team.
 	registerList(api, listSpec[teamBody]{
 		OperationID: "list-teams",
+		Permission:  auth.TeamRead,
 		Path:        V1 + "/teams/list",
 		Summary:     "List the workspace's teams, each with its statuses (a read - see the description for why it is a POST)",
 		Fields:      team.Fields,
@@ -261,7 +261,7 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 		Description: "Seeds one board with a column per status the team has, each mapped to that status. " +
 			"This is the second bootstrap point: board is project-scoped, so it cannot be seeded when the " +
 			"team is created. A project created from a bare team gets a board with no columns.",
-		Metadata: requires,
+		Metadata: needs(auth.ProjectWrite),
 	}, func(ctx context.Context, in *createProjectInput) (*projectOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -282,7 +282,7 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 		Method:      http.MethodGet,
 		Path:        V1 + "/projects/{id}",
 		Summary:     "Fetch one project",
-		Metadata:    requires,
+		Metadata:    needs(auth.ProjectRead),
 	}, func(ctx context.Context, in *projectInput) (*projectOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -296,6 +296,7 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 
 	registerList(api, listSpec[projectBody]{
 		OperationID: "list-projects",
+		Permission:  auth.ProjectRead,
 		Path:        V1 + "/projects/list",
 		Summary:     "List the workspace's projects (a read - see the description for why it is a POST)",
 		Fields:      project.Fields,

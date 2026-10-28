@@ -120,7 +120,6 @@ func sprintError(err error) error {
 */
 
 func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service, feed ticketFeed) {
-	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-sprint",
@@ -128,7 +127,7 @@ func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service,
 		Path:        V1 + "/sprints",
 		Summary:     "Create a sprint in a project",
 		Description: "Both dates are optional. An `end_date` before `start_date` is a 422 at `body.end_date`. Announced as `sprint.created`.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *createSprintInput) (*sprintOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -149,7 +148,7 @@ func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service,
 		Summary:     "List a project's sprints (a read - POST for the body)",
 		Description: "Soonest start first, undated ones last. Always one page: `next_cursor` is null and `has_more` false. " +
 			"Which tickets are in a sprint is read through `POST /tickets/list` with a `sprint` filter.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketRead),
 	}, func(ctx context.Context, in *listSprintsInput) (*listOutput[sprintBody], error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -172,7 +171,7 @@ func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service,
 		Method:      http.MethodGet,
 		Path:        V1 + "/sprints/{id}",
 		Summary:     "Fetch one sprint",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *sprintInput) (*sprintOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -191,7 +190,7 @@ func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service,
 		Summary:     "Rename a sprint or move its dates",
 		Description: "Each member is optional and an omitted one is left alone; a date set to null is cleared. The result is checked, so " +
 			"moving only `start_date` past the stored `end_date` is a 422 at `body.end_date`. Announced as `sprint.updated`.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *updateSprintInput) (*sprintOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -216,7 +215,7 @@ func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service,
 		Summary:     "Delete a sprint; its tickets stay",
 		Description: "The sprint's memberships go with it. The tickets' rows are not rewritten, so their `version` does not move and no " +
 			"`ticket.updated` is sent: `sprint.deleted` is the announcement.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *sprintInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -240,7 +239,7 @@ func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service,
 			"rises by one and it is announced as `ticket.updated`. A ticket that is already in the sprint is a success that writes and " +
 			"announces nothing.",
 		DefaultStatus: http.StatusNoContent,
-		Metadata:      requires,
+		Metadata:      needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *sprintTicketInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -263,7 +262,7 @@ func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service,
 		Description: "A ticket that is not in the sprint is a success that writes and announces nothing. Leaving is a change to the " +
 			"ticket: its `version` rises by one and it is announced as `ticket.updated` (an archived ticket is taken out without either).",
 		DefaultStatus: http.StatusNoContent,
-		Metadata:      requires,
+		Metadata:      needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *sprintTicketPathInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 

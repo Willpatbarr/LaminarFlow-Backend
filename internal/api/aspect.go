@@ -167,7 +167,6 @@ func aspectError(err error) error {
 */
 
 func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Service) {
-	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-aspect-type",
@@ -175,7 +174,7 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		Path:        V1 + "/aspect-types",
 		Summary:     "Create an aspect type",
 		Description: "Created with no fields. An aspect type with none is legal - it renders as a document with a title and nothing else.",
-		Metadata:    requires,
+		Metadata:    needs(auth.AspectWrite),
 	}, func(ctx context.Context, in *createAspectTypeInput) (*aspectTypeOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -193,7 +192,7 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		Path:        V1 + "/aspect-types",
 		Summary:     "List a team's aspect types",
 		Description: "Names only - fields are empty here. Fetch one type to get its fields.",
-		Metadata:    requires,
+		Metadata:    needs(auth.AspectRead),
 	}, func(ctx context.Context, in *listAspectTypesInput) (*aspectTypeListOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -216,7 +215,7 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		Method:      http.MethodGet,
 		Path:        V1 + "/aspect-types/{id}",
 		Summary:     "Fetch one aspect type with its fields",
-		Metadata:    requires,
+		Metadata:    needs(auth.AspectRead),
 	}, func(ctx context.Context, in *aspectTypeInput) (*aspectTypeOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -233,7 +232,7 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		Method:      http.MethodPut,
 		Path:        V1 + "/aspect-types/{id}",
 		Summary:     "Rename an aspect type",
-		Metadata:    requires,
+		Metadata:    needs(auth.AspectWrite),
 	}, func(ctx context.Context, in *renameAspectTypeInput) (*aspectTypeOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -251,7 +250,7 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		Path:        V1 + "/aspect-types/{id}/fields",
 		Summary:     "Add a field to an aspect type",
 		Description: "An insert, and nothing else. No document is touched - the new field is simply a key absent from every body, which renders empty.",
-		Metadata:    requires,
+		Metadata:    needs(auth.AspectWrite),
 	}, func(ctx context.Context, in *addFieldInput) (*fieldOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -269,7 +268,7 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		Path:        V1 + "/aspect-types/{id}/fields/{field_id}",
 		Summary:     "Rename a field",
 		Description: "The field's id does not change, so every document keeps the values stored under it.",
-		Metadata:    requires,
+		Metadata:    needs(auth.AspectWrite),
 	}, func(ctx context.Context, in *renameFieldInput) (*fieldOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -288,7 +287,7 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		Summary:     "Remove a field",
 		Description: "Deletes the field row. Values already stored under its id stay in every document's body and simply stop being rendered - " +
 			"stripping them would be unrecoverable, and would mean rewriting every body of this type.",
-		Metadata: requires,
+		Metadata: needs(auth.AspectWrite),
 	}, func(ctx context.Context, in *fieldInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -306,7 +305,7 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		Summary:     "Count the documents that hold a value in a field",
 		Description: "For the warning before a field is removed: removing it leaves the values in every body, unrendered, so this says how many there are. " +
 			"A field of another type, or one already removed, is `aspect_type_not_found` like the type itself.",
-		Metadata: requires,
+		Metadata: needs(auth.AspectRead),
 	}, func(ctx context.Context, in *fieldInput) (*fieldUsageOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -344,7 +343,7 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		Summary:     "Set the order of every field",
 		Description: "Send the complete list, in the order wanted. Idempotent, and the result is exactly what was sent - " +
 			"a partial list is rejected, because it would renumber some fields and leave others.",
-		Metadata: requires,
+		Metadata: needs(auth.AspectWrite),
 	}, func(ctx context.Context, in *reorderInput) (*aspectTypeOutput, error) {
 		me, _ := auth.FromContext(ctx)
 

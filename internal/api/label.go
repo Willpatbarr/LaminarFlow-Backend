@@ -107,7 +107,6 @@ func labelError(err error) error {
 */
 
 func registerLabels(api huma.API, svc *label.Service, feed ticketFeed) {
-	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-label",
@@ -115,7 +114,7 @@ func registerLabels(api huma.API, svc *label.Service, feed ticketFeed) {
 		Path:        V1 + "/labels",
 		Summary:     "Create a label in a team",
 		Description: "A name already used in the team is a 409 `label_name_taken`. Announced as `label.created`.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *createLabelInput) (*labelOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -135,7 +134,7 @@ func registerLabels(api huma.API, svc *label.Service, feed ticketFeed) {
 		Path:        V1 + "/labels/list",
 		Summary:     "List a team's labels (a read - POST for the body)",
 		Description: "By name. Always one page: `next_cursor` is null and `has_more` false.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *listLabelsInput) (*listOutput[labelBody], error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -158,7 +157,7 @@ func registerLabels(api huma.API, svc *label.Service, feed ticketFeed) {
 		Method:      http.MethodGet,
 		Path:        V1 + "/labels/{id}",
 		Summary:     "Fetch one label",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *labelInput) (*labelOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -177,7 +176,7 @@ func registerLabels(api huma.API, svc *label.Service, feed ticketFeed) {
 		Summary:     "Rename or recolour a label",
 		Description: "Each member is optional and an omitted one is left alone. A name already used in the team is a 409 `label_name_taken`. " +
 			"The id never changes, so tickets keep the label. Announced as `label.updated`.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *updateLabelInput) (*labelOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -199,7 +198,7 @@ func registerLabels(api huma.API, svc *label.Service, feed ticketFeed) {
 		Description: "Removes the label from every ticket that carried it (cascade). Those tickets' rows are not rewritten, so their " +
 			"`version` does not move and no `ticket.updated` is sent: `label.deleted` is the announcement, and a client drops the id from " +
 			"`label_ids` on the tickets it holds.",
-		Metadata: requires,
+		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *labelInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 

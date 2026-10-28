@@ -132,7 +132,6 @@ func plural(n int, one, many string) string {
 */
 
 func registerStatuses(api huma.API, svc *team.Service, feed ticketFeed) {
-	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-status",
@@ -140,7 +139,7 @@ func registerStatuses(api huma.API, svc *team.Service, feed ticketFeed) {
 		Path:        V1 + "/teams/{id}/statuses",
 		Summary:     "Add a status to a team",
 		Description: "No status is sacred, so there is no special case and no 409: name and position are not unique.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TeamWrite),
 	}, func(ctx context.Context, in *createStatusInput) (*statusOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -162,7 +161,7 @@ func registerStatuses(api huma.API, svc *team.Service, feed ticketFeed) {
 		Path:        V1 + "/teams/{id}/statuses/{status_id}",
 		Summary:     "Rename, recolour or recategorise a status",
 		Description: "Each member is optional and an omitted one is left alone. The id never changes, so tickets keep their status.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TeamWrite),
 	}, func(ctx context.Context, in *updateStatusInput) (*statusOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -187,7 +186,7 @@ func registerStatuses(api huma.API, svc *team.Service, feed ticketFeed) {
 			"naming how many. Deleting a team's last status is allowed only while the team has no tickets. " +
 			"Tickets that move are written like any edit (version + 1) and each is announced as `ticket.updated`. " +
 			"Board columns mapped to the deleted status are mapped to `move_to` instead when tickets move, and unmapped otherwise.",
-		Metadata: requires,
+		Metadata: needs(auth.TeamWrite),
 	}, func(ctx context.Context, in *deleteStatusInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -214,7 +213,7 @@ func registerStatuses(api huma.API, svc *team.Service, feed ticketFeed) {
 		Summary:     "Set the order of every status",
 		Description: "Send the complete list, in the order wanted; positions become 1..n. A partial, duplicated or foreign list is a 422 at body.status_ids. " +
 			"Each status whose position changed is announced as `status.updated`.",
-		Metadata: requires,
+		Metadata: needs(auth.TeamWrite),
 	}, func(ctx context.Context, in *reorderStatusesInput) (*teamOutput, error) {
 		me, _ := auth.FromContext(ctx)
 

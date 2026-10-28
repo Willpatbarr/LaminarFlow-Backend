@@ -100,6 +100,14 @@ struct-with-an-unexported-field shape, `auth.ParsePermission` is its one door, a
 `auth.Permissions` is the one function that says who holds what. Roles will narrow that
 function's answer without touching its shape.
 
+A token holds exactly the permissions it was issued with (LAM-91). Each `RequireAuth`
+operation declares the one it needs in its metadata, through `needs(auth.TicketWrite)`,
+and the middleware answers `403 insufficient_scope` when a token's scopes lack it; a
+session holds every permission. Scopes are permission names, validated with
+`auth.ParsePermission` when a token is created. A route that is not given a permission
+is open to every credential, so a new operation takes `needs(...)` rather than a bare
+`RequireAuth`. Token management (`/auth/tokens`) is session-only, via `RequireSession`.
+
 The opposite call is also on the record: `board.group_by` and `status.category` are
 `CHECK`s, because they are facts about a *row* and every renderer branches on them.
 `internal/setting`'s tests assert the registry and `board.group_by`'s CHECK agree, in

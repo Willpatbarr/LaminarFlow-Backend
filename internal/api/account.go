@@ -74,7 +74,7 @@ func registerAccounts(api huma.API, svc *account.Service) {
 			"keep their rows and lose their name: work outlives the people who touched it.\n\n" +
 			"Only your own account. Deleting someone else's would need an authority model this schema " +
 			"does not define.",
-		Metadata: map[string]any{RequireAuth: true},
+		Metadata: needs(auth.AccountDelete),
 	}, func(ctx context.Context, _ *struct{}) (*deleteAccountOutput, error) {
 		me, ok := auth.FromContext(ctx)
 		if !ok {

@@ -100,6 +100,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 		api.UseMiddleware(authenticate(api, authSvc))
 	}
 	registerAuth(api, authSvc, accountSvc)
+	registerAPITokens(api, authSvc)
 	registerTickets(api, ticketSvc, accountSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerAspectTypes(api, aspectSvc, documentSvc)
 	registerSettings(api, settingSvc)

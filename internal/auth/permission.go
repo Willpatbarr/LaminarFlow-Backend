@@ -29,7 +29,7 @@ package auth
 // below, and Parse is the one door a string comes in by.
 //
 // This is a different thing from Scope. A Scope is what a *token* was issued with and
-// nothing enforces it yet; a Permission is what the *API* can do, which the frontend
+// the API enforces (LAM-91); a Permission is what the *API* can do, which the frontend
 // gates UI on. Roles, when they arrive, are a function from a role to a subset of this
 // list - additive, with no change to the wire shape.
 type Permission struct {
@@ -89,23 +89,59 @@ func ParsePermission(name string) (Permission, bool) {
 ┌─ auth ──────────────────────────────────────────
 │  every permission this identity holds, as names
 ├─ in ────────────────────────────────────────────
-│      id    Identity      unused until roles exist
+│      id    Identity
 ├─ out ───────────────────────────────────────────
 │      []string            never nil, a fresh slice
 ├─ example ───────────────────────────────────────
-│      session or token  →  all 11
+│      session  →  all 11
+│      token    →  its scopes
 */
 
-func Permissions(_ Identity) []string {
-	// There is no authority model yet: one user in one workspace holds everything,
-	// and a token's Scopes are not enforced anywhere, so reporting them as a
-	// narrowing here would advertise a limit the API does not apply. The Identity
-	// parameter is the seam roles will use; taking it now keeps the callers from
-	// changing when they do.
+func Permissions(id Identity) []string {
+	// A token holds exactly what it was issued with; a session holds everything,
+	// because there is no role model yet.
+	if id.TokenID != "" {
+		out := make([]string, len(id.Scopes))
+		for i, sc := range id.Scopes {
+			out[i] = string(sc)
+		}
+
+		return out
+	}
+
 	out := make([]string, len(registry))
 	for i, p := range registry {
 		out[i] = p.name
 	}
 
 	return out
+}
+
+/*
+┌─ auth ──────────────────────────────────────────
+│  whether this identity may do what p names
+├─ in ────────────────────────────────────────────
+│      id    Identity
+│      p     Permission
+├─ out ───────────────────────────────────────────
+│      bool
+*/
+
+func Allows(id Identity, p Permission) bool {
+	if id.TokenID == "" {
+		return true
+	}
+
+	for _, sc := range id.Scopes {
+		if string(sc) == p.name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// PermissionNames lists every permission, in the order the API reports it.
+func PermissionNames() []string {
+	return Permissions(Identity{})
 }

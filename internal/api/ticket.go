@@ -543,7 +543,6 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 	// Every operation requires a caller. There is no public ticket endpoint, and
 	// marking them individually rather than wrapping the group means a new one is
 	// unprotected only if someone omits the line - which the middleware test catches.
-	requires := map[string]any{RequireAuth: true}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-ticket",
@@ -556,7 +555,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 			"`Idempotent-Replayed: true` with the original ticket as it is now - same status, 200, as a " +
 			"fresh create. A replay publishes nothing on the change feed. If the original has been archived " +
 			"the answer is a 409 `ticket_archived` carrying it. The body of a replay is ignored.",
-		Metadata:  requires,
+		Metadata:  needs(auth.TicketWrite),
 		Responses: conflictResponses(api, replayConflict),
 	}, func(ctx context.Context, in *createTicketInput) (*createTicketOutput, error) {
 		me, _ := auth.FromContext(ctx)
@@ -596,7 +595,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		Method:      http.MethodGet,
 		Path:        V1 + "/tickets/{id}",
 		Summary:     "Fetch one ticket",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketRead),
 	}, func(ctx context.Context, in *getTicketInput) (*ticketDetailOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -620,7 +619,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		Summary:       "Link a document to a ticket",
 		Description:   "Idempotent: linking a pair that is already linked is a 204 and changes nothing. An archived ticket or document links like a live one, and archiving either later does not remove the link. Both must be in a workspace the caller belongs to, and the same one; otherwise `not_found`, which does not say which was missing. Publishes `ticket.document_linked` when a link was made.",
 		DefaultStatus: http.StatusNoContent,
-		Metadata:      requires,
+		Metadata:      needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *linkDocumentInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -643,7 +642,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		Summary:       "Unlink a document from a ticket",
 		Description:   "Idempotent: unlinking a pair that is not linked is a 204. Only an unknown ticket, or one outside the caller's workspaces, is `not_found`. Publishes `ticket.document_unlinked` when a link was removed.",
 		DefaultStatus: http.StatusNoContent,
-		Metadata:      requires,
+		Metadata:      needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *unlinkDocumentInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 
@@ -665,7 +664,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		Path:        V1 + "/tickets/{id}",
 		Summary:     "Replace a ticket's writable fields",
 		Description: "Last write wins unless `If-Match` is sent. With `If-Match: \"<version>\"` the write happens only if the ticket is still at that version; otherwise it is refused with a 409 (`ticket_conflict` or `ticket_archived`) that carries the current ticket, who changed it and when. Without it, a write to an archived ticket is `ticket_not_found`, as it always was.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 		Responses:   conflictResponses(api, ifMatchConflict),
 	}, func(ctx context.Context, in *updateTicketInput) (*ticketOutput, error) {
 		me, _ := auth.FromContext(ctx)
@@ -707,7 +706,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 			"or the answer is a 422 `neighbour_not_found` at that member. Written like any edit: version + 1, announced as `ticket.updated`, and " +
 			"`If-Match` makes it conditional. When there is no room between two neighbours the target column's other tickets are renumbered; " +
 			"each of those is written like an edit (version + 1) and announced as `ticket.updated`, before the moved ticket's own event.",
-		Metadata:  requires,
+		Metadata:  needs(auth.TicketWrite),
 		Responses: conflictResponses(api, ifMatchConflict),
 	}, func(ctx context.Context, in *moveTicketInput) (*ticketOutput, error) {
 		me, _ := auth.FromContext(ctx)
@@ -763,7 +762,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		Path:        V1 + "/tickets/{id}",
 		Summary:     "Archive a ticket (soft delete - the row and its comments survive)",
 		Description: "Takes `If-Match` like the update does. A ticket that is already archived answers `ticket_archived` when `If-Match` is sent - including when the archive was your own and the response was lost, in which case `changed_by` is you - and `ticket_not_found` when it is not. The ticket's new version is in the `ETag` header.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 		Responses:   conflictResponses(api, ifMatchConflict),
 	}, func(ctx context.Context, in *writeTicketInput) (*versionOutput, error) {
 		me, _ := auth.FromContext(ctx)
@@ -788,6 +787,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 	// resource, and only the vocabulary and the row mapping are ticket's.
 	registerList(api, listSpec[ticketBody]{
 		OperationID: "list-tickets",
+		Permission:  auth.TicketRead,
 		Path:        V1 + "/tickets/list",
 		Summary:     "List tickets (a read - see the description for why it is a POST)",
 		Fields:      ticket.Fields,
@@ -821,7 +821,7 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 		Path:        V1 + "/tickets/{id}/unarchive",
 		Summary:     "Restore an archived ticket",
 		Description: "Takes `If-Match`: the version of the archived ticket you last saw. If it was restored, edited or archived again since, the answer is a 409 `ticket_conflict` with the current ticket. Restoring a ticket that is not archived is `ticket_not_found` either way. The ticket's new version is in the `ETag` header.",
-		Metadata:    requires,
+		Metadata:    needs(auth.TicketWrite),
 		Responses:   conflictResponses(api, ifMatchConflict),
 	}, func(ctx context.Context, in *writeTicketInput) (*versionOutput, error) {
 		me, _ := auth.FromContext(ctx)

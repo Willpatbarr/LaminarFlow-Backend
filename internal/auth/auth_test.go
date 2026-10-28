@@ -326,3 +326,105 @@ func TestIssueAndSplitTokenAgreeOnTheFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestARevokedTokenIsInvalidAndNotListed(t *testing.T) {
+	svc, accountID := newTestService(t)
+	ctx := context.Background()
+
+	tok, secret, err := svc.Create(ctx, accountID, "doomed", []Scope{"ticket:read"}, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := svc.Revoke(ctx, accountID, tok.ID); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if _, err := svc.Validate(ctx, secret); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("validate after revoke: %v, want ErrInvalidToken", err)
+	}
+	if err := svc.Revoke(ctx, accountID, tok.ID); !errors.Is(err, ErrTokenNotFound) {
+		t.Errorf("second revoke: %v, want ErrTokenNotFound", err)
+	}
+
+	list, err := svc.List(ctx, accountID)
+	if err != nil || len(list) != 0 {
+		t.Errorf("list = %v, %v; want empty", list, err)
+	}
+}
+
+func TestLastUsedIsWrittenAtMostOncePerInterval(t *testing.T) {
+	svc, accountID := newTestService(t)
+	ctx := context.Background()
+
+	tok, secret, err := svc.Create(ctx, accountID, "busy", nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	lastUsed := func() time.Time {
+		var at *time.Time
+		if err := svc.pool.QueryRow(ctx, `SELECT last_used_at FROM api_token WHERE id = $1`, tok.ID).Scan(&at); err != nil || at == nil {
+			t.Fatalf("last_used_at = %v, err %v", at, err)
+		}
+		return *at
+	}
+
+	if _, err := svc.Validate(ctx, secret); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	first := lastUsed()
+
+	if _, err := svc.Validate(ctx, secret); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !lastUsed().Equal(first) {
+		t.Error("a second use within a minute rewrote last_used_at")
+	}
+
+	if _, err := svc.pool.Exec(ctx, `UPDATE api_token SET last_used_at = now() - interval '2 minutes' WHERE id = $1`, tok.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Validate(ctx, secret); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !lastUsed().After(first.Add(-time.Minute)) || lastUsed().Before(time.Now().Add(-time.Minute)) {
+		t.Error("a use after the interval did not refresh last_used_at")
+	}
+}
+
+func TestAnotherAccountCannotRevokeAToken(t *testing.T) {
+	svc, accountID := newTestService(t)
+	_, other := newTestService(t)
+	ctx := context.Background()
+
+	tok, secret, err := svc.Create(ctx, accountID, "mine", nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := svc.Revoke(ctx, other, tok.ID); !errors.Is(err, ErrTokenNotFound) {
+		t.Errorf("revoke by another account: %v, want ErrTokenNotFound", err)
+	}
+	if _, err := svc.Validate(ctx, secret); err != nil {
+		t.Errorf("token no longer valid: %v", err)
+	}
+}
+
+func TestPermissionsOfATokenAreItsScopes(t *testing.T) {
+	token := Identity{TokenID: "t", Scopes: []Scope{"ticket:read"}}
+
+	if got := Permissions(token); len(got) != 1 || got[0] != "ticket:read" {
+		t.Errorf("token permissions = %v", got)
+	}
+	if got := Permissions(Identity{TokenID: "t"}); got == nil || len(got) != 0 {
+		t.Errorf("unscoped token permissions = %#v, want empty non-nil", got)
+	}
+	if len(Permissions(Identity{SessionID: "s"})) != len(registry) {
+		t.Error("a session must hold every permission")
+	}
+	if !Allows(token, TicketRead) || Allows(token, TicketWrite) {
+		t.Error("Allows disagrees with the token's scopes")
+	}
+	if !Allows(Identity{SessionID: "s"}, AccountDelete) {
+		t.Error("a session must be allowed everything")
+	}
+}
