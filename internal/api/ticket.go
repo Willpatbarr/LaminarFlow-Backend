@@ -53,6 +53,10 @@ const (
 const (
 	CodeStatusNotFound   = "status_not_found"
 	CodeAssigneeNotFound = "assignee_not_found"
+
+	// CodeNeighbourNotFound is a move's before_id or after_id that is not a live ticket
+	// in the target column (LAM-85).
+	CodeNeighbourNotFound = "neighbour_not_found"
 )
 
 // This file is the template the other five resources copy, so its shape matters as
@@ -70,6 +74,7 @@ type ticketBody struct {
 
 	UpdatedAt time.Time `json:"updated_at" doc:"When the ticket last changed - an edit, an archive or a restore. For display; to compare versions use version."`
 	UpdatedBy *string   `json:"updated_by" doc:"The account that made the last change. Null when it was not recorded (tickets from before this field existed) or that account has since been deleted - show it as someone."`
+	Position  int       `json:"position" doc:"Order within a board column: sort by position, then id. A hint, not a slot - duplicates are legal. Written by POST /tickets/{id}/move; a new ticket goes to the end of its project."`
 	Version   int       `json:"version" minimum:"1" doc:"Starts at 1 and rises by exactly 1 on every update, archive and restore. Send it back as If-Match to make a write conditional; also in the ETag header. See the If-Match parameter."`
 }
 
@@ -211,6 +216,19 @@ type updateTicketInput struct {
 	}
 }
 
+// moveTicketInput is a drop: the column (its status) and where in it. At most one of
+// position, before_id and after_id; none means the end of the column.
+type moveTicketInput struct {
+	ID string `path:"id" format:"uuid"`
+	Preconditioned
+	Body struct {
+		StatusID string  `json:"status_id" required:"true" format:"uuid" doc:"The column the ticket lands in, as its status. Must be a status of the ticket's project's team, or status_not_found."`
+		Position *int    `json:"position,omitempty" minimum:"0" doc:"Written as given. Prefer before_id or after_id, which pick a position between neighbours."`
+		BeforeID *string `json:"before_id,omitempty" format:"uuid" doc:"Land just above this ticket, which must be a live ticket in the target column."`
+		AfterID  *string `json:"after_id,omitempty" format:"uuid" doc:"Land just below this ticket, which must be a live ticket in the target column."`
+	}
+}
+
 func asBody(t ticket.Ticket) ticketBody {
 	return ticketBody{
 		ID:          t.ID,
@@ -221,6 +239,7 @@ func asBody(t ticket.Ticket) ticketBody {
 		AssigneeID:  t.AssigneeID,
 		UpdatedAt:   t.UpdatedAt.UTC(),
 		UpdatedBy:   t.UpdatedBy,
+		Position:    t.Position,
 		Version:     t.Version,
 	}
 }
@@ -308,6 +327,10 @@ func ticketError(ctx context.Context, accounts *account.Service, err error) erro
 	case errors.Is(err, ticket.ErrStatusNotFound):
 		return newFieldError(CodeStatusNotFound, "the status is not one this ticket's project can use",
 			"body.status_id", "no such status for this project")
+	case errors.Is(err, ticket.ErrNeighbourNotFound):
+		// Only Move raises this, and it knows which of the two members was sent.
+		return newFieldError(CodeNeighbourNotFound, "the neighbour is not a ticket in the target column",
+			"body.before_id", "no such ticket in the target column")
 	case errors.Is(err, ticket.ErrAssigneeNotFound):
 		return newFieldError(CodeAssigneeNotFound, "the assignee is not a member of this ticket's workspace",
 			"body.assignee_id", "no such assignee in this workspace")
@@ -509,6 +532,62 @@ func registerTickets(api huma.API, svc *ticket.Service, accounts *account.Servic
 			return nil, ticketError(ctx, accounts, err)
 		}
 
+		feed.publish(ctx, realtime.TicketUpdated, me.AccountID, t)
+
+		return asOutput(t), nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "move-ticket",
+		Method:      http.MethodPost,
+		Path:        V1 + "/tickets/{id}/move",
+		Summary:     "Drop a ticket into a board column, at a place in it",
+		Description: "One write per drop: sets `status_id` and `position` together. Send at most one of `position`, `before_id` and `after_id` " +
+			"(more is a 422); none puts the ticket at the end of the column. `before_id`/`after_id` name a live ticket in the target column, " +
+			"or the answer is a 422 `neighbour_not_found` at that member. Written like any edit: version + 1, announced as `ticket.updated`, and " +
+			"`If-Match` makes it conditional. When there is no room between two neighbours the target column's other tickets are renumbered; " +
+			"each of those is written like an edit (version + 1) and announced as `ticket.updated`, before the moved ticket's own event.",
+		Metadata:  requires,
+		Responses: conflictResponses(api, ifMatchConflict),
+	}, func(ctx context.Context, in *moveTicketInput) (*ticketOutput, error) {
+		me, _ := auth.FromContext(ctx)
+
+		ifVersion, err := in.ifVersion()
+		if err != nil {
+			return nil, err
+		}
+
+		sent := 0
+		for _, set := range []bool{in.Body.Position != nil, in.Body.BeforeID != nil, in.Body.AfterID != nil} {
+			if set {
+				sent++
+			}
+		}
+		if sent > 1 {
+			return nil, newFieldError(defaultCode(http.StatusUnprocessableEntity),
+				"send at most one of position, before_id and after_id",
+				"body", "position, before_id and after_id are mutually exclusive")
+		}
+
+		t, renumbered, err := svc.Move(ctx, me.AccountID, ticket.MoveParams{
+			ID:        in.ID,
+			StatusID:  in.Body.StatusID,
+			Position:  in.Body.Position,
+			BeforeID:  in.Body.BeforeID,
+			AfterID:   in.Body.AfterID,
+			IfVersion: ifVersion,
+		})
+		if errors.Is(err, ticket.ErrNeighbourNotFound) && in.Body.AfterID != nil {
+			return nil, newFieldError(CodeNeighbourNotFound, "the neighbour is not a ticket in the target column",
+				"body.after_id", "no such ticket in the target column")
+		}
+		if err != nil {
+			return nil, ticketError(ctx, accounts, err)
+		}
+
+		for _, o := range renumbered {
+			feed.publish(ctx, realtime.TicketUpdated, me.AccountID, o)
+		}
 		feed.publish(ctx, realtime.TicketUpdated, me.AccountID, t)
 
 		return asOutput(t), nil

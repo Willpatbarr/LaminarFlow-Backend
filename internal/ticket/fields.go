@@ -35,6 +35,7 @@ var Fields = filter.Schema{
 	"created_at":  {Expr: "t.created_at", Kind: filter.Time},
 	"updated_at":  {Expr: "t.updated_at", Kind: filter.Time},
 	"version":     {Expr: "t.version", Kind: filter.Number},
+	"position":    {Expr: "t.position", Kind: filter.Number},
 
 	// label and sprint are join tables, so neither is a column. As an array-valued
 	// subquery each is scalar-shaped to the compiler, which is what lets `and` over

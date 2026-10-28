@@ -512,6 +512,11 @@ type eventWire struct {
 	Ticket   map[string]any `json:"ticket"`
 	TeamID   string         `json:"team_id"`
 	StatusID string         `json:"status_id"`
+
+	ProjectID string         `json:"project_id"`
+	BoardID   string         `json:"board_id"`
+	Board     map[string]any `json:"board"`
+	ColumnID  string         `json:"column_id"`
 }
 
 func readEvent(t *testing.T, c *websocket.Conn) eventWire {

@@ -7,6 +7,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/account"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/board"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/frontend"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/project"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
@@ -27,7 +28,7 @@ func NewMux(pool *pgxpool.Pool, bundle fs.FS, hub *realtime.Hub) *http.ServeMux 
 	mux.HandleFunc("GET /healthz/db", ready(pool))
 	authSvc, accountSvc := auth.NewService(pool), account.NewService(pool)
 	NewHumaAPI(mux, authSvc, ticket.NewService(pool), aspect.NewService(pool), setting.NewService(pool),
-		team.NewService(pool), project.NewService(pool), accountSvc, hub)
+		team.NewService(pool), project.NewService(pool), accountSvc, board.NewService(pool), hub)
 
 	// Handlers huma cannot describe. Registered before the /api/ catch-all below for
 	// readability only: the mux picks the most specific pattern whatever the order, so

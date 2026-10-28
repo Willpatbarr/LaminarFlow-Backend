@@ -26,6 +26,7 @@ import (
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/account"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/board"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/project"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
@@ -294,4 +295,40 @@ func (f ticketFeed) publishMoved(workspaceID, actorID string, moved []ticket.Tic
 			Ticket:   asBody(t),
 		})
 	}
+}
+
+// publishBoard announces a board as the REST body: board.created, board.updated, and
+// board.deleted (the board as it was). LAM-85. After the commit, best-effort, as above.
+func (f ticketFeed) publishBoard(workspaceID, kind, actorID string, b board.Board) {
+	if f.hub == nil {
+		return
+	}
+
+	f.hub.Publish(workspaceID, realtime.Event{
+		Type:      kind,
+		ActorID:   actorID,
+		At:        time.Now().UTC(),
+		ProjectID: b.ProjectID,
+		BoardID:   b.ID,
+		Board:     asBoardBody(b),
+	})
+}
+
+// publishColumn announces a column write as board.column.updated: the column and the
+// whole board it is on, so a client can apply either.
+func (f ticketFeed) publishColumn(workspaceID, actorID string, res board.Result) {
+	if f.hub == nil {
+		return
+	}
+
+	f.hub.Publish(workspaceID, realtime.Event{
+		Type:      realtime.BoardColumnUpdated,
+		ActorID:   actorID,
+		At:        time.Now().UTC(),
+		ProjectID: res.Board.ProjectID,
+		BoardID:   res.Board.ID,
+		Board:     asBoardBody(res.Board),
+		ColumnID:  res.Column.ID,
+		Column:    asColumnBody(res.Column),
+	})
 }

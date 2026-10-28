@@ -55,6 +55,13 @@ const (
 	StatusCreated = "status.created"
 	StatusUpdated = "status.updated"
 	StatusDeleted = "status.deleted"
+
+	// LAM-85. A board event carries the board in `board`; board.column.updated carries
+	// the column in `column` as well. See Event.
+	BoardCreated       = "board.created"
+	BoardUpdated       = "board.updated"
+	BoardDeleted       = "board.deleted"
+	BoardColumnUpdated = "board.column.updated"
 )
 
 // helloFrame is the first frame on every connection. A socket that is open is not a
@@ -107,6 +114,15 @@ type Event struct {
 	TeamID   string `json:"team_id,omitempty"`
 	StatusID string `json:"status_id,omitempty"`
 	Status   any    `json:"status,omitempty"`
+
+	// ProjectID, BoardID and Board are set on board.* events; ColumnID and Column only on
+	// board.column.updated. Board is the REST BoardBody, whole and with every column; on
+	// board.deleted it is the board as it was. Column is the REST ColumnBody.
+	ProjectID string `json:"project_id,omitempty"`
+	BoardID   string `json:"board_id,omitempty"`
+	Board     any    `json:"board,omitempty"`
+	ColumnID  string `json:"column_id,omitempty"`
+	Column    any    `json:"column,omitempty"`
 }
 
 /*
