@@ -75,7 +75,7 @@ func TestTicketConstraints(t *testing.T) {
 		wantPgError(t, err, notNullViolation, "null title")
 	})
 
-	// LAM-18 step 4, adjusted: the epic and milestone columns are not here,
+	// LAM-18 step 4, adjusted: the epic and milestone references are optional,
 	// so the minimal ticket is a project and a title. No status, no assignee,
 	// no description - the flexible hierarchy in its barest form.
 	t.Run("accepts a ticket with only a project and a title", func(t *testing.T) {

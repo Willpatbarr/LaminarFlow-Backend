@@ -21,12 +21,14 @@
 -- epic_id and milestone_or_release_id are NOT here. LAM-18 step 3 allows them
 -- as bare nullable columns with no FK target, but a uuid column referencing
 -- nothing is a column that can hold garbage until its table lands, and there
--- is no ticket for either table yet. Whichever ticket builds epic, milestone
--- and release adds its own column with a real reference at the same time.
+-- is no ticket for either table yet. Whichever ticket builds epic and
+-- milestone adds its own column with a real reference at the same time.
 --
--- That also settles the "or" in milestone_or_release_id: a milestone and a
--- release are different things, so they become two nullable columns, not one
--- ambiguous one. Deferred with the tables.
+-- That also settles the "or" in milestone_or_release_id. This originally
+-- read as two nullable columns, milestone and release. LAM-82 then decided
+-- only Milestone ships (a release is just a milestone), so there is one
+-- column, milestone_id, added by 0033_milestone.sql. epic_id was added by
+-- 0022_epic.sql.
 --
 -- assignee is named assignee_account_id. Every other reference here is
 -- <table>_id, and "assignee" alone does not say what it points at.
