@@ -103,6 +103,7 @@ const liveOnly = `t.archived_at IS NULL`
 ┃      UpdatedAt    time.Time
 ┃      Version      int           1 on create, +1 per write
 ┃      UpdatedBy    *string       null: not recorded, or account gone
+┃      Position     int           order within a board column
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      Create · Get · Update         one per call
 */
@@ -126,6 +127,10 @@ type Ticket struct {
 	// before 0031 and for a writer whose account has since been deleted - work
 	// outlives the people who touched it - so a caller renders null as "someone".
 	UpdatedBy *string
+
+	// Position orders the ticket within its board column (0034): ORDER BY position, id.
+	// A hint, not a slot - duplicates are legal. Only Move and Create write it.
+	Position int
 }
 
 // dest is the scan target for columns, in columns' order. Written once because the
@@ -133,7 +138,7 @@ type Ticket struct {
 // and fails at runtime.
 func (t *Ticket) dest() []any {
 	return []any{&t.ID, &t.ProjectID, &t.Title, &t.Description,
-		&t.StatusID, &t.AssigneeID, &t.CreatedAt, &t.UpdatedAt, &t.Version, &t.UpdatedBy}
+		&t.StatusID, &t.AssigneeID, &t.CreatedAt, &t.UpdatedAt, &t.Version, &t.UpdatedBy, &t.Position}
 }
 
 /*
@@ -200,7 +205,7 @@ type UpdateParams struct {
 
 const columns = `t.id::text, t.project_id::text, t.title, t.description,
                  t.status_id::text, t.assignee_account_id::text,
-                 t.created_at, t.updated_at, t.version, t.updated_by::text`
+                 t.created_at, t.updated_at, t.version, t.updated_by::text, t.position`
 
 /*
 ┌─ ticket ────────────────────────────────────────
@@ -275,8 +280,9 @@ func (s *Service) CreateIdempotent(ctx context.Context, accountID string, p Crea
 	var t Ticket
 	err = tx.QueryRow(ctx,
 		`INSERT INTO ticket (project_id, title, description, status_id, assignee_account_id,
-		                     updated_by, created_by, idempotency_key)
-		 SELECT p.id, $2, $3, $4::uuid, $5::uuid, $6::uuid, $6::uuid, $7::text
+		                     updated_by, created_by, idempotency_key, position)
+		 SELECT p.id, $2, $3, $4::uuid, $5::uuid, $6::uuid, $6::uuid, $7::text,
+		        coalesce((SELECT max(x.position) FROM ticket x WHERE x.project_id = p.id), 0) + 1024
 		   FROM project p
 		   JOIN team tm ON tm.id = p.team_id
 		   JOIN workspace_member wm
@@ -286,7 +292,7 @@ func (s *Service) CreateIdempotent(ctx context.Context, accountID string, p Crea
 		 DO NOTHING
 		 RETURNING id::text, project_id::text, title, description,
 		           status_id::text, assignee_account_id::text, created_at, updated_at,
-		           version, updated_by::text`,
+		           version, updated_by::text, position`,
 		p.ProjectID, p.Title, p.Description, p.StatusID, p.AssigneeID, accountID, p.IdempotencyKey,
 	).Scan(t.dest()...)
 	if errors.Is(err, pgx.ErrNoRows) {

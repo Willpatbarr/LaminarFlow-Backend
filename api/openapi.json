@@ -1,6 +1,39 @@
 {
   "components": {
     "schemas": {
+      "AddColumnInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/AddColumnInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "status_ids": {
+            "description": "Statuses of the board's team for the new column to hold. Optional; none by default.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "AddFieldInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -90,28 +123,103 @@
         ],
         "type": "object"
       },
-      "ColumnBody": {
+      "BoardBody": {
         "additionalProperties": false,
         "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/BoardBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "columns": {
+            "description": "In position order.",
+            "items": {
+              "$ref": "#/components/schemas/ColumnBody"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "group_by": {
+            "description": "How tickets are grouped into columns. status is the only value.",
+            "enum": [
+              "status"
+            ],
+            "type": "string"
+          },
           "id": {
             "type": "string"
           },
           "name": {
             "type": "string"
           },
-          "position": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "status_id": {
+          "project_id": {
             "type": "string"
           }
         },
         "required": [
           "id",
+          "project_id",
+          "name",
+          "group_by",
+          "columns"
+        ],
+        "type": "object"
+      },
+      "ColumnBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ColumnBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "board_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_visible": {
+            "description": "Whether the board shows the column. Stored per board, because a column belongs to one board.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "The column's own label. Not a status name: one column may hold several statuses.",
+            "type": "string"
+          },
+          "position": {
+            "description": "An ordering hint, not a slot. Duplicates are legal; ties read in id order.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "status_ids": {
+            "description": "The statuses whose tickets this column shows. A status is in at most one column of a board.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "board_id",
           "name",
           "position",
-          "status_id"
+          "is_visible",
+          "status_ids"
         ],
         "type": "object"
       },
@@ -159,6 +267,38 @@
         },
         "required": [
           "team_id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "CreateBoardInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/CreateBoardInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "group_by": {
+            "default": "status",
+            "description": "Only status is legal. Optional.",
+            "enum": [
+              "status"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "1 to 100 characters (not bytes), and not only whitespace.",
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
           "name"
         ],
         "type": "object"
@@ -509,6 +649,67 @@
         ],
         "type": "object"
       },
+      "ListBoardsInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ListBoardsInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object"
+      },
+      "ListEnvelopeBoardBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ListEnvelopeBoardBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BoardBody"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_cursor": {
+            "description": "Pass back as cursor for the next page. Null when there is none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "type": "object"
+      },
       "ListEnvelopeProjectBody": {
         "additionalProperties": false,
         "properties": {
@@ -777,6 +978,45 @@
         ],
         "type": "object"
       },
+      "MoveTicketInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/MoveTicketInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "after_id": {
+            "description": "Land just below this ticket, which must be a live ticket in the target column.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "before_id": {
+            "description": "Land just above this ticket, which must be a live ticket in the target column.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "position": {
+            "description": "Written as given. Prefer before_id or after_id, which pick a position between neighbours.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status_id": {
+            "description": "The column the ticket lands in, as its status. Must be a status of the ticket's project's team, or status_not_found.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status_id"
+        ],
+        "type": "object"
+      },
       "Order": {
         "additionalProperties": false,
         "properties": {
@@ -848,7 +1088,7 @@
           "columns": {
             "description": "One per status the team had. Empty when bare.",
             "items": {
-              "$ref": "#/components/schemas/ColumnBody"
+              "$ref": "#/components/schemas/ProjectColumnBody"
             },
             "type": [
               "array",
@@ -871,6 +1111,31 @@
           "name",
           "board_id",
           "columns"
+        ],
+        "type": "object"
+      },
+      "ProjectColumnBody": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "position": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "position",
+          "status_id"
         ],
         "type": "object"
       },
@@ -969,6 +1234,29 @@
         ],
         "type": "object"
       },
+      "RenameBoardInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/RenameBoardInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "RenameFieldInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -988,6 +1276,34 @@
         },
         "required": [
           "label"
+        ],
+        "type": "object"
+      },
+      "ReorderColumnsInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ReorderColumnsInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "column_ids": {
+            "description": "Every column of this board, exactly once, in the order wanted.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "column_ids"
         ],
         "type": "object"
       },
@@ -1034,6 +1350,34 @@
           },
           "status_ids": {
             "description": "Every status of this team, exactly once, in the order wanted.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "status_ids"
+        ],
+        "type": "object"
+      },
+      "SetColumnStatusesInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/SetColumnStatusesInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "status_ids": {
+            "description": "The full set this column holds. Empty unmaps every status.",
             "items": {
               "type": "string"
             },
@@ -1230,6 +1574,11 @@
           "id": {
             "type": "string"
           },
+          "position": {
+            "description": "Order within a board column: sort by position, then id. A hint, not a slot - duplicates are legal. Written by POST /tickets/{id}/move; a new ticket goes to the end of its project.",
+            "format": "int64",
+            "type": "integer"
+          },
           "project_id": {
             "type": "string"
           },
@@ -1271,6 +1620,7 @@
           "assignee_id",
           "updated_at",
           "updated_by",
+          "position",
           "version"
         ],
         "type": "object"
@@ -1384,6 +1734,29 @@
           "changed_by",
           "changed_at"
         ],
+        "type": "object"
+      },
+      "UpdateColumnInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/UpdateColumnInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "is_visible": {
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "UpdateStatusInputBody": {
@@ -2030,6 +2403,421 @@
         "summary": "Create an account and log in as it"
       }
     },
+    "/api/v1/boards/list": {
+      "post": {
+        "description": "Oldest first. Always one page: `next_cursor` is null and `has_more` false.",
+        "operationId": "list-boards",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListBoardsInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListEnvelopeBoardBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List a project's boards, columns included (a read - POST for the body)"
+      }
+    },
+    "/api/v1/boards/{id}": {
+      "delete": {
+        "description": "Its columns, their mappings and the saved views that point at it go with it. Tickets are not touched. A project's last board may be deleted; a project with no board is legal. Announced as `board.deleted`.",
+        "operationId": "delete-board",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a board"
+      },
+      "get": {
+        "operationId": "get-board",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Fetch one board with its columns"
+      },
+      "put": {
+        "description": "Announced as `board.updated`.",
+        "operationId": "rename-board",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameBoardInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Rename a board"
+      }
+    },
+    "/api/v1/boards/{id}/columns": {
+      "post": {
+        "description": "Appended after the last column. `status_ids` is optional; a status outside the board's team is a 422 `status_not_found` and one another column of this board holds is a 422 `status_already_mapped`, both at `body.status_ids[i]`. Announced as `board.column.updated`.",
+        "operationId": "add-column",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddColumnInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ColumnBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add a column to a board"
+      }
+    },
+    "/api/v1/boards/{id}/columns/reorder": {
+      "post": {
+        "description": "Send the complete list, in the order wanted; positions become 1..n. A partial, duplicated or foreign list is a 422 `column_set_mismatch` at `body.column_ids`. Announced as `board.updated`.",
+        "operationId": "reorder-columns",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderColumnsInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set the order of every column"
+      }
+    },
+    "/api/v1/boards/{id}/columns/{column_id}": {
+      "delete": {
+        "description": "Its statuses are unmapped. Tickets are not touched. Announced as `board.updated`, carrying the board without the column.",
+        "operationId": "delete-column",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "column_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a column"
+      },
+      "put": {
+        "description": "Each member is optional and an omitted one is left alone. `is_visible` is stored on the column, which belongs to one board, so hiding it affects that board only. Announced as `board.column.updated`.",
+        "operationId": "update-column",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "column_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateColumnInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ColumnBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Rename a column or show or hide it"
+      }
+    },
+    "/api/v1/boards/{id}/columns/{column_id}/statuses": {
+      "put": {
+        "description": "The full set for this column; an empty list unmaps every status. A status outside the board's team is a 422 `status_not_found`; one another column of this board holds is a 422 `status_already_mapped`, both at `body.status_ids`. Announced as `board.column.updated`.",
+        "operationId": "set-column-statuses",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "column_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetColumnStatusesInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ColumnBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set the statuses a column holds"
+      }
+    },
     "/api/v1/ping": {
       "get": {
         "operationId": "ping",
@@ -2173,6 +2961,58 @@
           }
         },
         "summary": "Fetch one project"
+      }
+    },
+    "/api/v1/projects/{id}/boards": {
+      "post": {
+        "description": "Starts with one column per status the team has, each mapped to its status, like the board a project is created with. Many boards per project; none is privileged. Announced as `board.created`.",
+        "operationId": "create-board",
+        "parameters": [
+          {
+            "description": "The project.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "The project.",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBoardInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create a board on a project"
       }
     },
     "/api/v1/settings": {
@@ -2755,7 +3595,7 @@
     },
     "/api/v1/tickets/list": {
       "post": {
-        "description": "Reads a page. POST rather than GET because nested and/or filters do not encode cleanly in a query string, and a per-caller ticket list is not cacheable - so a GET would buy nothing and cost expressiveness. Nothing is written.\n\nPagination is keyset: pass the previous page's `next_cursor` back as `cursor`. A cursor is only valid for the filter and sort it was minted under; changing either restarts from the first page.\n\nFilterable and sortable fields:\n\n- `assignee` (uuid)\n- `created_at` (time)\n- `description` (text)\n- `epic` (uuid)\n- `label` (uuid_set)\n- `project` (uuid)\n- `sprint` (uuid_set)\n- `status` (uuid)\n- `title` (text)\n- `updated_at` (time)\n- `version` (number)\n\nPage size defaults to 50 and may not exceed 200.",
+        "description": "Reads a page. POST rather than GET because nested and/or filters do not encode cleanly in a query string, and a per-caller ticket list is not cacheable - so a GET would buy nothing and cost expressiveness. Nothing is written.\n\nPagination is keyset: pass the previous page's `next_cursor` back as `cursor`. A cursor is only valid for the filter and sort it was minted under; changing either restarts from the first page.\n\nFilterable and sortable fields:\n\n- `assignee` (uuid)\n- `created_at` (time)\n- `description` (text)\n- `epic` (uuid)\n- `label` (uuid_set)\n- `position` (number)\n- `project` (uuid)\n- `sprint` (uuid_set)\n- `status` (uuid)\n- `title` (text)\n- `updated_at` (time)\n- `version` (number)\n\nPage size defaults to 50 and may not exceed 200.",
         "operationId": "list-tickets",
         "requestBody": {
           "content": {
@@ -2978,6 +3818,87 @@
           }
         },
         "summary": "Replace a ticket's writable fields"
+      }
+    },
+    "/api/v1/tickets/{id}/move": {
+      "post": {
+        "description": "One write per drop: sets `status_id` and `position` together. Send at most one of `position`, `before_id` and `after_id` (more is a 422); none puts the ticket at the end of the column. `before_id`/`after_id` name a live ticket in the target column, or the answer is a 422 `neighbour_not_found` at that member. Written like any edit: version + 1, announced as `ticket.updated`, and `If-Match` makes it conditional. When there is no room between two neighbours the target column's other tickets are renumbered; that does not change their version and is not announced, so re-list if the order looks wrong.",
+        "operationId": "move-ticket",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Make the write conditional on the ticket still being at the version you last saw, written as the ETag is: the number in double quotes, for example \"4\". If the ticket has moved on the write is refused with a 409 and nothing changes: ticket_conflict if it was edited, ticket_archived if it was archived - each carrying the current copy, who changed it and when. Omit it for a plain last-write-wins write.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "Make the write conditional on the ticket still being at the version you last saw, written as the ETag is: the number in double quotes, for example \"4\". If the ticket has moved on the write is refused with a 409 and nothing changes: ticket_conflict if it was edited, ticket_archived if it was archived - each carrying the current copy, who changed it and when. Omit it for a plain last-write-wins write.",
+              "examples": [
+                "\"4\""
+              ],
+              "pattern": "^\"[1-9][0-9]{0,8}\"$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveTicketInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketBody"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "description": "The ticket's version in quotes, as If-Match takes it back.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketConflict"
+                }
+              }
+            },
+            "description": "Conflict. Only when If-Match was sent: code is ticket_conflict if the ticket was edited since that version, ticket_archived if it was archived. Nothing was written."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Drop a ticket into a board column, at a place in it"
       }
     },
     "/api/v1/tickets/{id}/unarchive": {

@@ -127,7 +127,26 @@ each status whose position changed. A delete that moves tickets also sends one `
 per moved ticket (archived ones included) at their new version. Apply `status.*` by upsert or
 remove on `status_id`; there is no version, so re-list on doubt.
 
+## Board events (LAM-85)
+
+`board.created`, `board.updated`, `board.deleted` and `board.column.updated` carry `type`, `actor_id`,
+`at` (server time), `project_id`, `board_id` and `board` (the whole `BoardBody`, every column with
+its `status_ids`; on `deleted`, the board as it was). `board.column.updated` also carries
+`column_id` and `column` (the `ColumnBody`). They have **no** `ticket_id`, `version` or `ticket`.
+
+| Write | Event |
+| --- | --- |
+| create-board | `board.created` |
+| rename-board, reorder-columns, delete-column | `board.updated` (the delete's `board` no longer has the column) |
+| add-column, update-column, set-column-statuses | `board.column.updated` |
+| delete-board | `board.deleted` |
+
+There is no version: replace the board (or the column) you hold with the one in the event, and re-list on
+doubt. A ticket move (`POST /tickets/{id}/move`) is an ordinary `ticket.updated` at the new version,
+with the new `status_id` and `position` in `ticket`. When a move had to renumber the target column, the
+other tickets' `position` changed without an event; re-list if the order looks wrong.
+
 ## Not here yet
 
-No per-connection filtering (a project, a status), no events for resources other than tickets and statuses,
+No per-connection filtering (a project, a status), no events for resources other than tickets, statuses and boards,
 no client-to-server messages, no resume. Each is additive.

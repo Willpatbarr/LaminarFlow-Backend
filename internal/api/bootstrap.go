@@ -67,7 +67,7 @@ type teamInput struct {
 	ID string `path:"id" format:"uuid"`
 }
 
-type columnBody struct {
+type projectColumnBody struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Position int    `json:"position"`
@@ -75,11 +75,11 @@ type columnBody struct {
 }
 
 type projectBody struct {
-	ID      string       `json:"id"`
-	TeamID  string       `json:"team_id"`
-	Name    string       `json:"name"`
-	BoardID *string      `json:"board_id" doc:"The board seeded on creation. Null when bare - a project with no board is legal."`
-	Columns []columnBody `json:"columns" doc:"One per status the team had. Empty when bare."`
+	ID      string              `json:"id"`
+	TeamID  string              `json:"team_id"`
+	Name    string              `json:"name"`
+	BoardID *string             `json:"board_id" doc:"The board seeded on creation. Null when bare - a project with no board is legal."`
+	Columns []projectColumnBody `json:"columns" doc:"One per status the team had. Empty when bare."`
 }
 
 type projectOutput struct {
@@ -125,13 +125,13 @@ func asProjectBody(p project.Project) projectBody {
 		ID:      p.ID,
 		TeamID:  p.TeamID,
 		Name:    p.Name,
-		Columns: make([]columnBody, len(p.Columns)),
+		Columns: make([]projectColumnBody, len(p.Columns)),
 	}
 	if p.BoardID != "" {
 		out.BoardID = &p.BoardID
 	}
 	for i, c := range p.Columns {
-		out.Columns[i] = columnBody{ID: c.ID, Name: c.Name, Position: c.Position, StatusID: c.StatusID}
+		out.Columns[i] = projectColumnBody{ID: c.ID, Name: c.Name, Position: c.Position, StatusID: c.StatusID}
 	}
 
 	return out
