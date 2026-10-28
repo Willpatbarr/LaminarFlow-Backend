@@ -291,9 +291,10 @@ func TestEveryRowCarriesItsWorkspace(t *testing.T) {
 	}
 }
 
-// search_index_document_rows_carry_a_field is a biconditional, so a ticket or comment
-// row carrying a field_id fails the check rather than being ignored. Asserted because
-// the insert statements are the only thing keeping it true.
+// search_index_field_belongs_to_document: a ticket or comment row carrying a field_id
+// fails the check rather than being ignored. (A document row may have no field - the
+// title row of an empty document, 0037.) Asserted because the insert statements are the
+// only thing keeping it true.
 func TestOnlyDocumentRowsCarryAFieldID(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -306,11 +307,11 @@ func TestOnlyDocumentRowsCarryAFieldID(t *testing.T) {
 	var bad int
 	if err := pool.QueryRow(ctx,
 		`SELECT count(*) FROM search_index
-		  WHERE (document_id IS NOT NULL) <> (field_id IS NOT NULL)`).Scan(&bad); err != nil {
+		  WHERE field_id IS NOT NULL AND document_id IS NULL`).Scan(&bad); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if bad != 0 {
-		t.Errorf("%d rows break the document/field biconditional", bad)
+		t.Errorf("%d rows carry a field_id without a document", bad)
 	}
 }
 

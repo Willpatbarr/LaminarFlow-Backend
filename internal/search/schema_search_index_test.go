@@ -158,13 +158,14 @@ func TestSearchIndexConstraints(t *testing.T) {
 		wantPgError(t, err, checkViolation, "a search row with no source")
 	})
 
-	// The collapse of LAM-26's "document" and "aspect_field" source types
-	// into one: a document row is always a field within that document.
-	t.Run("rejects a document row with no field", func(t *testing.T) {
+	// 0037 relaxed 0019's biconditional: a document with an empty body is indexed by
+	// its title, in a row with no field.
+	t.Run("accepts a document row with no field", func(t *testing.T) {
 		doc := newDoc(t, "No Field")
 
-		err := index(nil, u(doc), nil, nil, "unfielded")
-		wantPgError(t, err, checkViolation, "a document row carrying no field")
+		if err := index(nil, u(doc), nil, nil, "unfielded"); err != nil {
+			t.Errorf("a document title row was rejected: %v", err)
+		}
 	})
 
 	t.Run("rejects a field with no document", func(t *testing.T) {

@@ -74,6 +74,24 @@ func IndexDocument(ctx context.Context, tx pgx.Tx, docID string, body map[string
 }
 
 func indexDocument(ctx context.Context, tx pgx.Tx, docID string, body map[string]any) error {
+	// A document with no fields still has to be findable by its title (LAM-100, 0037):
+	// one row with no field_id, content the title. Only when the body is empty - with
+	// fields, their rows already carry the title for matching.
+	if len(body) == 0 {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO search_index
+			     (document_id, content, workspace_id, project_id, team_id, title_or_preview)
+			 SELECT d.id, d.title, d.workspace_id, d.project_id, d.team_id, d.title
+			   FROM document d
+			  WHERE d.id = $1::uuid`,
+			docID,
+		); err != nil {
+			return fmt.Errorf("search: index title of document %s: %w", docID, err)
+		}
+
+		return nil
+	}
+
 	for fieldID, value := range body {
 		// Scope and title are denormalised from the document rather than passed in,
 		// so the index cannot disagree with the row it describes. workspace_id is

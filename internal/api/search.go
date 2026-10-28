@@ -26,6 +26,8 @@ type searchItem struct {
 	Title      string  `json:"title" doc:"Plain text - escape it when rendering as HTML. A comment shows its first 120 characters."`
 	Snippet    string  `json:"snippet" doc:"HTML-safe: the matched text is escaped, then <mark> is put around the matches. Safe to render as HTML as it is."`
 	FieldLabel *string `json:"field_label" doc:"The label of the aspect field that matched. Null except for a document result."`
+	ParentType *string `json:"parent_type" doc:"ticket or document: what a comment result is on. Null except for a comment result."`
+	ParentID   *string `json:"parent_id" format:"uuid" doc:"The ticket or document a comment result is on, so it can be linked. Null except for a comment result."`
 	Score      float64 `json:"score" doc:"Higher is better. For ordering only: the number itself means nothing and can change."`
 }
 
@@ -87,7 +89,7 @@ func registerSearch(api huma.API, svc *search.Service) {
 		for i, h := range hits {
 			out.Body.Items[i] = searchItem{
 				Type: h.Type, ID: h.ID, Title: h.Title, Snippet: h.Snippet,
-				FieldLabel: h.FieldLabel, Score: h.Score,
+				FieldLabel: h.FieldLabel, ParentType: h.ParentType, ParentID: h.ParentID, Score: h.Score,
 			}
 		}
 

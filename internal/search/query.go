@@ -44,6 +44,8 @@ var Types = []string{"ticket", "document", "comment", "project"}
 ┃      Title         string     plain text; a comment shows its first 120 characters
 ┃      Snippet       string     HTML-safe, with <mark> around matches
 ┃      FieldLabel    *string    document field rows only
+┃      ParentType    *string    ticket or document, comment hits only
+┃      ParentID      *string    the ticket or document the comment is on
 ┃      Score         float64    higher is better; a title match outranks any body match
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      Service.Find
@@ -55,6 +57,8 @@ type Hit struct {
 	Title      string
 	Snippet    string
 	FieldLabel *string
+	ParentType *string
+	ParentID   *string
 	Score      float64
 }
 
@@ -117,10 +121,14 @@ SELECT t.kind, t.source_id::text,
        CASE WHEN t.kind = 'comment' THEN left(si.title_or_preview, 120) ELSE si.title_or_preview END,
        ts_headline('english', translate(si.content, $5::text, ''), q.tsq,
                    'MaxFragments=1, MinWords=10, MaxWords=30, ShortWord=2, StartSel=' || $6::text || ', StopSel=' || $7::text),
-       f.label, t.score
+       f.label,
+       CASE WHEN c.ticket_id IS NOT NULL THEN 'ticket' WHEN c.document_id IS NOT NULL THEN 'document' END,
+       COALESCE(c.ticket_id, c.document_id)::text,
+       t.score
   FROM top t
   CROSS JOIN q
   JOIN search_index si ON si.id = t.row_id
+  LEFT JOIN comment c ON c.id = si.comment_id
   LEFT JOIN aspect_type_field f ON f.id::text = si.field_id
  ORDER BY t.score DESC, t.source_id`
 
@@ -165,7 +173,7 @@ func (s *Service) Find(ctx context.Context, accountID string, p FindParams) ([]H
 	hits := []Hit{}
 	for rows.Next() {
 		var h Hit
-		if err := rows.Scan(&h.Type, &h.ID, &h.Title, &h.Snippet, &h.FieldLabel, &h.Score); err != nil {
+		if err := rows.Scan(&h.Type, &h.ID, &h.Title, &h.Snippet, &h.FieldLabel, &h.ParentType, &h.ParentID, &h.Score); err != nil {
 			return nil, fmt.Errorf("search: find: scan: %w", err)
 		}
 		h.Snippet = markSnippet(h.Snippet)

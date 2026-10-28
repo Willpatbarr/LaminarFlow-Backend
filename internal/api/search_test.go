@@ -18,6 +18,8 @@ type searchHitWire struct {
 	Title      string  `json:"title"`
 	Snippet    string  `json:"snippet"`
 	FieldLabel *string `json:"field_label"`
+	ParentType *string `json:"parent_type"`
+	ParentID   *string `json:"parent_id"`
 	Score      float64 `json:"score"`
 }
 
@@ -263,6 +265,76 @@ func TestSearchAfterARebuildAnswersAsTheLiveIndexDid(t *testing.T) {
 				before[i].Score != after[i].Score || before[i].Title != after[i].Title {
 				t.Errorf("%s[%d]: %+v before, %+v after", name, i, before[i], after[i])
 			}
+		}
+	}
+}
+
+// A new, title-only document is the commonest thing to jump to, and its body is empty.
+func TestSearchFindsADocumentWithAnEmptyBodyByTitle(t *testing.T) {
+	f := newFeed(t)
+
+	doc := f.document(t, f.willC, map[string]any{"title": "Quarterly retrospective", "type": "normal", "body": map[string]any{}})
+
+	check := func(when string) {
+		hits := f.search(t, f.willC, map[string]any{"q": "retrospective", "type": "document"})
+		if len(hits) != 1 || hits[0].ID != doc.ID || hits[0].FieldLabel != nil {
+			t.Fatalf("%s: hits = %+v, want only %s with no field_label", when, hits, doc.ID)
+		}
+	}
+	check("on create")
+
+	if _, err := search.NewService(f.pool).Rebuild(testCtx(t)); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	check("after a rebuild")
+
+	// Giving it a body swaps the title row for field rows; still one result.
+	rec := call(t, f.mux, http.MethodPut, V1+"/documents/"+doc.ID, map[string]any{
+		"title": "Quarterly retrospective", "type": "normal", "body": map[string]any{"content": "went well"},
+	}, f.willC)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body)
+	}
+	check("after the body was filled")
+}
+
+func TestSearchCommentHitsNameTheirParent(t *testing.T) {
+	f := newFeed(t)
+
+	tk := f.ticketWith(t, "Parent ticket", "")
+	doc := f.document(t, f.willC, map[string]any{"title": "Parent doc", "type": "normal", "body": map[string]any{"content": "x"}})
+
+	// There is no comment endpoint yet, so the rows are written the way the schema
+	// tests do and indexed by a rebuild.
+	for _, parent := range []string{"ticket_id", "document_id"} {
+		id := tk.ID
+		word := "ocelot"
+		if parent == "document_id" {
+			id, word = doc.ID, "lynx"
+		}
+		if _, err := f.pool.Exec(testCtx(t),
+			`INSERT INTO comment (`+parent+`, body) VALUES ($1::uuid, $2)`, id, "spotted a "+word); err != nil {
+			t.Fatalf("comment: %v", err)
+		}
+	}
+	if _, err := search.NewService(f.pool).Rebuild(testCtx(t)); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+
+	for word, want := range map[string][2]string{"ocelot": {"ticket", tk.ID}, "lynx": {"document", doc.ID}} {
+		hits := f.search(t, f.willC, map[string]any{"q": word})
+		if len(hits) != 1 || hits[0].Type != "comment" {
+			t.Fatalf("%s: hits = %+v", word, hits)
+		}
+		if hits[0].ParentType == nil || *hits[0].ParentType != want[0] || hits[0].ParentID == nil || *hits[0].ParentID != want[1] {
+			t.Errorf("%s: parent = %v/%v, want %s/%s", word, hits[0].ParentType, hits[0].ParentID, want[0], want[1])
+		}
+	}
+
+	// Non-comment hits carry no parent.
+	for _, h := range f.search(t, f.willC, map[string]any{"q": "parent"}) {
+		if h.ParentType != nil || h.ParentID != nil {
+			t.Errorf("%s hit has a parent: %+v", h.Type, h)
 		}
 	}
 }
