@@ -19,6 +19,7 @@ import (
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/filter"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/savedview"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -52,6 +53,7 @@ type savedViewOutput struct {
 }
 
 type createSavedViewInput struct {
+	KeyedInput
 	Body struct {
 		TeamID    string           `json:"team_id" required:"true" format:"uuid"`
 		ProjectID *string          `json:"project_id,omitempty" format:"uuid" doc:"Scope the view to one project of the team. Omit for the whole team."`
@@ -151,7 +153,7 @@ func savedViewError(err error) error {
 │      →  POST /api/v1/saved-views/list
 */
 
-func registerSavedViews(api huma.API, svc *savedview.Service) {
+func registerSavedViews(api huma.API, svc *savedview.Service, idem *idempotency.Store) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-saved-view",
@@ -162,18 +164,23 @@ func registerSavedViews(api huma.API, svc *savedview.Service) {
 			"all over the ticket vocabulary, and is checked the way a ticket list request would be: a config that would not run is a 422 `filter_invalid` " +
 			"whose `errors[].location` is `body.config...`. A board view needs `board_id`; a list view must not have one.",
 		Metadata: needs(auth.TicketWrite),
-	}, func(ctx context.Context, in *createSavedViewInput) (*savedViewOutput, error) {
+	}, func(ctx context.Context, in *createSavedViewInput) (*createdOutput[savedViewBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		v, err := svc.Create(ctx, me.AccountID, savedview.CreateParams{
-			TeamID: in.Body.TeamID, ProjectID: in.Body.ProjectID, BoardID: in.Body.BoardID,
-			Name: in.Body.Name, Layout: in.Body.Layout, Config: in.Body.Config, IsShared: in.Body.IsShared,
-		})
+		v, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "create-saved-view", savedview.ErrNotFound,
+			func(ctx context.Context) (savedview.View, string, error) {
+				v, err := svc.Create(ctx, me.AccountID, savedview.CreateParams{
+					TeamID: in.Body.TeamID, ProjectID: in.Body.ProjectID, BoardID: in.Body.BoardID,
+					Name: in.Body.Name, Layout: in.Body.Layout, Config: in.Body.Config, IsShared: in.Body.IsShared,
+				})
+				return v, v.ID, err
+			},
+			func(ctx context.Context, id string) (savedview.View, error) { return svc.Get(ctx, me.AccountID, id) })
 		if err != nil {
 			return nil, savedViewError(err)
 		}
 
-		return &savedViewOutput{Body: asSavedViewBody(v)}, nil
+		return created(in.key(), replayed, asSavedViewBody(v)), nil
 	})
 
 	huma.Register(api, huma.Operation{

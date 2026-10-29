@@ -21,6 +21,7 @@ import (
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/board"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -68,6 +69,7 @@ type columnOutput struct {
 }
 
 type createBoardInput struct {
+	KeyedInput
 	ID   string `path:"id" format:"uuid" doc:"The project."`
 	Body struct {
 		Name    string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace."`
@@ -93,6 +95,7 @@ type renameBoardInput struct {
 }
 
 type addColumnInput struct {
+	KeyedInput
 	ID   string `path:"id" format:"uuid"`
 	Body struct {
 		Name      string   `json:"name" required:"true" minLength:"1" maxLength:"100"`
@@ -201,7 +204,7 @@ func boardError(err error, indexed bool) error {
 │      →  PUT /api/v1/boards/{id}/columns/{column_id}/statuses
 */
 
-func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
+func registerBoards(api huma.API, svc *board.Service, feed ticketFeed, idem *idempotency.Store) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-board",
@@ -211,17 +214,24 @@ func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
 		Description: "Starts with one column per status the team has, each mapped to its status, like the board a project is created with. " +
 			"Many boards per project; none is privileged. Announced as `board.created`.",
 		Metadata: needs(auth.TicketWrite),
-	}, func(ctx context.Context, in *createBoardInput) (*boardOutput, error) {
+	}, func(ctx context.Context, in *createBoardInput) (*createdOutput[boardBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		b, err := svc.Create(ctx, me.AccountID, in.ID, in.Body.Name, in.Body.GroupBy)
+		b, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "create-board", board.ErrNotFound,
+			func(ctx context.Context) (board.Board, string, error) {
+				b, err := svc.Create(ctx, me.AccountID, in.ID, in.Body.Name, in.Body.GroupBy)
+				return b, b.ID, err
+			},
+			func(ctx context.Context, id string) (board.Board, error) { return svc.Get(ctx, me.AccountID, id) })
 		if err != nil {
 			return nil, boardError(err, false)
 		}
 
-		feed.publishBoard(b.WorkspaceID, realtime.BoardCreated, me.AccountID, b)
+		if !replayed {
+			feed.publishBoard(b.WorkspaceID, realtime.BoardCreated, me.AccountID, b)
+		}
 
-		return &boardOutput{Body: asBoardBody(b)}, nil
+		return created(in.key(), replayed, asBoardBody(b)), nil
 	})
 
 	registerBoardList(api, svc)
@@ -292,17 +302,38 @@ func registerBoards(api huma.API, svc *board.Service, feed ticketFeed) {
 		Description: "Appended after the last column. `status_ids` is optional; a status outside the board's team is a 422 `status_not_found` and one " +
 			"another column of this board holds is a 422 `status_already_mapped`, both at `body.status_ids[i]`. Announced as `board.column.updated`.",
 		Metadata: needs(auth.TicketWrite),
-	}, func(ctx context.Context, in *addColumnInput) (*columnOutput, error) {
+	}, func(ctx context.Context, in *addColumnInput) (*createdOutput[columnBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		res, err := svc.AddColumn(ctx, me.AccountID, in.ID, in.Body.Name, in.Body.StatusIDs)
+		res, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "add-column", board.ErrColumnNotFound,
+			func(ctx context.Context) (board.Result, string, error) {
+				res, err := svc.AddColumn(ctx, me.AccountID, in.ID, in.Body.Name, in.Body.StatusIDs)
+				return res, res.Column.ID, err
+			},
+			func(ctx context.Context, id string) (board.Result, error) {
+				b, err := svc.Get(ctx, me.AccountID, in.ID)
+				if err != nil {
+					if errors.Is(err, board.ErrNotFound) {
+						return board.Result{}, board.ErrColumnNotFound
+					}
+					return board.Result{}, err
+				}
+				for _, c := range b.Columns {
+					if c.ID == id {
+						return board.Result{Column: c, Board: b}, nil
+					}
+				}
+				return board.Result{}, board.ErrColumnNotFound
+			})
 		if err != nil {
 			return nil, boardError(err, true)
 		}
 
-		feed.publishColumn(res.Board.WorkspaceID, me.AccountID, res)
+		if !replayed {
+			feed.publishColumn(res.Board.WorkspaceID, me.AccountID, res)
+		}
 
-		return &columnOutput{Body: asColumnBody(res.Column)}, nil
+		return created(in.key(), replayed, asColumnBody(res.Column)), nil
 	})
 
 	huma.Register(api, huma.Operation{

@@ -91,7 +91,7 @@ at its archived version.
 
 A create replayed with the same `Idempotency-Key` ([api-conventions.md §10](api-conventions.md))
 writes nothing and publishes nothing: one `ticket.created` per ticket, however many times the
-request is retried. The same holds for `POST /documents` and `POST /comments`: one `document.created` or `comment.created` each.
+request is retried. The same holds for `POST /documents` and `POST /comments`: one `document.created` or `comment.created` each, and for every other create (LAM-127): one `epic.created`, `status.created`, `board.created` and so on.
 
 ### What a client does with an event
 

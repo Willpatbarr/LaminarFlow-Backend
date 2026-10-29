@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/milestone"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 
@@ -43,6 +44,7 @@ type milestoneOutput struct {
 }
 
 type createMilestoneInput struct {
+	KeyedInput
 	Body struct {
 		ProjectID   string  `json:"project_id" required:"true" format:"uuid"`
 		Name        string  `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace."`
@@ -101,7 +103,7 @@ func milestoneError(err error) error {
 │      →  POST /api/v1/milestones/list
 */
 
-func registerMilestones(api huma.API, svc *milestone.Service, feed ticketFeed) {
+func registerMilestones(api huma.API, svc *milestone.Service, feed ticketFeed, idem *idempotency.Store) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-milestone",
@@ -110,17 +112,26 @@ func registerMilestones(api huma.API, svc *milestone.Service, feed ticketFeed) {
 		Summary:     "Create a milestone in a project",
 		Description: "Announced as `milestone.created`.",
 		Metadata:    needs(auth.TicketWrite),
-	}, func(ctx context.Context, in *createMilestoneInput) (*milestoneOutput, error) {
+	}, func(ctx context.Context, in *createMilestoneInput) (*createdOutput[milestoneBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		m, err := svc.Create(ctx, me.AccountID, in.Body.ProjectID, in.Body.Name, in.Body.Description, in.Body.TargetDate)
+		m, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "create-milestone", milestone.ErrNotFound,
+			func(ctx context.Context) (milestone.Milestone, string, error) {
+				m, err := svc.Create(ctx, me.AccountID, in.Body.ProjectID, in.Body.Name, in.Body.Description, in.Body.TargetDate)
+				return m, m.ID, err
+			},
+			func(ctx context.Context, id string) (milestone.Milestone, error) {
+				return svc.Get(ctx, me.AccountID, id)
+			})
 		if err != nil {
 			return nil, milestoneError(err)
 		}
 
-		feed.publishMilestone(m.WorkspaceID, realtime.MilestoneCreated, me.AccountID, m)
+		if !replayed {
+			feed.publishMilestone(m.WorkspaceID, realtime.MilestoneCreated, me.AccountID, m)
+		}
 
-		return &milestoneOutput{Body: asMilestoneBody(m)}, nil
+		return created(in.key(), replayed, asMilestoneBody(m)), nil
 	})
 
 	huma.Register(api, huma.Operation{
