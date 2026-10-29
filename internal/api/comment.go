@@ -35,17 +35,18 @@ const (
 )
 
 type commentBody struct {
-	ID           string    `json:"id"`
-	TicketID     *string   `json:"ticket_id" doc:"The ticket commented on. Exactly one of ticket_id and document_id is set."`
-	DocumentID   *string   `json:"document_id" doc:"The document commented on."`
-	FieldID      *string   `json:"field_id" doc:"The aspect field of the document the comment is anchored to; null for a whole-document or ticket comment, and after that field is removed from the type."`
-	RegionStart  *int      `json:"region_start" doc:"Start of the highlighted range, a character offset into the anchored content. Null with region_end, or both set."`
-	RegionEnd    *int      `json:"region_end" doc:"End of the range; equal to region_start for a caret."`
-	AuthorID     *string   `json:"author_id" doc:"Null when the author's account has been deleted: render an authorless comment."`
-	Body         string    `json:"body"`
-	ReviewStatus *string   `json:"review_status" enum:"pending,approved,changes_requested" nullable:"true" doc:"Null for a plain comment, which is everything these endpoints create. A non-null value marks a review request (LAM-113)."`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at" doc:"When the body last changed."`
+	ID           string     `json:"id"`
+	TicketID     *string    `json:"ticket_id" doc:"The ticket commented on. Exactly one of ticket_id and document_id is set."`
+	DocumentID   *string    `json:"document_id" doc:"The document commented on."`
+	FieldID      *string    `json:"field_id" doc:"The aspect field of the document the comment is anchored to; null for a whole-document or ticket comment, and after that field is removed from the type."`
+	RegionStart  *int       `json:"region_start" doc:"Start of the highlighted range, a character offset into the anchored content. Null with region_end, or both set."`
+	RegionEnd    *int       `json:"region_end" doc:"End of the range; equal to region_start for a caret."`
+	AuthorID     *string    `json:"author_id" doc:"Null when the author's account has been deleted: render an authorless comment."`
+	Body         string     `json:"body"`
+	ReviewStatus *string    `json:"review_status" enum:"pending,approved,changes_requested" nullable:"true" doc:"Null for a plain comment, which is everything these endpoints create. A non-null value marks a review request (LAM-113)."`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at" doc:"When the row last changed: its body, or for a review request also its review_status. Not an edit marker; use edited_at."`
+	EditedAt     *time.Time `json:"edited_at" nullable:"true" doc:"When the body was last edited, null if it never was. Show \"(edited)\" from this, not from updated_at: a review status change moves updated_at and not this."`
 }
 
 func asCommentBody(c comment.Comment) commentBody {
@@ -61,7 +62,17 @@ func asCommentBody(c comment.Comment) commentBody {
 		ReviewStatus: c.ReviewStatus,
 		CreatedAt:    c.CreatedAt.UTC(),
 		UpdatedAt:    c.UpdatedAt.UTC(),
+		EditedAt:     utcPtr(c.EditedAt),
 	}
+}
+
+func utcPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := t.UTC()
+
+	return &u
 }
 
 type createCommentInput struct {

@@ -14,17 +14,18 @@ import (
 // feed, and Idempotency-Key.
 
 type commentWire struct {
-	ID           string    `json:"id"`
-	TicketID     *string   `json:"ticket_id"`
-	DocumentID   *string   `json:"document_id"`
-	FieldID      *string   `json:"field_id"`
-	RegionStart  *int      `json:"region_start"`
-	RegionEnd    *int      `json:"region_end"`
-	AuthorID     *string   `json:"author_id"`
-	Body         string    `json:"body"`
-	ReviewStatus *string   `json:"review_status"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string     `json:"id"`
+	TicketID     *string    `json:"ticket_id"`
+	DocumentID   *string    `json:"document_id"`
+	FieldID      *string    `json:"field_id"`
+	RegionStart  *int       `json:"region_start"`
+	RegionEnd    *int       `json:"region_end"`
+	AuthorID     *string    `json:"author_id"`
+	Body         string     `json:"body"`
+	ReviewStatus *string    `json:"review_status"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	EditedAt     *time.Time `json:"edited_at"`
 }
 
 func (f feed) postComment(t *testing.T, cookie string, body map[string]any, header ...string) *httptest.ResponseRecorder {
@@ -166,6 +167,9 @@ func TestOnlyTheAuthorEditsOrDeletes(t *testing.T) {
 	rec = call(t, f.mux, http.MethodPut, V1+"/comments/"+c.ID, map[string]any{"body": "edited"}, f.willC)
 	var edited commentWire
 	decode(t, rec, &edited)
+	if c.EditedAt != nil || edited.EditedAt == nil {
+		t.Errorf("edited_at before %v, after %v; want nil then set", c.EditedAt, edited.EditedAt)
+	}
 	if rec.Code != http.StatusOK || edited.Body != "edited" || edited.ID != c.ID || !edited.UpdatedAt.After(c.UpdatedAt) ||
 		!edited.CreatedAt.Equal(c.CreatedAt) || edited.TicketID == nil || *edited.TicketID != *c.TicketID {
 		t.Errorf("edit = %d %+v", rec.Code, edited)

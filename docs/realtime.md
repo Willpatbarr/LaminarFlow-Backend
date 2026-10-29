@@ -244,14 +244,14 @@ A review request is a comment (see [review-requests.md](review-requests.md)), an
   the `document.updated` of that write. Setting the status
   it already has publishes nothing, nor does a refused write.
 
-Both carry `type`, `comment_id` (the request's id), `document_id`, `actor_id`, `at` (the request's `updated_at`)
+Both carry `type`, `comment_id` (the request's id), `document_id`, `actor_id`, `at` (the request's `updated_at`, which a status change moves; `edited_at` is the body edit alone)
 and `review_request` - the whole request in exactly the shape of `ReviewRequestBody`, `reviewers` included. Like
 `comment.*` they have **no** `version`, no `ticket` and no `document`; dispatch on `type`.
 
 Apply one to the review requests you hold for that document: upsert by `id`. The request is also a comment
 in the document's thread, so a client that keeps both lists keys them by `id`. A **body edit or a delete** goes
 through the comment endpoints and publishes `comment.updated` / `comment.deleted`, whose `comment.review_status`
-is non-null for a review request: remove by `id` from both lists on `comment.deleted`. A `comment.updated` does
+is non-null for a review request: remove by `id` from both lists on `comment.deleted`. A `comment.updated` carries `edited_at` (a body edit) but does
 not carry `reviewers` or `anchor_text`; keep what you hold. On doubt, re-list with `POST /review-requests/list`.
 
 ## Activity events (LAM-89)
