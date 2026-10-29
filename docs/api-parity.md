@@ -55,7 +55,7 @@ Scope column: the permission a token needs. `T` = `ticket:`, `A` = `aspect:`, `P
 | Upload / list / delete attachments, view an image | `features/attachments/api.ts`, `components/editor/images.ts` | `POST /attachments` (idem), `POST /attachments/list`, `DELETE`, `GET /attachments/{id}` | T write / read |
 | Activity feed | `features/activity/api.ts` | `POST /activity/list` | T read |
 | Search / command palette | `features/search/api.ts` | `POST /search/list` | T read |
-| Live updates | `sync/socket.ts` | `GET /ws` (raw route, Bearer or cookie) | any credential, see gap 2 |
+| Live updates | `sync/socket.ts` | `GET /ws` (raw route, Bearer or cookie) | `ticket:read` / `team:read` token, or session; events filtered by scope (finding 2) |
 | Export everything | none in the UI today | `POST /export` | **session only** (deliberate) |
 | Delete my account | none in the UI today | `DELETE /accounts/me` | `account:delete` |
 | Settings key/value | none in the UI today | `GET /settings`, `GET`, `PUT`, `DELETE /settings/{key}` | S read / write |
@@ -71,10 +71,12 @@ account delete) are all reachable by a token, so the API is a superset of the UI
    documents, comments, review requests, sprints, boards, labels, saved views, epics and
    export as unexposed. All exist now except export, which is session-only on purpose. The
    remaining LAM-123 deliverable was the quickstart, its CI run and this document.
-2. **The change feed does not check scopes.** `GET /ws` authenticates a token but never calls
-   `auth.Allows`, so any valid token, even one scoped to `setting:read` alone, receives every
-   workspace event. Not fixed here: the right rule (one required scope? per-event filtering?)
-   is a design call. Follow-up ticket.
+2. **The change feed checks scopes (fixed, LAM-129).** `GET /ws` used to deliver every workspace
+   event to any valid token. Now each event is sent only to a connection whose token holds the
+   read permission its resource needs (`ticket:read` for tickets, documents, comments, boards,
+   epics, sprints, milestones, labels, review requests, activity; `team:read` for statuses), and
+   a token holding neither is refused with `403 insufficient_scope` before the upgrade. See
+   [realtime.md](realtime.md).
 3. **Idempotency-Key is on every create** except token creation, which is session-only and
    would have to return its one-time secret twice (LAM-127). Tickets, documents, comments, review
    requests and attachments store the key on their own row; everything else shares the

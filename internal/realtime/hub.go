@@ -233,7 +233,7 @@ type Options struct {
 ┃      ctx      context.Context        cancelled by Close
 ┃      wg       sync.WaitGroup         one per Serve in flight
 ┣━ methods ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-┃      Serve(w, r, workspaceID)    →  error
+┃      Serve(w, r, workspaceID, allow)    →  error
 ┃      Publish(workspaceID, Event)
 ┃      Connections(workspaceID)    →  int
 ┃      Close()
@@ -285,6 +285,10 @@ type conn struct {
 	workspace string
 	send      chan []byte
 
+	// allow says whether this client may be sent an event of a type; nil means all.
+	// LAM-129: the caller supplies it, so this package still knows nothing about scopes.
+	allow func(eventType string) bool
+
 	// dropped ends the connection from outside it. Cancelling the write context is
 	// what interrupts a Write already stuck on a full socket buffer.
 	cancel context.CancelFunc
@@ -298,6 +302,7 @@ type conn struct {
 │      w              http.ResponseWriter
 │      r              *http.Request
 │      workspaceID    string      resolved by the caller, once
+│      allow          func(eventType string) bool    nil: every event (LAM-129)
 ├─ out ───────────────────────────────────────────
 │      error          ErrClosed · the library's refusal · nil on a clean end
 ├─ example ───────────────────────────────────────
@@ -311,7 +316,7 @@ type conn struct {
 //
 // A hijacked connection is invisible to http.Server.Shutdown, which is why Close exists
 // and why main calls it first.
-func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, workspaceID string) error {
+func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, workspaceID string, allow func(eventType string) bool) error {
 	// Counted from the first line, not from registration, so Close cannot return
 	// while a Serve is still between Accept and the registry.
 	if !h.enter() {
@@ -356,7 +361,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, workspaceID string) 
 		<-readerDone
 	}()
 
-	c := &conn{workspace: workspaceID, send: make(chan []byte, h.opts.SendQueue), cancel: cancel}
+	c := &conn{workspace: workspaceID, allow: allow, send: make(chan []byte, h.opts.SendQueue), cancel: cancel}
 
 	// The hello is queued before the connection is registered, so it is always the
 	// first frame and no event can overtake it.
@@ -474,6 +479,10 @@ func (h *Hub) Publish(workspaceID string, ev Event) {
 
 	var slow []*conn
 	for c := range set {
+		if c.allow != nil && !c.allow(ev.Type) {
+			continue
+		}
+
 		select {
 		case c.send <- frame:
 		default:
