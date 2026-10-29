@@ -230,7 +230,7 @@ duplicate; not retrying loses the work. LAM-75.
 
 1 to 128 printable ASCII characters (space to `~`); a UUID is the obvious choice. Anything
 else — empty, longer than 128, non-ASCII or a control character, or the header sent twice —
-is a `422` on `header.Idempotency-Key`. `POST /tickets` and `POST /documents` (LAM-126) take it;
+is a `422` on `header.Idempotency-Key`. `POST /tickets`, `POST /documents` (LAM-126) and `POST /comments` (LAM-99) take it;
 the other writes are
 already safe to repeat (`PUT` replaces, archive and unarchive are refused when repeated, and
 all three can carry `If-Match`).

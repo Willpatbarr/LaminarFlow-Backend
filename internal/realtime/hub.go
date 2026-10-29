@@ -86,6 +86,11 @@ const (
 	// LAM-111. A link between a ticket and a document; carries both ids, see Event.
 	TicketDocumentLinked   = "ticket.document_linked"
 	TicketDocumentUnlinked = "ticket.document_unlinked"
+
+	// LAM-99. A comment event carries the comment in `comment`; see Event.
+	CommentCreated = "comment.created"
+	CommentUpdated = "comment.updated"
+	CommentDeleted = "comment.deleted"
 )
 
 // helloFrame is the first frame on every connection. A socket that is open is not a
@@ -170,6 +175,14 @@ type Event struct {
 	// Version and no body.
 	DocumentID string `json:"document_id,omitempty"`
 	Document   any    `json:"document,omitempty"`
+
+	// LAM-99. comment.* carries CommentID and Comment, the REST CommentBody whole (the comment
+	// as it was, on comment.deleted), and the comment's parent in TicketID or DocumentID
+	// (exactly one). It carries no Version and no Ticket or Document: a comment has no version,
+	// and the parent did not change. The event type, not the presence of ticket_id, says what
+	// happened - a client must not apply a comment event as a ticket event.
+	CommentID string `json:"comment_id,omitempty"`
+	Comment   any    `json:"comment,omitempty"`
 }
 
 /*

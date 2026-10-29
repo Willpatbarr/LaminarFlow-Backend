@@ -16,10 +16,12 @@ func TestNoSQLOutsideThisPackage(t *testing.T) {
 	sqlguard.Assert(t, sqlguard.Rule{
 		Owner:  "document",
 		Tables: []string{"document"},
+		// internal/comment reads document for the same reason it reads ticket (LAM-99): a comment
+		// is only written against a live document in the caller's workspace.
 		// internal/ticket reads document to link to it (same workspace as the ticket) and to list a
 		// ticket's linked documents (LAM-111). Both are reads inside statements that also hold
 		// ticket_document, which is why they cannot be a call into this package.
-		Readers: []string{"search", "ticket"},
+		Readers: []string{"comment", "search", "ticket"},
 		// LAM-44 added internal/aspect, whose entire claim is that a field edit
 		// touches no document. Proving that means making a document, editing a
 		// field, and reading the document back - from outside, because this guard

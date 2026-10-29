@@ -91,7 +91,7 @@ at its archived version.
 
 A create replayed with the same `Idempotency-Key` ([api-conventions.md §10](api-conventions.md))
 writes nothing and publishes nothing: one `ticket.created` per ticket, however many times the
-request is retried. The same holds for `POST /documents`: one `document.created` per document.
+request is retried. The same holds for `POST /documents` and `POST /comments`: one `document.created` or `comment.created` each.
 
 ### What a client does with an event
 
@@ -194,7 +194,24 @@ documents you hold for `ticket_id` (and `ticket_id` in the document's linked tic
 Only a link that actually changed publishes: a repeated `POST` or `DELETE` (both 204) is silent. Archiving
 or unarchiving either end publishes its own `*.archived` / `*.unarchived` and leaves the link alone.
 
+## Comment events (LAM-99)
+
+`comment.created`, `comment.updated` and `comment.deleted` carry `type`, `comment_id`, `actor_id`, `at`,
+`comment` — the whole comment in exactly the shape of `CommentBody` — and the comment's parent as
+`ticket_id` or `document_id` (exactly one). On `comment.deleted`, `comment` is the comment as it was and
+`at` is server time; otherwise `at` is the comment's `updated_at`. They have **no** `version` (a comment
+has none) and no `ticket` or `document`: the parent did not change. **Dispatch on `type`, not on the
+presence of `ticket_id`** - a `comment.*` event is not a ticket event.
+
+Apply one to the thread you hold for that parent: add `comment` on `created` (skip it if its `id` is
+already there - your own write arrives as an event too), replace by `id` on `updated`, remove by `id`
+on `deleted`. There is no ordering token, so on doubt re-list with `POST /comments/list`. Only a
+successful write publishes; a create replayed with its `Idempotency-Key` does not.
+
+Comments on a ticket or document that is later archived publish nothing: the parent's own
+`*.archived` event is the signal to hide the thread, and `*.unarchived` brings it back.
+
 ## Not here yet
 
-No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones, labels and documents,
+No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones, labels, documents and comments,
 no client-to-server messages, no resume. Each is additive.
