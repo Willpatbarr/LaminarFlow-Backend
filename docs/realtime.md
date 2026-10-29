@@ -38,6 +38,7 @@ pass the browser's `Host` through, or every browser is refused.
 | Cross-origin | `403` | `origin_not_allowed` | `Origin` names another host (also `null`, and anything unparseable). Checked first |
 | No or bad credential | `401` | `unauthorized` | Nothing, an unknown cookie, an invalid token |
 | No workspace | `403` | `no_workspace` | Valid credential, account in no workspace |
+| Token without a read scope | `403` | `insufficient_scope` | An API token holding neither `ticket:read` nor `team:read` (LAM-129). Checked after the credential, before the upgrade |
 | Not an upgrade | `426` | — | Signed in, but a plain GET |
 | Shutting down | `503` | `service_unavailable` | The server is closing |
 
@@ -45,7 +46,28 @@ All but `426` are the ordinary error envelope (`docs/api-errors.md`), and all ha
 **before the upgrade completes**, so a browser sees a failed handshake, not a socket that
 opens and closes.
 
-**Scope.** A connection receives the events of tickets in the workspace that
+**Token scopes (LAM-129).** A session receives every event. A token receives only the events
+whose resource its scopes let it read over REST; the rest are not sent to that connection at
+all (the `hello` is always sent). The mapping is one table, `eventPermission` in
+`internal/api/realtime.go`, and a test fails when an event type has no row:
+
+| Needs | Events |
+| --- | --- |
+| `ticket:read` | `ticket.*` (including `ticket.document_linked` / `_unlinked`), `document.*`, `comment.*`, `review_request.*`, `activity.created`, `board.*`, `epic.*`, `sprint.*`, `milestone.*`, `label.*` |
+| `team:read` | `status.*` |
+
+There is no `document:*` or `board:*` scope: those resources use `ticket:read` over REST
+too ([api-parity.md](api-parity.md) finding 6). A new event type must be given its read
+permission; an unmapped type is delivered to no token (fail closed). The scopes are
+those the token holds when the connection is made; revoking a token does not close an open
+socket (see Lifetime above and ADR 0005).
+
+**A token with none of the needed scopes is refused**, `403 insufficient_scope`, before the
+upgrade, rather than accepted and left silent: a socket that can only ever deliver `hello`
+looks healthy while being useless, and an early refusal tells the client author what is
+missing. A token with only `team:read` can connect and receives `status.*` events alone.
+
+**Workspace.** A connection receives the events of the workspace that
 `GET /api/v1/auth/me` reports as `workspace_id`, fixed when the connection is made. Another
 workspace's connection receives nothing.
 

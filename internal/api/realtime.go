@@ -53,6 +53,91 @@ const (
 	CodeNoWorkspace = "no_workspace"
 )
 
+// LAM-129. What a connection may be sent is decided by the token's scopes. A session holds
+// every permission and receives everything; a token receives an event only if it holds the
+// read permission the event's resource needs - the one its REST GET needs - and the upgrade is
+// refused with 403 insufficient_scope (CodeInsufficientScope) when it holds none of them, since
+// such a connection could never receive anything but the hello.
+//
+// eventPermission is the one mapping, exhaustive over the realtime event types:
+// TestEveryEventTypeHasAReadPermission fails when a type is added to internal/realtime without
+// a row here. An unmapped type is delivered to nobody holding a token (fail closed).
+var eventPermission = map[string]auth.Permission{
+	realtime.TicketCreated:    auth.TicketRead,
+	realtime.TicketUpdated:    auth.TicketRead,
+	realtime.TicketArchived:   auth.TicketRead,
+	realtime.TicketUnarchived: auth.TicketRead,
+
+	// Statuses are read with team:read (GET /teams/{id}/statuses).
+	realtime.StatusCreated: auth.TeamRead,
+	realtime.StatusUpdated: auth.TeamRead,
+	realtime.StatusDeleted: auth.TeamRead,
+
+	realtime.BoardCreated:       auth.TicketRead,
+	realtime.BoardUpdated:       auth.TicketRead,
+	realtime.BoardDeleted:       auth.TicketRead,
+	realtime.BoardColumnUpdated: auth.TicketRead,
+
+	realtime.EpicCreated:      auth.TicketRead,
+	realtime.EpicUpdated:      auth.TicketRead,
+	realtime.EpicDeleted:      auth.TicketRead,
+	realtime.SprintCreated:    auth.TicketRead,
+	realtime.SprintUpdated:    auth.TicketRead,
+	realtime.SprintDeleted:    auth.TicketRead,
+	realtime.MilestoneCreated: auth.TicketRead,
+	realtime.MilestoneUpdated: auth.TicketRead,
+	realtime.MilestoneDeleted: auth.TicketRead,
+	realtime.LabelCreated:     auth.TicketRead,
+	realtime.LabelUpdated:     auth.TicketRead,
+	realtime.LabelDeleted:     auth.TicketRead,
+
+	realtime.DocumentCreated:    auth.TicketRead,
+	realtime.DocumentUpdated:    auth.TicketRead,
+	realtime.DocumentArchived:   auth.TicketRead,
+	realtime.DocumentUnarchived: auth.TicketRead,
+
+	realtime.TicketDocumentLinked:   auth.TicketRead,
+	realtime.TicketDocumentUnlinked: auth.TicketRead,
+
+	realtime.CommentCreated: auth.TicketRead,
+	realtime.CommentUpdated: auth.TicketRead,
+	realtime.CommentDeleted: auth.TicketRead,
+
+	realtime.ReviewRequestCreated: auth.TicketRead,
+	realtime.ReviewRequestUpdated: auth.TicketRead,
+
+	realtime.ActivityCreated: auth.TicketRead,
+}
+
+// feedFilter is the hub's allow function for one identity: nil (everything) for a session.
+func feedFilter(id auth.Identity) func(string) bool {
+	if id.TokenID == "" {
+		return nil
+	}
+
+	return func(eventType string) bool {
+		p, ok := eventPermission[eventType]
+
+		return ok && auth.Allows(id, p)
+	}
+}
+
+// canWatch reports whether the identity may receive at least one event type.
+func canWatch(id auth.Identity) bool {
+	allow := feedFilter(id)
+	if allow == nil {
+		return true
+	}
+
+	for t := range eventPermission {
+		if allow(t) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // feedTimeout bounds the one lookup a publish makes. Generous, because it runs on the
 // request's goroutine after the write succeeded and a slow answer delays only that
 // response; it is bounded so a stalled database cannot hold the response forever.
@@ -87,7 +172,7 @@ func rawRoutes(authSvc *auth.Service, accounts *account.Service, hub *realtime.H
 
 /*
 ┌─ api ───────────────────────────────────────────
-│  authenticates the upgrade, then hands it to the hub
+│  authenticates the upgrade, checks scopes, then hands it to the hub
 ├─ in ────────────────────────────────────────────
 │      authSvc    *auth.Service
 │      accounts   *account.Service    names the caller's workspace
@@ -132,6 +217,12 @@ func feedHandler(authSvc *auth.Service, accounts *account.Service, hub *realtime
 			return
 		}
 
+		if !canWatch(id) {
+			writeError(w, NewError(http.StatusForbidden, CodeInsufficientScope,
+				"this token holds none of the scopes the change feed needs (ticket:read or team:read)"))
+			return
+		}
+
 		profile, err := accounts.Profile(r.Context(), id.AccountID)
 		if err != nil && !errors.Is(err, account.ErrNotFound) {
 			log.Printf("realtime: resolve workspace for %s: %v", id.AccountID, err)
@@ -145,7 +236,7 @@ func feedHandler(authSvc *auth.Service, accounts *account.Service, hub *realtime
 			return
 		}
 
-		switch err := hub.Serve(w, r, profile.WorkspaceID); {
+		switch err := hub.Serve(w, r, profile.WorkspaceID, feedFilter(id)); {
 		case err == nil:
 		case errors.Is(err, realtime.ErrClosed):
 			writeError(w, NewError(http.StatusServiceUnavailable, defaultCode(http.StatusServiceUnavailable),

@@ -25,7 +25,7 @@ func newHub(t *testing.T, opts Options) (*Hub, *httptest.Server) {
 
 	hub := NewHub(opts)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := hub.Serve(w, r, r.URL.Query().Get("ws")); errors.Is(err, ErrClosed) {
+		if err := hub.Serve(w, r, r.URL.Query().Get("ws"), nil); errors.Is(err, ErrClosed) {
 			http.Error(w, "closed", http.StatusServiceUnavailable)
 		}
 	}))
@@ -274,7 +274,7 @@ func TestASlowConsumerIsDroppedAndNeverBlocksAFastOne(t *testing.T) {
 func TestClosingTheHubClosesEveryConnectionAndLeavesNoGoroutines(t *testing.T) {
 	hub := NewHub(Options{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := hub.Serve(w, r, r.URL.Query().Get("ws")); errors.Is(err, ErrClosed) {
+		if err := hub.Serve(w, r, r.URL.Query().Get("ws"), nil); errors.Is(err, ErrClosed) {
 			http.Error(w, "closed", http.StatusServiceUnavailable)
 		}
 	}))

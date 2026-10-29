@@ -163,7 +163,7 @@ func TestAnUpgradeFromTheSameHostIsAccepted(t *testing.T) {
 func TestABearerTokenCanOpenTheFeedToo(t *testing.T) {
 	f := newFeed(t)
 
-	token, err := auth.NewService(f.pool).Issue(context.Background(), f.will.AccountID, "script", nil, nil)
+	token, err := auth.NewService(f.pool).Issue(context.Background(), f.will.AccountID, "script", []auth.Scope{"ticket:read"}, nil)
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
