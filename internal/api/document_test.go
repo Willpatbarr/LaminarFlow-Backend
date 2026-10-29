@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -383,5 +384,64 @@ func TestTheDocumentDeclaresItsConflictAndTitleLimit(t *testing.T) {
 				t.Errorf("%s has no %q", name, member)
 			}
 		}
+	}
+}
+
+// LAM-138: PUT can move a document between projects and take it out of its project. Omitting
+// project_id leaves it alone, which is what every PUT before this one relied on.
+func TestPutMovesADocumentBetweenProjectsAndToTeamWide(t *testing.T) {
+	f := newFeed(t)
+	second := createProject(t, f.mux, f.willC, f.project.TeamID, "Second")
+	d := f.document(t, f.willC, map[string]any{"title": "Notes", "project_id": f.project.ID})
+
+	put := func(version int, body map[string]any) (*httptest.ResponseRecorder, documentWire) {
+		t.Helper()
+		body["title"] = "Notes"
+		rec := call(t, f.mux, http.MethodPut, V1+"/documents/"+d.ID, body, f.willC, "If-Match", `"`+strconv.Itoa(version)+`"`)
+		var got documentWire
+		if rec.Code == http.StatusOK {
+			decode(t, rec, &got)
+		}
+
+		return rec, got
+	}
+
+	rec, got := put(1, map[string]any{"project_id": second.ID})
+	if rec.Code != http.StatusOK || got.ProjectID == nil || *got.ProjectID != second.ID || got.Version != 2 {
+		t.Fatalf("move: %d %s", rec.Code, rec.Body)
+	}
+
+	rec, got = put(2, map[string]any{"project_id": nil})
+	if rec.Code != http.StatusOK || got.ProjectID != nil || got.Version != 3 {
+		t.Fatalf("team-wide: %d %s", rec.Code, rec.Body)
+	}
+
+	// Back from team-wide into a project, and the list filter follows.
+	rec, got = put(3, map[string]any{"project_id": f.project.ID})
+	if rec.Code != http.StatusOK || got.ProjectID == nil || *got.ProjectID != f.project.ID {
+		t.Fatalf("refile: %d %s", rec.Code, rec.Body)
+	}
+	rec = call(t, f.mux, http.MethodPost, V1+"/documents/list", map[string]any{"project_id": second.ID}, f.willC)
+	var out struct {
+		Items []documentWire `json:"items"`
+	}
+	decode(t, rec, &out)
+	if len(out.Items) != 0 {
+		t.Errorf("the old project still lists it: %+v", out.Items)
+	}
+
+	// Absent project_id: unchanged.
+	rec, got = put(4, map[string]any{})
+	if rec.Code != http.StatusOK || got.ProjectID == nil || *got.ProjectID != f.project.ID {
+		t.Fatalf("omitted: %d %s", rec.Code, rec.Body)
+	}
+
+	// A project that is not there is the create's 422, and nothing is written.
+	rec, _ = put(5, map[string]any{"project_id": "00000000-0000-4000-8000-00000000000b"})
+	wantDocProblem(t, rec, http.StatusUnprocessableEntity, CodeProjectNotFound, "body.project_id")
+	rec = call(t, f.mux, http.MethodGet, V1+"/documents/"+d.ID, nil, f.willC)
+	decode(t, rec, &got)
+	if got.Version != 5 || got.ProjectID == nil || *got.ProjectID != f.project.ID {
+		t.Errorf("a refused move changed the document: %+v", got)
 	}
 }

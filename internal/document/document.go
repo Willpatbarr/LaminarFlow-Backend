@@ -223,13 +223,17 @@ type SaveParams struct {
 	// The database enforces both directions in
 	// document_aspect_type_matches_type.
 	AspectTypeID string
-	// ProjectID and TeamID file a new document under one of them; at most one. They are
-	// read on insert only. A document's scope is chosen when it is made and is not part of
-	// the PUT that replaces everything else, so an update leaves it alone - which also
-	// answers the old question of how a caller says "leave the scope" versus "clear it":
-	// there is no way to do either, because nothing asks.
+	// ProjectID and TeamID file a new document under one of them; at most one. On an insert
+	// they are read as given. On an update TeamID is ignored and ProjectID is read only when
+	// MoveProject is set (LAM-138): an update that does not ask leaves the scope alone.
 	ProjectID string
 	TeamID    string
+	// MoveProject, on an update, moves the document to ProjectID, or - when ProjectID is
+	// empty - takes it out of its project (a workspace-level, "team-wide" document). Filing
+	// under a project clears a team_id, as the exclusive arc requires; taking it out of a
+	// project leaves team_id as it was. A project the caller cannot reach is
+	// ErrScopeNotFound at project_id. Ignored on an insert.
+	MoveProject bool
 	// Body is the field map. Keys are aspect_type_field IDs; for an aspect document each
 	// one must be a field of AspectTypeID (ErrUnknownField). A normal document's body is
 	// not checked, and by convention holds ContentKey.
@@ -652,6 +656,12 @@ func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 		return Document{}, nil, nil, err
 	}
 
+	if p.MoveProject && p.ProjectID != "" {
+		if err := s.checkProject(ctx, tx, cur.WorkspaceID, p.ProjectID); err != nil {
+			return Document{}, nil, nil, err
+		}
+	}
+
 	converting := cur.Type == TypeNormal && p.Type == TypeAspect
 	body, conv, err := s.checkBody(ctx, cur.WorkspaceID, p, body, cur.Body, converting)
 	if err != nil {
@@ -668,11 +678,13 @@ func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 		`WITH d AS (
 		     UPDATE document
 		        SET body = $1::jsonb, title = $2, type = $3, aspect_type_id = $4::uuid,
+		            project_id = CASE WHEN $6::boolean THEN $7::uuid ELSE project_id END,
+		            team_id = CASE WHEN $6::boolean AND $7::uuid IS NOT NULL THEN NULL ELSE team_id END,
 		            updated_at = now(), version = version + 1
 		      WHERE id = $5::uuid
 		  RETURNING *)
 		 SELECT `+columns+` FROM d`,
-		string(raw), p.Title, p.Type, p.aspectType(), p.ID,
+		string(raw), p.Title, p.Type, p.aspectType(), p.ID, p.MoveProject, nilIfEmpty(p.ProjectID),
 	))
 	if err != nil {
 		return Document{}, nil, nil, fmt.Errorf("write body: %w", err)
@@ -683,6 +695,25 @@ func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 	}
 
 	return d, cur.Body, conv, nil
+}
+
+// checkProject is that a project a document is moved to exists in the document's workspace.
+// Anything else is the same ErrScopeNotFound a create gives, so a project of another
+// workspace is indistinguishable from none.
+func (s *Service) checkProject(ctx context.Context, tx pgx.Tx, workspaceID, projectID string) error {
+	var ok bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM project pr JOIN team tm ON tm.id = pr.team_id
+		                 WHERE pr.id = $1::uuid AND tm.workspace_id = $2::uuid)`,
+		projectID, workspaceID,
+	).Scan(&ok); err != nil {
+		return fmt.Errorf("document: read project: %w", err)
+	}
+	if !ok {
+		return &FieldError{Kind: ErrScopeNotFound, Field: "project_id"}
+	}
+
+	return nil
 }
 
 // memberOf is the caller-scoping predicate, for the one place it is composed into a list.

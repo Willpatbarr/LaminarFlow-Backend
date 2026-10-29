@@ -16,6 +16,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"reflect"
@@ -178,12 +179,41 @@ type writeDocumentInput struct {
 	DocumentPreconditioned
 }
 
+// moveProject is update's project_id: three states a pointer cannot tell apart. Absent leaves
+// the document where it is (so every client written before LAM-138 keeps working), null takes
+// it out of its project, a uuid files it under that project.
+type moveProject struct {
+	Sent bool
+	ID   string
+}
+
+func (m *moveProject) UnmarshalJSON(b []byte) error {
+	m.Sent = true
+	if string(b) == "null" {
+		m.ID = ""
+
+		return nil
+	}
+
+	return json.Unmarshal(b, &m.ID)
+}
+
+// Schema is what the OpenAPI document and the request validator see: an optional,
+// nullable uuid, like the create's project_id.
+func (moveProject) Schema(huma.Registry) *huma.Schema {
+	return &huma.Schema{
+		Type: "string", Format: "uuid", Nullable: true,
+		Description: "Move the document to this project, or send null to make it team-wide (no project). Omit to leave it where it is. Filing under a project clears a team_id. Not the caller's: 422 project_not_found at body.project_id.",
+	}
+}
+
 type updateDocumentInput struct {
 	ID string `path:"id" format:"uuid"`
 	DocumentPreconditioned
 	Body struct {
 		Title        string            `json:"title" maxLength:"200" doc:"Up to 200 characters (not bytes)."`
 		Type         string            `json:"type,omitempty" enum:"normal,aspect" default:"normal"`
+		ProjectID    moveProject       `json:"project_id,omitzero"`
 		AspectTypeID *string           `json:"aspect_type_id,omitempty" format:"uuid" nullable:"true" doc:"As on create. Turning a normal document into an aspect one sets both type and this."`
 		Body         map[string]string `json:"body,omitempty" doc:"The complete body: it replaces the stored one. When a normal document becomes an aspect one, its text (content, from here if sent, else the stored body) moves into the type's first field - by position, then label - unless this body fills that field itself; a type with no fields is a 422 aspect_type_has_no_fields at body.aspect_type_id."`
 	}
@@ -428,7 +458,7 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 		Path:        V1 + "/documents/{id}",
 		Summary:     "Replace a document's title, type and body",
 		Description: "PUT replaces wholesale, so send the complete body. Last write wins unless `If-Match` is sent; with it the write happens only if the document is still at that version, otherwise it is a 409 `document_conflict` carrying the current copy. " +
-			"Without it, a write to an archived document is `document_not_found`. The team or project a document is filed under is fixed at creation and not part of this request. " +
+			"Without it, a write to an archived document is `document_not_found`. A document's team is fixed at creation; its project can be changed with `project_id` (a uuid, or null for a team-wide document with no project), and is left alone when `project_id` is omitted. " +
 			"Sending `type: aspect` with an `aspect_type_id` on a normal document turns it into an aspect document: see `body`.",
 		Metadata:  needs(auth.TicketWrite),
 		Responses: documentConflictResponses(api, documentIfMatchConflict),
@@ -447,6 +477,8 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 			Type:         in.Body.Type,
 			AspectTypeID: strOrEmpty(in.Body.AspectTypeID),
 			Body:         bodyValues(in.Body.Body),
+			MoveProject:  in.Body.ProjectID.Sent,
+			ProjectID:    in.Body.ProjectID.ID,
 			IfVersion:    ifVersion,
 		})
 		if err != nil {

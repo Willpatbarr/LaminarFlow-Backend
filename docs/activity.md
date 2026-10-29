@@ -52,7 +52,7 @@ may read what happened to it. There is no write operation; entries exist only as
 | ticket | `field_changed` | `field` is `title`, `description` or `milestone` |
 | ticket | `archived`, `unarchived` | `DELETE /tickets/{id}`, `POST /tickets/{id}/unarchive` |
 | document | `created` | `POST /documents` (not a replay) |
-| document | `field_changed` | `field` is `title`, or `fields`: the set of aspect fields that have a value changed (before/after are the sorted field ids, comma-joined) |
+| document | `field_changed` | `field` is `title`, `project` (LAM-138; ids before and after, null for team-wide) or `fields`: the set of aspect fields that have a value changed (before/after are the sorted field ids, comma-joined) |
 | document | `aspect_type_changed` | `PUT /documents/{id}` changed the type: normal to aspect, back, or to another aspect type |
 | document | `archived`, `unarchived` | `DELETE /documents/{id}`, `POST /documents/{id}/unarchive` |
 

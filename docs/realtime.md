@@ -200,7 +200,8 @@ the same way (read through the `sprint` filter, so a re-list shows them).
 `type`, `document_id`, `version` (the document's version after the change), `actor_id`, `at` (the
 document's `updated_at`, UTC) and `document` — the whole document in exactly the shape of
 `DocumentBody` (`GET /documents/{id}`). `project_id` and `team_id` are set when the document is
-filed under one. They have **no** `ticket_id` or `ticket`.
+filed under one. A `PUT` that moves a document to another project, or takes it out of its project
+(LAM-138), arrives as `document.updated` with the new `project_id` (null when team-wide). They have **no** `ticket_id` or `ticket`.
 
 Apply them as ticket events are applied: upsert `document` if `version` is newer than the local
 copy's, remove it on `archived`. `document` is complete on `archived` — the archived document
