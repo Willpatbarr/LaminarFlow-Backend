@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/label"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 
@@ -48,6 +49,7 @@ type labelOutput struct {
 }
 
 type createLabelInput struct {
+	KeyedInput
 	Body struct {
 		TeamID string `json:"team_id" required:"true" format:"uuid"`
 		Name   string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace. Unique within the team, or 409 label_name_taken."`
@@ -106,7 +108,7 @@ func labelError(err error) error {
 │      →  POST /api/v1/labels/list
 */
 
-func registerLabels(api huma.API, svc *label.Service, feed ticketFeed) {
+func registerLabels(api huma.API, svc *label.Service, feed ticketFeed, idem *idempotency.Store) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-label",
@@ -115,17 +117,24 @@ func registerLabels(api huma.API, svc *label.Service, feed ticketFeed) {
 		Summary:     "Create a label in a team",
 		Description: "A name already used in the team is a 409 `label_name_taken`. Announced as `label.created`.",
 		Metadata:    needs(auth.TicketWrite),
-	}, func(ctx context.Context, in *createLabelInput) (*labelOutput, error) {
+	}, func(ctx context.Context, in *createLabelInput) (*createdOutput[labelBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		l, err := svc.Create(ctx, me.AccountID, in.Body.TeamID, in.Body.Name, in.Body.Color)
+		l, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "create-label", label.ErrNotFound,
+			func(ctx context.Context) (label.Label, string, error) {
+				l, err := svc.Create(ctx, me.AccountID, in.Body.TeamID, in.Body.Name, in.Body.Color)
+				return l, l.ID, err
+			},
+			func(ctx context.Context, id string) (label.Label, error) { return svc.Get(ctx, me.AccountID, id) })
 		if err != nil {
 			return nil, labelError(err)
 		}
 
-		feed.publishLabel(l.WorkspaceID, realtime.LabelCreated, me.AccountID, l)
+		if !replayed {
+			feed.publishLabel(l.WorkspaceID, realtime.LabelCreated, me.AccountID, l)
+		}
 
-		return &labelOutput{Body: asLabelBody(l)}, nil
+		return created(in.key(), replayed, asLabelBody(l)), nil
 	})
 
 	huma.Register(api, huma.Operation{

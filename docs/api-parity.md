@@ -21,7 +21,7 @@ exercises the central path with only a token.
 ## Matrix
 
 Scope column: the permission a token needs. `T` = `ticket:`, `A` = `aspect:`, `P` = `project:`,
-`M` = `team:`, `S` = `setting:`. Ops marked `idem` take `Idempotency-Key`; `v` take `If-Match`.
+`M` = `team:`, `S` = `setting:`. Ops marked `idem` take `Idempotency-Key` (since LAM-127 every create does; only the five older ones are marked); `v` take `If-Match`.
 
 | UI action | Frontend | Operation | Scope |
 | --- | --- | --- | --- |
@@ -75,10 +75,10 @@ account delete) are all reachable by a token, so the API is a superset of the UI
    `auth.Allows`, so any valid token, even one scoped to `setting:read` alone, receives every
    workspace event. Not fixed here: the right rule (one required scope? per-event filtering?)
    is a design call. Follow-up ticket.
-3. **Idempotency-Key is on some creates only**: tickets, documents, comments, review requests,
-   attachments. Creates of teams, projects, epics, sprints, milestones, labels, boards, saved
-   views, aspect types, statuses and token do not take it, so a retry after a lost response
-   duplicates. That is LAM-127; left alone here.
+3. **Idempotency-Key is on every create** except token creation, which is session-only and
+   would have to return its one-time secret twice (LAM-127). Tickets, documents, comments, review
+   requests and attachments store the key on their own row; everything else shares the
+   `idempotency_key` table ([api-conventions.md §10](api-conventions.md)).
 4. **No token export.** `POST /export` waits for an `export:read` permission (noted in its
    description). Until then use a session, or `go run ./cmd/export`.
 5. **Ticket-document links need no list endpoint**: they are in the ticket (`documents`) and

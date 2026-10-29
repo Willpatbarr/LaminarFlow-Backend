@@ -20,6 +20,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/document"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -72,6 +73,7 @@ type aspectTypeListOutput struct {
 }
 
 type createAspectTypeInput struct {
+	KeyedInput
 	Body struct {
 		TeamID string `json:"team_id" required:"true" format:"uuid"`
 		Name   string `json:"name" required:"true" minLength:"1"`
@@ -102,6 +104,7 @@ type exportAspectTypeOutput struct {
 }
 
 type importAspectTypeInput struct {
+	KeyedInput
 	Body struct {
 		_ struct{} `additionalProperties:"false"`
 
@@ -128,6 +131,7 @@ type renameAspectTypeInput struct {
 }
 
 type addFieldInput struct {
+	KeyedInput
 	ID   string `path:"id" format:"uuid"`
 	Body struct {
 		Label string `json:"label" required:"true" minLength:"1"`
@@ -223,7 +227,7 @@ func importError(err error) *Error {
 │      →  POST /api/v1/aspect-types/{id}/fields
 */
 
-func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Service) {
+func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Service, idem *idempotency.Store) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-aspect-type",
@@ -232,15 +236,20 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		Summary:     "Create an aspect type",
 		Description: "Created with no fields. An aspect type with none is legal - it renders as a document with a title and nothing else.",
 		Metadata:    needs(auth.AspectWrite),
-	}, func(ctx context.Context, in *createAspectTypeInput) (*aspectTypeOutput, error) {
+	}, func(ctx context.Context, in *createAspectTypeInput) (*createdOutput[aspectTypeBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		t, err := svc.CreateType(ctx, me.AccountID, in.Body.TeamID, in.Body.Name)
+		t, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "create-aspect-type", aspect.ErrNotFound,
+			func(ctx context.Context) (aspect.Type, string, error) {
+				t, err := svc.CreateType(ctx, me.AccountID, in.Body.TeamID, in.Body.Name)
+				return t, t.ID, err
+			},
+			func(ctx context.Context, id string) (aspect.Type, error) { return svc.Get(ctx, me.AccountID, id) })
 		if err != nil {
 			return nil, aspectError(err)
 		}
 
-		return &aspectTypeOutput{Body: asAspectTypeBody(t)}, nil
+		return created(in.key(), replayed, asAspectTypeBody(t)), nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -308,15 +317,31 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		Summary:     "Add a field to an aspect type",
 		Description: "An insert, and nothing else. No document is touched - the new field is simply a key absent from every body, which renders empty.",
 		Metadata:    needs(auth.AspectWrite),
-	}, func(ctx context.Context, in *addFieldInput) (*fieldOutput, error) {
+	}, func(ctx context.Context, in *addFieldInput) (*createdOutput[fieldBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		f, err := svc.AddField(ctx, me.AccountID, in.ID, in.Body.Label)
+		f, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "add-aspect-type-field", aspect.ErrNotFound,
+			func(ctx context.Context) (aspect.Field, string, error) {
+				f, err := svc.AddField(ctx, me.AccountID, in.ID, in.Body.Label)
+				return f, f.ID, err
+			},
+			func(ctx context.Context, id string) (aspect.Field, error) {
+				t, err := svc.Get(ctx, me.AccountID, in.ID)
+				if err != nil {
+					return aspect.Field{}, err
+				}
+				for _, f := range t.Fields {
+					if f.ID == id {
+						return f, nil
+					}
+				}
+				return aspect.Field{}, aspect.ErrNotFound
+			})
 		if err != nil {
 			return nil, aspectError(err)
 		}
 
-		return &fieldOutput{Body: asFieldBody(f)}, nil
+		return created(in.key(), replayed, asFieldBody(f)), nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -355,7 +380,7 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 			"is the field (`body.format_version`, `body.name`, `body.fields[2].label`, or an unknown key); nothing is created. " +
 			"Needs `aspect:write`. See docs/aspect-type-format.md.",
 		Metadata: needs(auth.AspectWrite),
-	}, func(ctx context.Context, in *importAspectTypeInput) (*aspectTypeOutput, error) {
+	}, func(ctx context.Context, in *importAspectTypeInput) (*createdOutput[aspectTypeBody], error) {
 		me, _ := auth.FromContext(ctx)
 
 		p := aspect.Portable{
@@ -367,7 +392,12 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 			p.Fields[i] = aspect.PortableField{Label: f.Label, Position: f.Position}
 		}
 
-		t, err := svc.Import(ctx, me.AccountID, in.Body.TeamID, p)
+		t, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "import-aspect-type", aspect.ErrNotFound,
+			func(ctx context.Context) (aspect.Type, string, error) {
+				t, err := svc.Import(ctx, me.AccountID, in.Body.TeamID, p)
+				return t, t.ID, err
+			},
+			func(ctx context.Context, id string) (aspect.Type, error) { return svc.Get(ctx, me.AccountID, id) })
 		if err != nil {
 			if e := importError(err); e != nil {
 				return nil, e
@@ -376,7 +406,7 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 			return nil, aspectError(err)
 		}
 
-		return &aspectTypeOutput{Body: asAspectTypeBody(t)}, nil
+		return created(in.key(), replayed, asAspectTypeBody(t)), nil
 	})
 
 	huma.Register(api, huma.Operation{

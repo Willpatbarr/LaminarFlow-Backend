@@ -230,7 +230,8 @@ duplicate; not retrying loses the work. LAM-75.
 
 1 to 128 printable ASCII characters (space to `~`); a UUID is the obvious choice. Anything
 else — empty, longer than 128, non-ASCII or a control character, or the header sent twice —
-is a `422` on `header.Idempotency-Key`. `POST /tickets`, `POST /documents` (LAM-126), `POST /comments` (LAM-99) and `POST /attachments` (LAM-90) take it;
+is a `422` on `header.Idempotency-Key`. `POST /tickets`, `POST /documents` (LAM-126), `POST /comments` (LAM-99) and `POST /attachments` (LAM-90) take it,
+and so does every other create (LAM-127, below);
 the other writes are
 already safe to repeat (`PUT` replaces, archive and unarchive are refused when repeated, and
 all three can carry `If-Match`).
@@ -296,6 +297,51 @@ document conflict has) with `current` the archived document (`archived_at` set) 
 `document.created_by` / `document.idempotency_key` (migration 0039) under the same partial
 unique index and `ON CONFLICT … DO NOTHING` insert. Enforced by `internal/api`'s
 `document_idempotency_test.go`.
+
+**Every other create (LAM-127).** `POST /teams`, `/projects`, `/teams/{id}/statuses`, `/epics`,
+`/sprints`, `/milestones`, `/labels`, `/projects/{id}/boards`, `/boards/{id}/columns`,
+`/saved-views`, `/aspect-types`, `/aspect-types/import` and `/aspect-types/{id}/fields` take the
+same header with the same rules: the same key returns the original resource as it is now with
+`Idempotent-Replayed: true` (`false` on the first use, absent with no key), `200` both times,
+and a replay publishes no second event. Their bodies are ignored on a replay, and a key is
+checked for shape (422 on `header.Idempotency-Key`) before anything else.
+
+*One mechanism, two storage shapes.* The five creates above store the key on their own row
+(`created_by` / `idempotency_key` and a partial unique index; migrations 0032, 0039, 0040, 0044),
+because each has semantics of its own (an archived original is a 409; a review request refuses a
+plain comment's key). They are unchanged. Everything else shares **one table**,
+`idempotency_key (account_id, key, operation, resource_id, claimed_at)` with the primary key
+`(account_id, key, operation)` (migration 0045), run by `internal/idempotency` and wired in
+`internal/api/idempotent.go`. A new create gets the header by embedding `KeyedInput` in its input
+struct and wrapping the service call in `keyed(...)`; there is no schema change per endpoint.
+Why a table rather than thirteen more columns: the creates span thirteen tables, a status, column
+or field is a child row of a parent, and an operation id in the key keeps `create-epic` and
+`create-milestone` from ever answering each other.
+
+- **Scope is account + operation.** The operation is the OpenAPI operation id. The same key on
+  `create-epic` and on `create-milestone` is two independent creates; so is the same key from
+  two accounts. For the child creates (status, column, field) the replay reads the
+  resource under the parent in the path; a key reused for a different parent finds no such
+  child there, is treated as a deleted resource, and creates anew, replacing the old record.
+  Send a fresh key per create, as the outbox does.
+- **Race-safe by claim, not by check.** The first request `INSERT`s the row with no
+  `resource_id` (`ON CONFLICT DO NOTHING`), creates the resource, then records its id.
+  A concurrent request that loses the insert polls (20 ms) until the id appears and replays it;
+  16 concurrent creates make one resource. A create that fails deletes its claim, so the retry
+  works. A claim with no resource for more than 30 seconds (the process died between claim and
+  record) is taken over; the cost is one orphaned resource.
+- **Deleted resources free the key.** These resources are hard-deleted, like comments (0040): a
+  replay whose recorded resource is gone drops the stale row and creates anew. There is no
+  archived-original 409 here because none of these resources has an archive state.
+- **Not covered, on purpose.** `POST /auth/tokens` (a replay would have to return the one-time
+  secret again, or return a token nobody can read), `/auth/register`, `/auth/login`, and the
+  non-create `POST`s (`/list`, `reorder`, `move`, link, search). Those are reads or
+  already safe to repeat.
+- **No expiry** (as above): a key lives until its resource is deleted or its account is.
+
+Enforced by `internal/api`'s `idempotency_shared_test.go`, which runs every create above through
+the same assertions (replay header and id, no second event, per-account and per-operation scope,
+deleted-resource reuse, failure leaves the key free, 16 concurrent, OpenAPI documents the header).
 
 ## 11. A named id must exist, and belong to the right place
 

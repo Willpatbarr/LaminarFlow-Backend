@@ -15,6 +15,7 @@ import (
 	"strconv"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/export"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -25,6 +26,7 @@ type APIOption func(*apiOptions)
 
 type apiOptions struct {
 	export *export.Service
+	idem   *idempotency.Store
 }
 
 // WithExport enables the export endpoint's handler. Without it the route is still

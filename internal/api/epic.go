@@ -18,6 +18,7 @@ import (
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/epic"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -42,6 +43,7 @@ type epicOutput struct {
 }
 
 type createEpicInput struct {
+	KeyedInput
 	Body struct {
 		ProjectID   string `json:"project_id" required:"true" format:"uuid"`
 		Name        string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace."`
@@ -98,7 +100,7 @@ func epicError(err error) error {
 │      →  POST /api/v1/epics/list
 */
 
-func registerEpics(api huma.API, svc *epic.Service, feed ticketFeed) {
+func registerEpics(api huma.API, svc *epic.Service, feed ticketFeed, idem *idempotency.Store) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-epic",
@@ -107,17 +109,24 @@ func registerEpics(api huma.API, svc *epic.Service, feed ticketFeed) {
 		Summary:     "Create an epic in a project",
 		Description: "Announced as `epic.created`.",
 		Metadata:    needs(auth.TicketWrite),
-	}, func(ctx context.Context, in *createEpicInput) (*epicOutput, error) {
+	}, func(ctx context.Context, in *createEpicInput) (*createdOutput[epicBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		e, err := svc.Create(ctx, me.AccountID, in.Body.ProjectID, in.Body.Name, in.Body.Description)
+		e, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "create-epic", epic.ErrNotFound,
+			func(ctx context.Context) (epic.Epic, string, error) {
+				e, err := svc.Create(ctx, me.AccountID, in.Body.ProjectID, in.Body.Name, in.Body.Description)
+				return e, e.ID, err
+			},
+			func(ctx context.Context, id string) (epic.Epic, error) { return svc.Get(ctx, me.AccountID, id) })
 		if err != nil {
 			return nil, epicError(err)
 		}
 
-		feed.publishEpic(e.WorkspaceID, realtime.EpicCreated, me.AccountID, e)
+		if !replayed {
+			feed.publishEpic(e.WorkspaceID, realtime.EpicCreated, me.AccountID, e)
+		}
 
-		return &epicOutput{Body: asEpicBody(e)}, nil
+		return created(in.key(), replayed, asEpicBody(e)), nil
 	})
 
 	huma.Register(api, huma.Operation{

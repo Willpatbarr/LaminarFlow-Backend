@@ -18,6 +18,7 @@ import (
 	"net/http"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
 
@@ -42,6 +43,7 @@ type statusOutput struct {
 }
 
 type createStatusInput struct {
+	KeyedInput
 	ID   string `path:"id" format:"uuid"`
 	Body struct {
 		Name     string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters, and not only whitespace."`
@@ -131,7 +133,7 @@ func plural(n int, one, many string) string {
 │      →  DELETE /api/v1/teams/{id}/statuses/{status_id}?move_to=…
 */
 
-func registerStatuses(api huma.API, svc *team.Service, feed ticketFeed) {
+func registerStatuses(api huma.API, svc *team.Service, feed ticketFeed, idem *idempotency.Store) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-status",
@@ -140,19 +142,43 @@ func registerStatuses(api huma.API, svc *team.Service, feed ticketFeed) {
 		Summary:     "Add a status to a team",
 		Description: "No status is sacred, so there is no special case and no 409: name and position are not unique.",
 		Metadata:    needs(auth.TeamWrite),
-	}, func(ctx context.Context, in *createStatusInput) (*statusOutput, error) {
+	}, func(ctx context.Context, in *createStatusInput) (*createdOutput[statusBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		st, ws, err := svc.CreateStatus(ctx, me.AccountID, in.ID, team.StatusParams{
-			Name: in.Body.Name, Color: in.Body.Color, Category: in.Body.Category, Position: in.Body.Position,
-		})
+		var ws string
+		st, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "create-status", team.ErrStatusNotFound,
+			func(ctx context.Context) (team.Status, string, error) {
+				st, w, err := svc.CreateStatus(ctx, me.AccountID, in.ID, team.StatusParams{
+					Name: in.Body.Name, Color: in.Body.Color, Category: in.Body.Category, Position: in.Body.Position,
+				})
+				ws = w
+				return st, st.ID, err
+			},
+			func(ctx context.Context, id string) (team.Status, error) {
+				// The status's team is the one in the path; a status that moved or went is gone.
+				t, err := svc.Get(ctx, me.AccountID, in.ID)
+				if err != nil {
+					if errors.Is(err, team.ErrNotFound) {
+						return team.Status{}, team.ErrStatusNotFound
+					}
+					return team.Status{}, err
+				}
+				for _, s := range t.Statuses {
+					if s.ID == id {
+						return s, nil
+					}
+				}
+				return team.Status{}, team.ErrStatusNotFound
+			})
 		if err != nil {
 			return nil, statusError(err)
 		}
 
-		feed.publishStatus(ws, realtime.StatusCreated, me.AccountID, in.ID, st)
+		if !replayed {
+			feed.publishStatus(ws, realtime.StatusCreated, me.AccountID, in.ID, st)
+		}
 
-		return &statusOutput{Body: asStatusBody(st)}, nil
+		return created(in.key(), replayed, asStatusBody(st)), nil
 	})
 
 	huma.Register(api, huma.Operation{

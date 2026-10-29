@@ -15,6 +15,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/epic"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/export"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/frontend"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/label"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/milestone"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/project"
@@ -63,7 +64,8 @@ func NewMux(pool *pgxpool.Pool, bundle fs.FS, hub *realtime.Hub, opts ...MuxOpti
 		team.NewService(pool), project.NewService(pool), accountSvc, board.NewService(pool),
 		epic.NewService(pool), sprint.NewService(pool), milestone.NewService(pool), label.NewService(pool), documentSvc,
 		savedview.NewService(pool), search.NewService(pool), comment.NewService(pool, aspectSvc), activity.NewService(pool), attachmentService(pool, mc), hub,
-		WithExport(export.NewService(pool, documentSvc, aspectSvc)))
+		WithExport(export.NewService(pool, documentSvc, aspectSvc)),
+		WithIdempotency(idempotency.NewStore(pool)))
 
 	// Handlers huma cannot describe. Registered before the /api/ catch-all below for
 	// readability only: the mux picks the most specific pattern whatever the order, so

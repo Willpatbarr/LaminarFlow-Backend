@@ -19,6 +19,7 @@ import (
 	"net/http"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/project"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
 
@@ -56,6 +57,7 @@ type teamOutput struct {
 }
 
 type createTeamInput struct {
+	KeyedInput
 	Body struct {
 		WorkspaceID string `json:"workspace_id" required:"true" format:"uuid"`
 		Name        string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace."`
@@ -87,6 +89,7 @@ type projectOutput struct {
 }
 
 type createProjectInput struct {
+	KeyedInput
 	Body struct {
 		TeamID string `json:"team_id" required:"true" format:"uuid"`
 		Name   string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace."`
@@ -179,7 +182,7 @@ func projectError(err error) error {
 │      →  POST /api/v1/teams
 */
 
-func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Service) {
+func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Service, idem *idempotency.Store) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-team",
@@ -191,19 +194,24 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 			"Everything seeded is an ordinary row: rename it, delete it, replace it. Nothing is privileged, " +
 			"and no default labels are seeded, because a label vocabulary is a team's own.",
 		Metadata: needs(auth.TeamWrite),
-	}, func(ctx context.Context, in *createTeamInput) (*teamOutput, error) {
+	}, func(ctx context.Context, in *createTeamInput) (*createdOutput[teamBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		t, err := teamSvc.Create(ctx, me.AccountID, team.CreateParams{
-			WorkspaceID: in.Body.WorkspaceID,
-			Name:        in.Body.Name,
-			Bare:        in.Body.Bare,
-		})
+		t, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "create-team", team.ErrNotFound,
+			func(ctx context.Context) (team.Team, string, error) {
+				t, err := teamSvc.Create(ctx, me.AccountID, team.CreateParams{
+					WorkspaceID: in.Body.WorkspaceID,
+					Name:        in.Body.Name,
+					Bare:        in.Body.Bare,
+				})
+				return t, t.ID, err
+			},
+			func(ctx context.Context, id string) (team.Team, error) { return teamSvc.Get(ctx, me.AccountID, id) })
 		if err != nil {
 			return nil, teamError(err)
 		}
 
-		return &teamOutput{Body: asTeamBody(t)}, nil
+		return created(in.key(), replayed, asTeamBody(t)), nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -262,19 +270,26 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 			"This is the second bootstrap point: board is project-scoped, so it cannot be seeded when the " +
 			"team is created. A project created from a bare team gets a board with no columns.",
 		Metadata: needs(auth.ProjectWrite),
-	}, func(ctx context.Context, in *createProjectInput) (*projectOutput, error) {
+	}, func(ctx context.Context, in *createProjectInput) (*createdOutput[projectBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		p, err := projSvc.Create(ctx, me.AccountID, project.CreateParams{
-			TeamID: in.Body.TeamID,
-			Name:   in.Body.Name,
-			Bare:   in.Body.Bare,
-		})
+		p, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "create-project", project.ErrNotFound,
+			func(ctx context.Context) (project.Project, string, error) {
+				p, err := projSvc.Create(ctx, me.AccountID, project.CreateParams{
+					TeamID: in.Body.TeamID,
+					Name:   in.Body.Name,
+					Bare:   in.Body.Bare,
+				})
+				return p, p.ID, err
+			},
+			func(ctx context.Context, id string) (project.Project, error) {
+				return projSvc.Get(ctx, me.AccountID, id)
+			})
 		if err != nil {
 			return nil, projectError(err)
 		}
 
-		return &projectOutput{Body: asProjectBody(p)}, nil
+		return created(in.key(), replayed, asProjectBody(p)), nil
 	})
 
 	huma.Register(api, huma.Operation{

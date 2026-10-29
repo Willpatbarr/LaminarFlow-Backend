@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/sprint"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
@@ -42,6 +43,7 @@ type sprintOutput struct {
 }
 
 type createSprintInput struct {
+	KeyedInput
 	Body struct {
 		ProjectID string  `json:"project_id" required:"true" format:"uuid"`
 		Name      string  `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace."`
@@ -119,7 +121,7 @@ func sprintError(err error) error {
 │      →  POST /api/v1/sprints/{id}/tickets
 */
 
-func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service, feed ticketFeed) {
+func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service, feed ticketFeed, idem *idempotency.Store) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-sprint",
@@ -128,17 +130,24 @@ func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service,
 		Summary:     "Create a sprint in a project",
 		Description: "Both dates are optional. An `end_date` before `start_date` is a 422 at `body.end_date`. Announced as `sprint.created`.",
 		Metadata:    needs(auth.TicketWrite),
-	}, func(ctx context.Context, in *createSprintInput) (*sprintOutput, error) {
+	}, func(ctx context.Context, in *createSprintInput) (*createdOutput[sprintBody], error) {
 		me, _ := auth.FromContext(ctx)
 
-		s, err := svc.Create(ctx, me.AccountID, in.Body.ProjectID, in.Body.Name, in.Body.StartDate, in.Body.EndDate)
+		s, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "create-sprint", sprint.ErrNotFound,
+			func(ctx context.Context) (sprint.Sprint, string, error) {
+				s, err := svc.Create(ctx, me.AccountID, in.Body.ProjectID, in.Body.Name, in.Body.StartDate, in.Body.EndDate)
+				return s, s.ID, err
+			},
+			func(ctx context.Context, id string) (sprint.Sprint, error) { return svc.Get(ctx, me.AccountID, id) })
 		if err != nil {
 			return nil, sprintError(err)
 		}
 
-		feed.publishSprint(s.WorkspaceID, realtime.SprintCreated, me.AccountID, s)
+		if !replayed {
+			feed.publishSprint(s.WorkspaceID, realtime.SprintCreated, me.AccountID, s)
+		}
 
-		return &sprintOutput{Body: asSprintBody(s)}, nil
+		return created(in.key(), replayed, asSprintBody(s)), nil
 	})
 
 	huma.Register(api, huma.Operation{
