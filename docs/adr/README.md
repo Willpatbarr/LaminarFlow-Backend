@@ -38,5 +38,6 @@ like this?" and the answer is not in the code:
 | [4](0004-registration-single-workspace.md) | Registration in a single-workspace model: join the workspace, no approval step yet | Accepted |
 | [5](0005-in-process-change-feed.md) | The change feed: one in-process hub, best-effort delivery, re-list on reconnect, no broker | Accepted |
 | [6](0006-document-body-markdown.md) | Documents are edited in TipTap and stored as Markdown strings; internal links are `lf://` URLs | Accepted |
+| [7](0007-file-storage-behind-an-interface.md) | File storage: bytes behind an interface, on a local folder first | Accepted |
 
 [nygard]: https://github.com/joelparkerhenderson/architecture-decision-record/blob/main/locales/en/templates/decision-record-template-by-michael-nygard/index.md

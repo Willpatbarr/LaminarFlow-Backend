@@ -19,6 +19,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/db"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/migrate"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/storage"
 	"github.com/Willpatbarr/LaminarFlow-Backend/migrations"
 	"github.com/Willpatbarr/LaminarFlow-Backend/web"
 )
@@ -63,7 +64,13 @@ func main() {
 	}
 
 	hub := realtime.NewHub(realtime.Options{})
-	mux := api.NewMux(pool, bundle, hub)
+	files, err := storage.NewLocal(cfg.AttachmentDir)
+	if err != nil {
+		log.Fatalf("attachments: %v", err)
+	}
+	log.Printf("attachments: %s, up to %d bytes each", cfg.AttachmentDir, cfg.MaxAttachmentBytes)
+
+	mux := api.NewMux(pool, bundle, hub, api.WithAttachments(files, cfg.MaxAttachmentBytes))
 
 	// No ReadTimeout, WriteTimeout or TimeoutHandler, and that is load-bearing: GET
 	// /api/v1/ws is a connection that lives for hours, and a server-wide write deadline

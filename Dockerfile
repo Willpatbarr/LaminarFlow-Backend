@@ -68,7 +68,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
  && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
         go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate \
  && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
-        go build -trimpath -ldflags="-s -w" -o /out/reindex ./cmd/reindex
+        go build -trimpath -ldflags="-s -w" -o /out/reindex ./cmd/reindex \
+ && mkdir -p /out/data/files
 
 # ---------------------------------------------------------------------------
 # Stage 3: the shipped image.
@@ -86,6 +87,11 @@ COPY --from=build /out/laminarflow /laminarflow
 # server will start, and there is no shell here to fetch a binary with.
 COPY --from=build /out/migrate /migrate
 COPY --from=build /out/reindex /reindex
+
+# The default home of uploaded files (ATTACHMENT_DIR in the deployed stack). Created owned
+# by the nonroot user so a named volume or no volume at all works; a bind mount keeps the
+# host folder's ownership and docs/deploy.md says how to set it.
+COPY --from=build --chown=65532:65532 /out/data /data
 
 # Documentation only - PORT still decides what the server binds. Kept at the
 # same default as internal/config so the two do not disagree.

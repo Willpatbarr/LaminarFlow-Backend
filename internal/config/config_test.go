@@ -11,7 +11,7 @@ import (
 func setEnv(t *testing.T, vars map[string]string) {
 	t.Helper()
 
-	for _, key := range []string{"PORT", "DATABASE_URL", "MIGRATE_ON_STARTUP", "FRONTEND_DIR"} {
+	for _, key := range []string{"PORT", "DATABASE_URL", "MIGRATE_ON_STARTUP", "FRONTEND_DIR", "ATTACHMENT_DIR", "MAX_ATTACHMENT_BYTES"} {
 		t.Setenv(key, vars[key])
 	}
 }
@@ -123,5 +123,29 @@ func TestFailedLoadReturnsZeroConfig(t *testing.T) {
 	}
 	if cfg != (Config{}) {
 		t.Errorf("Load returned %+v on error, want the zero Config", cfg)
+	}
+}
+
+func TestLoadAttachmentSettings(t *testing.T) {
+	base := map[string]string{"DATABASE_URL": "postgres://localhost/db"}
+
+	setEnv(t, base)
+	cfg, err := Load()
+	if err != nil || cfg.AttachmentDir != DefaultAttachmentDir || cfg.MaxAttachmentBytes != DefaultMaxAttachmentBytes {
+		t.Fatalf("defaults = %q, %d, %v", cfg.AttachmentDir, cfg.MaxAttachmentBytes, err)
+	}
+
+	setEnv(t, map[string]string{"DATABASE_URL": base["DATABASE_URL"], "ATTACHMENT_DIR": "/data/files", "MAX_ATTACHMENT_BYTES": "1048576"})
+	cfg, err = Load()
+	if err != nil || cfg.AttachmentDir != "/data/files" || cfg.MaxAttachmentBytes != 1<<20 {
+		t.Fatalf("set = %q, %d, %v", cfg.AttachmentDir, cfg.MaxAttachmentBytes, err)
+	}
+
+	// A limit that does not parse stops the server rather than silently uncapping uploads.
+	for _, bad := range []string{"lots", "0", "-5", "1.5"} {
+		setEnv(t, map[string]string{"DATABASE_URL": base["DATABASE_URL"], "MAX_ATTACHMENT_BYTES": bad})
+		if _, err := Load(); err == nil {
+			t.Errorf("MAX_ATTACHMENT_BYTES=%q was accepted", bad)
+		}
 	}
 }

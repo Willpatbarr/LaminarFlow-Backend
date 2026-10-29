@@ -18,7 +18,9 @@ func TestNoTicketSQLOutsideThisPackage(t *testing.T) {
 		Tables: []string{"ticket"},
 		// internal/comment reads ticket to prove a comment's parent is live and in the caller's
 		// workspace (LAM-99), inside the statement that writes the comment.
-		Readers: []string{"comment", "search"},
+		// internal/attachment (LAM-90) reads ticket for the same reason (a file is only stored
+		// against a live ticket in the caller's workspace).
+		Readers: []string{"attachment", "comment", "search"},
 		// A comment needs a ticket to hang off; an index row needs one to describe;
 		// and internal/account needs an assigned ticket to prove that deleting an
 		// account leaves the work and drops only the name. Those fixtures are

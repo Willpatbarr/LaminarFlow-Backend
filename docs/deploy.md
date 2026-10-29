@@ -63,6 +63,23 @@ Copy `deploy/.env.example` to `deploy/.env` on the host and fill it in, then:
 The app reaches Postgres over the compose network as `db`. Postgres publishes no
 host port — there is no reason to put a database on the tailnet.
 
+### Uploaded files
+
+Attachments and images (LAM-90) are kept as files in `FILES_HOST` on the host, mounted at
+`/data/files` in the container (`ATTACHMENT_DIR`). **This folder is state, like the
+database: back it up with Postgres.** The database holds each file's name, type and size;
+the folder holds the bytes. A restore needs both from the same moment, and a database
+restored without its folder leaves attachments whose download is a 404.
+
+The app runs as the `nonroot` user (uid 65532), so a bind-mounted folder must be writable
+by it, or the server refuses to start with "not writable":
+
+    mkdir -p files && sudo chown 65532:65532 files
+
+Point `FILES_HOST` at the data disk, next to `PGDATA_HOST`. The per-file size limit is
+`MAX_ATTACHMENT_BYTES` (default 25 MiB). A reverse proxy in front of the app needs a body
+limit at least that large.
+
 ### First run against an existing database
 
 A database whose schema was built by hand before the migration runner existed
@@ -142,7 +159,7 @@ Same image, same compose file, same `.env` shape. Two differences:
 stays private to the tailnet. It is not involved in running the app; the app is
 compose like anywhere else.
 
-**Storage** is whatever the server's data mount is, set through `PGDATA_HOST`.
+**Storage** is whatever the server's data mount is, set through `PGDATA_HOST` and `FILES_HOST`.
 
 ## Both hosts: Tailscale
 
@@ -169,6 +186,9 @@ a particular machine.
 | Migrate on startup | `MIGRATE_ON_STARTUP` | `false` in the binary, `true` in the deployed stack |
 | Frontend bundle | embedded; `FRONTEND_DIR` overrides | embedded |
 | Postgres data path | `PGDATA_HOST` | `./pgdata` |
+| Uploaded files path (host) | `FILES_HOST` | `./files` |
+| Uploaded files path (in the container) | `ATTACHMENT_DIR` | `data/files` in the binary, `/data/files` in the deployed stack |
+| Largest upload | `MAX_ATTACHMENT_BYTES` | `26214400` (25 MiB) |
 | Published interface | `APP_BIND` | `127.0.0.1` |
 | Image tag | `APP_IMAGE` | `laminarflow:dev` |
 
@@ -179,7 +199,9 @@ Not present, and deliberately so:
   there is nothing to configure. Add `BASE_URL` when session cookies or outbound
   links need it — not before, because an unused setting is one more thing that
   can be wrong.
-* **No storage path setting.** There is no file upload feature yet. The only
-  persistent state is Postgres, covered by `PGDATA_HOST`.
+* **No object-storage setting.** Uploaded files are a local folder
+  (`ATTACHMENT_DIR`) behind an interface (ADR 7); a cloud backend is added when a
+  cloud host needs one. Persistent state is therefore two things: Postgres
+  (`PGDATA_HOST`) and the files folder (`FILES_HOST`).
 * **No Tailscale hostname anywhere.** Tailscale is a property of the host, not
   the app; the app binds a port and does not care what reaches it.
