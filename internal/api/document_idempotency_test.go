@@ -196,7 +196,7 @@ func TestADocumentReplayAfterArchiveIsA409CarryingTheDocument(t *testing.T) {
 }
 
 func TestTheOpenAPIDocumentsTheDocumentKeyAndReplay(t *testing.T) {
-	api := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI()
+	api := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI()
 	op := api.Paths[V1+"/documents"].Post
 	if op == nil {
 		t.Fatal("no POST /documents in the document")

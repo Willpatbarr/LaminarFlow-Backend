@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/activity"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -91,15 +93,16 @@ func (s *Service) Move(ctx context.Context, accountID string, p MoveParams) (Tic
 	// statement that takes the lock, so a refusal is explained by the same noRow every
 	// other write uses.
 	var projectID, teamID string
+	var wasStatus *string
 	err = tx.QueryRow(ctx,
-		expand(`SELECT t.project_id::text,
+		expand(`SELECT t.project_id::text, t.status_id::text,
 		               (SELECT pr.team_id::text FROM project pr WHERE pr.id = t.project_id)
 		          FROM ticket t
 		         WHERE t.id = $1::uuid AND `+liveOnly+` AND `+callerCanReach+`
 		           AND ($3::int IS NULL OR t.version = $3::int)
 		           FOR UPDATE OF t`, "$2"),
 		p.ID, accountID, p.IfVersion,
-	).Scan(&projectID, &teamID)
+	).Scan(&projectID, &wasStatus, &teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Ticket{}, nil, s.noRow(ctx, tx, accountID, p.ID, p.IfVersion, false)
 	}
@@ -133,6 +136,12 @@ func (s *Service) Move(ctx context.Context, accountID string, p MoveParams) (Tic
 	).Scan(t.dest()...)
 	if err != nil {
 		return Ticket{}, nil, fmt.Errorf("ticket: move: %w", err)
+	}
+
+	if !same(wasStatus, t.StatusID) {
+		if err := t.note(ctx, tx, accountID, activity.StatusChanged, nil, wasStatus, t.StatusID); err != nil {
+			return Ticket{}, nil, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

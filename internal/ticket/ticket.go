@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/activity"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/search"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
 
@@ -141,6 +142,10 @@ type Ticket struct {
 	EpicID      *string
 	MilestoneID *string
 	LabelIDs    []string
+
+	// Activity is set only on the Ticket a write returns: the log entries that write made
+	// (LAM-89), for the caller to announce after the commit. Reads leave it nil.
+	Activity []activity.Entry
 }
 
 // dest is the scan target for columns, in columns' order. Written once because the
@@ -353,6 +358,10 @@ func (s *Service) CreateIdempotent(ctx context.Context, accountID string, p Crea
 		}
 	}
 
+	if err := t.note(ctx, tx, accountID, activity.Created, nil, nil, nil); err != nil {
+		return Ticket{}, false, err
+	}
+
 	if err := search.IndexTicket(ctx, tx, t.ID); err != nil {
 		return Ticket{}, false, err
 	}
@@ -422,6 +431,14 @@ func (s *Service) Update(ctx context.Context, accountID string, p UpdateParams) 
 	}
 	defer tx.Rollback(ctx)
 
+	// The state being replaced, read under the row lock, is what the log compares against.
+	// A ticket that is not there is not an error here: the UPDATE below finds nothing too and
+	// explains why, as it always has.
+	before, found, err := lockSnapshot(ctx, tx, p.ID)
+	if err != nil {
+		return Ticket{}, err
+	}
+
 	// updated_at is set here, not by a trigger and not by the column default. The
 	// default only fires on insert, so without this every updated_at in the table
 	// would be a creation timestamp wearing a misleading name.
@@ -461,6 +478,12 @@ func (s *Service) Update(ctx context.Context, accountID string, p UpdateParams) 
 
 	if p.LabelIDs != nil {
 		if err := setLabels(ctx, tx, &t, p.LabelIDs); err != nil {
+			return Ticket{}, err
+		}
+	}
+
+	if found {
+		if err := t.diff(ctx, tx, accountID, before); err != nil {
 			return Ticket{}, err
 		}
 	}
@@ -557,6 +580,14 @@ func (s *Service) setArchived(ctx context.Context, accountID, id string, archive
 	}
 	if err != nil {
 		return Ticket{}, fmt.Errorf("ticket: set archived: %w", err)
+	}
+
+	kind := activity.Unarchived
+	if archived {
+		kind = activity.Archived
+	}
+	if err := t.note(ctx, tx, accountID, kind, nil, nil, nil); err != nil {
+		return Ticket{}, err
 	}
 
 	// Archiving has to remove the index row, not merely set a column - otherwise an

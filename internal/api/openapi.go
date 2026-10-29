@@ -13,6 +13,7 @@ import (
 	"net/http"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/account"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/activity"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/board"
@@ -65,7 +66,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	settingSvc *setting.Service, teamSvc *team.Service, projSvc *project.Service,
 	accountSvc *account.Service, boardSvc *board.Service, epicSvc *epic.Service, sprintSvc *sprint.Service,
 	milestoneSvc *milestone.Service, labelSvc *label.Service, documentSvc *document.Service,
-	savedViewSvc *savedview.Service, searchSvc *search.Service, commentSvc *comment.Service, hub *realtime.Hub) huma.API {
+	savedViewSvc *savedview.Service, searchSvc *search.Service, commentSvc *comment.Service, activitySvc *activity.Service, hub *realtime.Hub) huma.API {
 	// Before anything can raise an error. huma.NewError is a global, so this
 	// is the one place that sets it - see useErrorEnvelope.
 	useErrorEnvelope()
@@ -122,6 +123,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	registerDocuments(api, documentSvc, ticketSvc, commentSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerComments(api, commentSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerReviewRequests(api, commentSvc, ticketFeed{hub: hub, projects: projSvc})
+	registerActivity(api, activitySvc, ticketSvc, documentSvc)
 	registerSavedViews(api, savedViewSvc)
 	registerSearch(api, searchSvc)
 

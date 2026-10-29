@@ -432,7 +432,7 @@ func TestTheConflictSchemaCarriesTheExtensionMembers(t *testing.T) {
 func schemaNamed(t *testing.T, name string) *huma.Schema {
 	t.Helper()
 
-	s := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI().Components.Schemas.Map()[name]
+	s := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI().Components.Schemas.Map()[name]
 	if s == nil {
 		t.Fatalf("schema %s is not in the document", name)
 	}

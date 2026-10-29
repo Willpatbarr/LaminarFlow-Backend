@@ -232,7 +232,20 @@ through the comment endpoints and publishes `comment.updated` / `comment.deleted
 is non-null for a review request: remove by `id` from both lists on `comment.deleted`. A `comment.updated` does
 not carry `reviewers` or `anchor_text`; keep what you hold. On doubt, re-list with `POST /review-requests/list`.
 
+## Activity events (LAM-89)
+
+`activity.created` announces one entry of the activity log (`POST /activity/list`, [activity.md](activity.md)). It
+carries `type`, `activity_id`, `actor_id`, `at` (the entry's `created_at`), `activity` - the whole entry in exactly
+the shape of `ActivityBody` - and the entity it is about as `ticket_id` or `document_id` (exactly one). It has **no**
+`version`, `ticket` or `document`: the entity's own event says what it looks like now.
+
+It is published right after the `ticket.*` or `document.*` event of the write that made the entry, one event per entry
+(a write that changes a title and a status makes two), and only after the commit. Entries are immutable, so there is no
+`activity.updated` or `activity.deleted`. Apply one to the history you hold for that entity: add `activity` at the top
+(skip it if its `id` is already there). A ticket's status change from a status delete, and a board drop into another
+column, each publish theirs too. On doubt, re-list.
+
 ## Not here yet
 
-No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones, labels, documents, comments and review requests,
+No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones, labels, documents, comments, review requests and activity,
 no client-to-server messages, no resume. Each is additive.

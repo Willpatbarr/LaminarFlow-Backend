@@ -250,6 +250,7 @@ func (f ticketFeed) publish(ctx context.Context, kind, actorID string, t ticket.
 		At:       t.UpdatedAt.UTC(),
 		Ticket:   asBody(t),
 	})
+	f.publishActivity(workspace, actorID, t.Activity)
 }
 
 /*
@@ -299,6 +300,7 @@ func (f ticketFeed) publishMoved(workspaceID, actorID string, moved []ticket.Tic
 			At:       t.UpdatedAt.UTC(),
 			Ticket:   asBody(t),
 		})
+		f.publishActivity(workspaceID, actorID, t.Activity)
 	}
 }
 
@@ -435,6 +437,7 @@ func (f ticketFeed) publishDocument(kind, actorID string, d document.Document) {
 	}
 
 	f.hub.Publish(d.WorkspaceID, e)
+	f.publishActivity(d.WorkspaceID, actorID, d.Activity)
 }
 
 // publishColumn announces a column write as board.column.updated: the column and the
