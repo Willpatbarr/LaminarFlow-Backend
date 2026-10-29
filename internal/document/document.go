@@ -102,6 +102,20 @@ type Change struct {
 	WorkspaceID string
 	Before      map[string]any
 	After       map[string]any
+
+	// Conversion is set only when the write turned a normal document into an aspect one
+	// (LAM-136), and nil otherwise. Anchors that named ContentKey must follow the text.
+	Conversion *Conversion
+}
+
+// Conversion says where a normal document's text went when it became an aspect document.
+type Conversion struct {
+	// Fields are the new aspect type's field ids, in the type's order.
+	Fields []string
+	// MovedTo is the field id that received the ContentKey text unchanged, or empty when
+	// no text moved: the body had none, or the request filled the first field itself and so
+	// the old text was dropped.
+	MovedTo string
 }
 
 // Reaction is code that must move in step with a document's body but owns tables this package
@@ -109,7 +123,7 @@ type Change struct {
 // package, so it cannot be called directly). It runs in the update's transaction, after the
 // body is written and before the commit, so its writes and the body commit or roll back
 // together. It returns the ids of the review requests it sent back to pending, which the
-// caller announces after the commit (Document.StaledReviews).
+// caller announces after the commit (Document.StaledReviews). It also returns the ones it re-anchored when Change.Conversion is set (LAM-136).
 type Reaction func(ctx context.Context, tx pgx.Tx, c Change) ([]string, error)
 
 // OnWrite registers a Reaction. Call it while wiring the service, before it serves requests;
@@ -352,14 +366,17 @@ func (s *Service) WriteIdempotent(ctx context.Context, p SaveParams) (Document, 
 			return d, true, nil
 		}
 	} else {
-		var before map[string]any
-		d, before, err = s.update(ctx, tx, p, normalized)
+		var (
+			before map[string]any
+			conv   *Conversion
+		)
+		d, before, conv, err = s.update(ctx, tx, p, normalized)
 		if err != nil {
 			return Document{}, false, err
 		}
 
 		for _, react := range s.reactions {
-			staled, err := react(ctx, tx, Change{DocumentID: d.ID, WorkspaceID: d.WorkspaceID, Before: before, After: d.Body})
+			staled, err := react(ctx, tx, Change{DocumentID: d.ID, WorkspaceID: d.WorkspaceID, Before: before, After: d.Body, Conversion: conv})
 			if err != nil {
 				return Document{}, false, err
 			}
@@ -407,22 +424,24 @@ func (p SaveParams) checkShape() error {
 // into the type's first field unless the request already filled it. Whatever else the
 // normal body held is not carried: it is not a field id, and keeping it would store a key
 // the next write would refuse.
-func (s *Service) checkBody(ctx context.Context, workspaceID string, p SaveParams, body, current map[string]any, converting bool) (map[string]any, error) {
+func (s *Service) checkBody(ctx context.Context, workspaceID string, p SaveParams, body, current map[string]any, converting bool) (map[string]any, *Conversion, error) {
 	if p.Type != TypeAspect {
-		return body, nil
+		return body, nil, nil
 	}
 
 	ids, err := s.aspects.FieldIDs(ctx, workspaceID, p.AspectTypeID)
 	if errors.Is(err, aspect.ErrNotFound) {
-		return nil, ErrAspectTypeNotFound
+		return nil, nil, ErrAspectTypeNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("document: read aspect fields: %w", err)
+		return nil, nil, fmt.Errorf("document: read aspect fields: %w", err)
 	}
 
+	var conv *Conversion
 	if converting {
+		conv = &Conversion{Fields: ids}
 		if len(ids) == 0 {
-			return nil, &FieldError{Kind: ErrNoFields, Field: "aspect_type_id"}
+			return nil, nil, &FieldError{Kind: ErrNoFields, Field: "aspect_type_id"}
 		}
 
 		content, ok := body[ContentKey]
@@ -433,6 +452,7 @@ func (s *Service) checkBody(ctx context.Context, workspaceID string, p SaveParam
 		}
 		if _, filled := body[ids[0]]; ok && !filled {
 			body[ids[0]] = content
+			conv.MovedTo = ids[0]
 		}
 	}
 
@@ -448,11 +468,11 @@ func (s *Service) checkBody(ctx context.Context, workspaceID string, p SaveParam
 	sort.Strings(keys)
 	for _, key := range keys {
 		if !allowed[key] {
-			return nil, &FieldError{Kind: ErrUnknownField, Field: key}
+			return nil, nil, &FieldError{Kind: ErrUnknownField, Field: key}
 		}
 	}
 
-	return body, nil
+	return body, conv, nil
 }
 
 // insert makes the row. The workspace comes from, in order: the team or project it is filed
@@ -473,7 +493,7 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 		return Document{}, false, err
 	}
 
-	body, err = s.checkBody(ctx, workspaceID, p, body, nil, false)
+	body, _, err = s.checkBody(ctx, workspaceID, p, body, nil, false)
 	if err != nil {
 		return Document{}, false, err
 	}
@@ -623,24 +643,24 @@ func (s *Service) insertWorkspace(ctx context.Context, tx pgx.Tx, p SaveParams) 
 // update replaces the row under a lock, so the version it checks is the version it writes
 // over: two writers holding the same version both reach the lock, and the second reads the
 // first's commit.
-func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[string]any) (Document, map[string]any, error) {
+func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[string]any) (Document, map[string]any, *Conversion, error) {
 	cur, err := s.lock(ctx, tx, p.ID, p.WorkspaceID, p.AccountID)
 	if err != nil {
-		return Document{}, nil, err
+		return Document{}, nil, nil, err
 	}
 	if err := cur.refuse(p.IfVersion, false); err != nil {
-		return Document{}, nil, err
+		return Document{}, nil, nil, err
 	}
 
 	converting := cur.Type == TypeNormal && p.Type == TypeAspect
-	body, err = s.checkBody(ctx, cur.WorkspaceID, p, body, cur.Body, converting)
+	body, conv, err := s.checkBody(ctx, cur.WorkspaceID, p, body, cur.Body, converting)
 	if err != nil {
-		return Document{}, nil, err
+		return Document{}, nil, nil, err
 	}
 
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return Document{}, nil, fmt.Errorf("marshal body: %w", err)
+		return Document{}, nil, nil, fmt.Errorf("marshal body: %w", err)
 	}
 
 	var d Document
@@ -655,14 +675,14 @@ func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 		string(raw), p.Title, p.Type, p.aspectType(), p.ID,
 	))
 	if err != nil {
-		return Document{}, nil, fmt.Errorf("write body: %w", err)
+		return Document{}, nil, nil, fmt.Errorf("write body: %w", err)
 	}
 
 	if err := d.diff(ctx, tx, p.AccountID, cur); err != nil {
-		return Document{}, nil, err
+		return Document{}, nil, nil, err
 	}
 
-	return d, cur.Body, nil
+	return d, cur.Body, conv, nil
 }
 
 // memberOf is the caller-scoping predicate, for the one place it is composed into a list.

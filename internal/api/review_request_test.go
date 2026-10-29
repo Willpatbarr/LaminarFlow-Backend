@@ -744,3 +744,91 @@ func TestADecisionRecordsWhoAndNoteAndIsNotAnEdit(t *testing.T) {
 		t.Errorf("listed after edit = %+v", got)
 	}
 }
+
+// LAM-136. Turning a document into an aspect carries its review anchors to the field the text
+// moved to.
+
+func (f feed) makeAspect(t *testing.T, doc documentWire, typeID string, body map[string]string) {
+	t.Helper()
+
+	rec := call(t, f.mux, http.MethodPut, V1+"/documents/"+doc.ID, map[string]any{
+		"title": "Notes", "type": "aspect", "aspect_type_id": typeID, "body": body,
+	}, f.willC)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("convert document: %d %.300s", rec.Code, rec.Body)
+	}
+}
+
+func TestConvertingToAnAspectMovesReviewAnchorsToTheFirstField(t *testing.T) {
+	f := newFeed(t)
+	doc := f.document(t, f.willC, map[string]any{"title": "Notes", "project_id": f.project.ID,
+		"body": map[string]string{"content": "# Meeting\nShip it on Friday."}})
+	mk := func(status string) reviewWire {
+		r := f.review(t, f.willC, map[string]any{"document_id": doc.ID, "region_start": 21, "region_end": 27,
+			"body": "Friday?", "reviewer_ids": []string{f.sarah.AccountID}})
+		if status != "pending" {
+			if rec := f.decide(t, f.sarahC, r.ID, status); rec.Code != http.StatusOK {
+				t.Fatalf("%s: %d %s", status, rec.Code, rec.Body)
+			}
+		}
+
+		return r
+	}
+	pending, approved, changes := mk("pending"), mk("approved"), mk("changes_requested")
+	typeID, fields := f.aspectType(t, f.willC, "Summary", "Other")
+	watcher := f.open(t, f.cookie(f.sarahC))
+
+	f.makeAspect(t, doc, typeID, map[string]string{})
+
+	seen := map[string]bool{}
+	for len(seen) < 3 {
+		ev := readEvent(t, watcher)
+		if ev.Type == "review_request.updated" && ev.ReviewRequest["field_id"] == fields[0] {
+			seen[ev.CommentID] = true
+		}
+	}
+
+	want := map[string]string{pending.ID: "pending", approved.ID: "approved", changes.ID: "changes_requested"}
+	for _, r := range f.reviews(t, f.willC, where(cond("document_id", doc.ID))) {
+		if r.FieldID == nil || *r.FieldID != fields[0] || r.RegionStart != 21 || r.RegionEnd != 27 ||
+			r.ReviewStatus != want[r.ID] {
+			t.Errorf("after conversion %+v", r)
+		}
+		if got := f.oneReview(t, r.ID); got.StaleReason != nil {
+			t.Errorf("%s went stale: %v", r.ID, *got.StaleReason)
+		}
+	}
+}
+
+func TestConvertingWithAnEditedFirstFieldFindsTheAnchorTextOrLeavesItAlone(t *testing.T) {
+	f := newFeed(t)
+	doc := f.document(t, f.willC, map[string]any{"title": "Notes", "project_id": f.project.ID,
+		"body": map[string]string{"content": "# Meeting\nShip it on Friday."}})
+	review := func(start, end int) reviewWire {
+		return f.review(t, f.willC, map[string]any{"document_id": doc.ID, "region_start": start, "region_end": end,
+			"body": "?", "reviewer_ids": []string{f.sarah.AccountID}})
+	}
+	friday, meeting := review(21, 27), review(2, 9)
+	if rec := f.decide(t, f.sarahC, friday.ID, "approved"); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body)
+	}
+	typeID, fields := f.aspectType(t, f.willC, "Summary", "Other")
+
+	// The request fills the first field itself, so the old text is dropped: "Friday" is still
+	// there, shifted; "Meeting" is gone.
+	f.makeAspect(t, doc, typeID, map[string]string{fields[0]: "Plan\nShip it on Friday."})
+
+	for _, r := range f.reviews(t, f.willC, where(cond("document_id", doc.ID))) {
+		switch r.ID {
+		case friday.ID:
+			if r.FieldID == nil || *r.FieldID != fields[0] || r.RegionStart != 16 || r.RegionEnd != 22 ||
+				r.ReviewStatus != "approved" {
+				t.Errorf("found anchor = %+v", r)
+			}
+		case meeting.ID:
+			if r.FieldID != nil || r.RegionStart != 2 || r.RegionEnd != 9 {
+				t.Errorf("anchor text not found should be untouched, got %+v", r)
+			}
+		}
+	}
+}

@@ -239,7 +239,8 @@ A review request is a comment (see [review-requests.md](review-requests.md)), an
 
 * `review_request.created` - `POST /review-requests`.
 * `review_request.updated` - `PUT /review-requests/{id}` that changed the `review_status`, and also an approved
-  request going stale (LAM-122): published after the `PUT /documents/{id}` that sent it back to `pending` commits,
+  request going stale (LAM-122), and a request re-anchored to a field when its document became an aspect
+  (LAM-136; `field_id` and the offsets are in the body): published after the `PUT /documents/{id}` that sent it back to `pending` commits,
   with `stale_reason` set in the body and the document write's account as `actor_id`. One event per request, after
   the `document.updated` of that write. Setting the status
   it already has publishes nothing, nor does a refused write.
