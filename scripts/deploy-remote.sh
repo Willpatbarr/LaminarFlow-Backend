@@ -48,6 +48,10 @@ git archive "$BACKEND_REF" | ssh "$HOST" "cd ~/$REMOTE_DIR/build && tar -x"
 git -C "$FRONTEND_REPO" archive "$FRONTEND_REF" | ssh "$HOST" "cd ~/$REMOTE_DIR/build/frontend && tar -x"
 
 ssh "$HOST" "cat > ~/$REMOTE_DIR/docker-compose.yml" < deploy/docker-compose.yml
+# Backup tooling lives beside the compose file (docs/deploy.md); the nightly cron entry is the operator's.
+for f in backup.sh restore.sh; do
+    ssh "$HOST" "cat > ~/$REMOTE_DIR/$f && chmod 700 ~/$REMOTE_DIR/$f" < "scripts/$f"
+done
 
 # The remote half runs as one script so every step shares a shell.
 ssh "$HOST" sh -s -- "$REMOTE_DIR" "$TAG" "$NODE_VERSION" "$GO_VERSION" \

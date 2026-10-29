@@ -69,6 +69,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
         go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate \
  && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
         go build -trimpath -ldflags="-s -w" -o /out/reindex ./cmd/reindex \
+ && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+        go build -trimpath -ldflags="-s -w" -o /out/export ./cmd/export \
  && mkdir -p /out/data/files
 
 # ---------------------------------------------------------------------------
@@ -87,6 +89,7 @@ COPY --from=build /out/laminarflow /laminarflow
 # server will start, and there is no shell here to fetch a binary with.
 COPY --from=build /out/migrate /migrate
 COPY --from=build /out/reindex /reindex
+COPY --from=build /out/export /export
 
 # The default home of uploaded files (ATTACHMENT_DIR in the deployed stack). Created owned
 # by the nonroot user so a named volume or no volume at all works; a bind mount keeps the

@@ -14,6 +14,7 @@ instructions live.
 | `/laminarflow` | The server. Entrypoint. Serves the API and the frontend on one port. |
 | `/migrate` | Schema tool — `up`, `down [n]`, `status`, `baseline`. |
 | `/reindex` | Rebuilds `search_index` from the document blobs. |
+| `/export` | Writes the whole workspace as a zip of JSON and Markdown (see Export below). |
 
 Base is `gcr.io/distroless/static-debian12:nonroot` — CA certificates, timezone
 data, and a nonroot user. No shell, no package manager, no libc. The frontend
@@ -100,6 +101,74 @@ a database that already has migration history, so it cannot hide a failed run.
 follows the image. Set it to `false` and run `/migrate up` by hand if you would
 rather see migrations as a separate step.
 
+## Backup, restore and export
+
+State is two things, so a backup is two things taken together: the Postgres database and
+the uploaded-files folder (`FILES_HOST`). Documents and tickets are all in Postgres (their
+bodies are `jsonb` columns), so `pg_dump` covers them; the folder holds attachment bytes.
+
+### Backup
+
+    ./backup.sh                  # on the home server: ~/laminarflow/backup.sh
+    ./scripts/backup.sh          # from a checkout, against deploy/ (COMPOSE_DIR=... to aim elsewhere)
+
+Writes `backups/laminarflow-backup-<UTC timestamp>.tar.gz` (directory mode 700, archive
+mode 600) containing `db.dump` (`pg_dump --format=custom`), `files.tar` (the files folder)
+and `MANIFEST` (schema version, attachment row and file counts, sha256 of both). The stack
+keeps running; nothing is stopped. The dump is one snapshot and the folder is copied after
+it. Files are written once under a uuid and a row only appears after its file, so every
+file a dumped row names is already there. The script warns if a row has no file. The
+newest `KEEP` (default 14) archives are kept. Heavy steps run at `nice -n 19`; the folder
+is owned by uid 65532 with mode 700, so it is read through a throwaway `postgres:17`
+container, no root needed.
+
+**Nightly, on the home server** (user crontab, no root; `crontab -e` as `willbarr`):
+
+    15 3 * * * cd $HOME/laminarflow && nice -n 19 flock -n backups/.lock ./backup.sh >> backups/backup.log 2>&1
+
+Archives land in `~/laminarflow/backups/`, **on the same disk as the data**. That protects
+against a bad upgrade or a deleted record, not against the disk dying: copy them off the
+machine as well, for example `rsync -a willbarr@192.168.4.46:laminarflow/backups/ ~/laminarflow-backups/`
+from the workstation. `deploy-remote.sh` copies `backup.sh` and `restore.sh` next to the
+compose file; the cron entry is not installed by it.
+
+### Restore
+
+    ./restore.sh backups/laminarflow-backup-20261029T031500Z.tar.gz
+
+`restore.sh` cannot overwrite anything: it refuses when the app container is running, when
+the database already has tables, or when the files folder is not empty. It checks the
+archive's checksums, starts only the `db` service, loads the dump in one transaction,
+unpacks the files and gives them to uid 65532, then checks every attachment row has its
+file. It does not start the app; run `docker compose up -d` after it says OK.
+
+Recovering a broken install means emptying the old state on purpose first:
+
+    docker compose down -v          # the compose file uses bind mounts, so also empty
+    rm -rf pgdata files             # the two folders, or point PGDATA_HOST / FILES_HOST elsewhere
+    ./restore.sh backups/<archive>
+    docker compose up -d
+
+**Rehearse without touching production.** Make a scratch directory with a copy of
+`docker-compose.yml`, `backup.sh` and `restore.sh`, and an `.env` with its own
+`COMPOSE_PROJECT_NAME`, `POSTGRES_PASSWORD`, `PGDATA_HOST` and `FILES_HOST`, then run
+`./restore.sh` there. `db` publishes no port, so a scratch project collides with nothing.
+LAM-102 was verified this way: seed tickets, documents and attachments, back up,
+`docker compose down -v`, restore into an empty project, then compare `tickets/list`
+and the export before and after (identical).
+
+### Export (people and scripts, not a backup)
+
+    set -a && source .env && set +a && go run ./cmd/export -o export.zip      # from a checkout
+    docker compose run --rm -T --entrypoint /export app -o - > export.zip         # deployed
+    curl -X POST -b "$COOKIE" http://host:8080/api/v1/export -o export.zip      # session only
+
+One JSON file per table (`tickets.json`, `documents.json` without bodies, `teams.json`,
+`aspect_types.json`, ...), `documents/<id>.md` per document body (aspect documents get one
+`##` section per field, headed by the field's label), and `manifest.json`. All of it is read
+in one transaction. Passwords, tokens and sessions are not in it, and neither are
+attachment bytes, only their records: that is `backup.sh`'s job.
+
 ## Debugging without a shell
 
 The image has no shell, which is deliberate for a network-exposed service. What
@@ -179,7 +248,7 @@ first run also creates everything below. `BACKEND_REF`, `FRONTEND_REF`,
 | Postgres data | `~/laminarflow/pgdata` |
 | Uploaded files | `~/laminarflow/files`, chowned to 65532 by a throwaway container |
 
-Back up `pgdata` and `files` together. The app is at `http://192.168.4.46:8080`
+Back up `pgdata` and `files` together (`~/laminarflow/backup.sh`, nightly from the user crontab at 03:15; see "Backup, restore and export"). The app is at `http://192.168.4.46:8080`
 (`APP_BIND=0.0.0.0` in that `.env`: LAN only; Tailscale exposure is not
 configured). It restarts on boot through `restart: unless-stopped` and the
 systemd-enabled Docker service. Each deploy tags the image `laminarflow:<sha>`

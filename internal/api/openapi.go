@@ -68,7 +68,12 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	settingSvc *setting.Service, teamSvc *team.Service, projSvc *project.Service,
 	accountSvc *account.Service, boardSvc *board.Service, epicSvc *epic.Service, sprintSvc *sprint.Service,
 	milestoneSvc *milestone.Service, labelSvc *label.Service, documentSvc *document.Service,
-	savedViewSvc *savedview.Service, searchSvc *search.Service, commentSvc *comment.Service, activitySvc *activity.Service, attachmentSvc *attachment.Service, hub *realtime.Hub) huma.API {
+	savedViewSvc *savedview.Service, searchSvc *search.Service, commentSvc *comment.Service, activitySvc *activity.Service, attachmentSvc *attachment.Service, hub *realtime.Hub, opts ...APIOption) huma.API {
+	var ao apiOptions
+	for _, o := range opts {
+		o(&ao)
+	}
+
 	// Before anything can raise an error. huma.NewError is a global, so this
 	// is the one place that sets it - see useErrorEnvelope.
 	useErrorEnvelope()
@@ -127,6 +132,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	registerReviewRequests(api, commentSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerActivity(api, activitySvc, ticketSvc, documentSvc)
 	registerAttachments(api, attachmentSvc)
+	registerExport(api, ao.export)
 	registerSavedViews(api, savedViewSvc)
 	registerSearch(api, searchSvc)
 

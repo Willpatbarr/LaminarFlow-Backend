@@ -26,7 +26,7 @@ that file, so a change here is not real until it is committed.
 | Path | What belongs there |
 | --- | --- |
 | `main.go` | Startup only: config, pool, schema check, listen. |
-| `cmd/` | Operator binaries — `migrate`, `reindex`. One folder each. |
+| `cmd/` | Operator binaries — `migrate`, `reindex`, `export`. One folder each. |
 | `internal/api/` | HTTP handlers, one per endpoint, grouped by resource. Thin. |
 | `internal/document/` | Rules and SQL for the document write path. |
 | `internal/db/` | The Postgres pool. The only package holding a driver. |

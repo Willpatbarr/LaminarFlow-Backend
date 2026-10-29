@@ -246,3 +246,26 @@ func (s *Service) CountFieldUsage(ctx context.Context, accountID, aspectTypeID, 
 
 	return n, nil
 }
+
+// Export returns every document in the database, archived ones included, read inside the
+// caller's transaction so a whole export sees one moment. It is not scoped to an account:
+// it is for cmd/export and the session-only export endpoint, which take the whole
+// (single-workspace, ADR 4) database. Ordered by id so the output is stable.
+func (s *Service) Export(ctx context.Context, tx pgx.Tx) ([]Document, error) {
+	rows, err := tx.Query(ctx, `SELECT `+columns+` FROM document d ORDER BY d.id`)
+	if err != nil {
+		return nil, fmt.Errorf("document: export: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Document
+	for rows.Next() {
+		var d Document
+		if err := d.scan(rows); err != nil {
+			return nil, fmt.Errorf("document: export scan: %w", err)
+		}
+		out = append(out, d)
+	}
+
+	return out, rows.Err()
+}
