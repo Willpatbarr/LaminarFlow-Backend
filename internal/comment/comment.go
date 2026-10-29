@@ -109,18 +109,21 @@ type Comment struct {
 	ReviewStatus *string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// EditedAt is when the body was last edited (PUT /comments/{id}), nil if never. Unlike
+	// UpdatedAt it does not move on a review status change (LAM-132).
+	EditedAt *time.Time
 
 	WorkspaceID string
 }
 
 func (c *Comment) dest() []any {
 	return []any{&c.ID, &c.TicketID, &c.DocumentID, &c.FieldID, &c.RegionStart, &c.RegionEnd,
-		&c.AuthorID, &c.Body, &c.ReviewStatus, &c.CreatedAt, &c.UpdatedAt, &c.WorkspaceID}
+		&c.AuthorID, &c.Body, &c.ReviewStatus, &c.CreatedAt, &c.UpdatedAt, &c.EditedAt, &c.WorkspaceID}
 }
 
 const columns = `c.id::text, c.ticket_id::text, c.document_id::text, c.field_id::text,
                  c.region_start, c.region_end, c.author_id::text, c.body, c.review_status,
-                 c.created_at, c.updated_at, w.workspace_id::text`
+                 c.created_at, c.updated_at, c.edited_at, w.workspace_id::text`
 
 // from is the comment joined to its parent and the parent's workspace, once. A comment
 // reaches its workspace through whichever arm it uses (0017's exclusive arc): a ticket via
@@ -391,7 +394,7 @@ func (s *Service) byKey(ctx context.Context, q querier, accountID, key string) (
 │      error        ErrNotFound · ErrNotAuthor · *textlimit.FieldError
 */
 
-// Edit changes body and updated_at and nothing else: the target, anchor and region are fixed
+// Edit changes body, updated_at and edited_at and nothing else: the target, anchor and region are fixed
 // at creation. The row is locked while the author is checked, so a concurrent delete cannot
 // slip between the check and the write.
 func (s *Service) Update(ctx context.Context, accountID, id, body string) (Comment, error) {
@@ -411,9 +414,9 @@ func (s *Service) Update(ctx context.Context, accountID, id, body string) (Comme
 	}
 
 	err = tx.QueryRow(ctx,
-		`UPDATE comment SET body = $2, updated_at = now() WHERE id = $1::uuid
-		 RETURNING body, updated_at`, id, body,
-	).Scan(&c.Body, &c.UpdatedAt)
+		`UPDATE comment SET body = $2, updated_at = now(), edited_at = now() WHERE id = $1::uuid
+		 RETURNING body, updated_at, edited_at`, id, body,
+	).Scan(&c.Body, &c.UpdatedAt, &c.EditedAt)
 	if err != nil {
 		return Comment{}, fmt.Errorf("comment: update: %w", err)
 	}

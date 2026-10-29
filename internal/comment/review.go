@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/document"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/filter"
@@ -49,14 +50,15 @@ var ErrNotReviewer = errors.New("comment: not a reviewer")
 
 // The reasons a review create or status change is refused as a 422.
 var (
-	ErrNoReviewers      = errors.New("at least one reviewer is required")
-	ErrTooManyReviewers = errors.New("at most " + strconv.Itoa(MaxReviewers) + " reviewers")
-	ErrDuplicateReview  = errors.New("listed twice")
-	ErrNotAMember       = errors.New("not a member of the document's workspace")
-	ErrRegionPastEnd    = errors.New("is past the end of the field's text")
-	ErrUnknownStatus    = errors.New("must be pending, approved or changes_requested")
-	ErrFieldRequired    = errors.New("is required for an aspect document")
-	ErrKeyNotReview     = errors.New("was used by a comment that is not a review request")
+	ErrNoReviewers       = errors.New("at least one reviewer is required")
+	ErrTooManyReviewers  = errors.New("at most " + strconv.Itoa(MaxReviewers) + " reviewers")
+	ErrDuplicateReview   = errors.New("listed twice")
+	ErrNotAMember        = errors.New("not a member of the document's workspace")
+	ErrRegionPastEnd     = errors.New("is past the end of the field's text")
+	ErrUnknownStatus     = errors.New("must be pending, approved or changes_requested")
+	ErrFieldRequired     = errors.New("is required for an aspect document")
+	ErrKeyNotReview      = errors.New("was used by a comment that is not a review request")
+	ErrNoteNeedsDecision = errors.New("can only be sent with approved or changes_requested")
 )
 
 /*
@@ -76,14 +78,22 @@ type ReviewRequest struct {
 	// StaleReason is why an approved request went back to pending (StaleReasonText), nil
 	// otherwise. Only ever set while the status is pending.
 	StaleReason *string
-	Reviewers   []string
+	// DecidedBy, DecidedAt and DecisionNote are the last approve / request-changes (LAM-132):
+	// who, when, and the optional note. Kept when the request goes back to pending; all nil
+	// if it was never decided. DecidedBy is also nil when the account is gone.
+	DecidedBy    *string
+	DecidedAt    *time.Time
+	DecisionNote *string
+	Reviewers    []string
 }
 
 func (r *ReviewRequest) dest() []any {
-	return append(r.Comment.dest(), &r.AnchorText, &r.StaleReason, &r.Reviewers)
+	return append(r.Comment.dest(), &r.AnchorText, &r.StaleReason,
+		&r.DecidedBy, &r.DecidedAt, &r.DecisionNote, &r.Reviewers)
 }
 
 const reviewColumns = columns + `, c.anchor_text, c.stale_reason,
+	c.decided_by::text, c.decided_at, c.decision_note,
 	ARRAY(SELECT cr.account_id::text FROM comment_reviewer cr
 	       WHERE cr.comment_id = c.id ORDER BY cr.account_id)`
 
@@ -356,6 +366,7 @@ func (s *Service) reviewByID(ctx context.Context, q querier, id string) (ReviewR
 │      accountID    string          must be one of the reviewers
 │      id           string
 │      status       string          pending · approved · changes_requested
+│      note         string          optional, with approved or changes_requested; blank is none
 ├─ out ───────────────────────────────────────────
 │      ReviewRequest
 │      bool                         true: the status changed and was written
@@ -363,14 +374,29 @@ func (s *Service) reviewByID(ctx context.Context, q querier, id string) (ReviewR
 */
 
 // A plain comment, or one the caller cannot reach, is ErrNotFound. Setting the status it
-// already has writes nothing (and so is not announced). Leaving pending clears stale_reason
+// already has writes nothing (and so is not announced, and a note sent with it is dropped:
+// a retry of the same call is therefore harmless, LAM-127). Leaving pending clears stale_reason
 // (approving again, LAM-122; the CHECK allows a reason only while pending). A change bumps updated_at: for a
-// review request, updated_at is the last time its body or its status changed.
-func (s *Service) SetReviewStatus(ctx context.Context, accountID, id, status string) (ReviewRequest, bool, error) {
+// review request, updated_at is the last time its body or its status changed (the event's `at`
+// and the change feed read it); edited_at is the body alone. Approving or requesting changes
+// also records decided_by, decided_at and the note (LAM-132); going back to pending keeps them.
+func (s *Service) SetReviewStatus(ctx context.Context, accountID, id, status, note string) (ReviewRequest, bool, error) {
 	switch status {
 	case StatusPending, StatusApproved, StatusChangesRequested:
 	default:
 		return ReviewRequest{}, false, &FieldError{Field: "review_status", Kind: ErrUnknownStatus}
+	}
+
+	note = strings.TrimSpace(note)
+	if note != "" && status == StatusPending {
+		return ReviewRequest{}, false, &FieldError{Field: "decision_note", Kind: ErrNoteNeedsDecision}
+	}
+	if err := textlimit.Optional("decision_note", note, MaxBodyLength); err != nil {
+		return ReviewRequest{}, false, err
+	}
+	var noteArg *string
+	if note != "" {
+		noteArg = &note
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -409,10 +435,14 @@ func (s *Service) SetReviewStatus(ctx context.Context, accountID, id, status str
 
 	if err := tx.QueryRow(ctx,
 		`UPDATE comment SET review_status = $2, updated_at = now(),
-		        stale_reason = CASE WHEN $2 = 'pending' THEN stale_reason END
+		        stale_reason = CASE WHEN $2 = 'pending' THEN stale_reason END,
+		        decided_by   = CASE WHEN $2 = 'pending' THEN decided_by   ELSE $3::uuid END,
+		        decided_at   = CASE WHEN $2 = 'pending' THEN decided_at   ELSE now() END,
+		        decision_note = CASE WHEN $2 = 'pending' THEN decision_note ELSE $4::text END
 		  WHERE id = $1::uuid
-		 RETURNING review_status, updated_at, stale_reason`, id, status,
-	).Scan(&r.ReviewStatus, &r.UpdatedAt, &r.StaleReason); err != nil {
+		 RETURNING review_status, updated_at, stale_reason, decided_by::text, decided_at, decision_note`,
+		id, status, accountID, noteArg,
+	).Scan(&r.ReviewStatus, &r.UpdatedAt, &r.StaleReason, &r.DecidedBy, &r.DecidedAt, &r.DecisionNote); err != nil {
 		return ReviewRequest{}, false, fmt.Errorf("comment: set review status: %w", err)
 	}
 

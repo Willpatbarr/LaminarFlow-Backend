@@ -51,20 +51,28 @@ type reviewRequestBody struct {
 	AuthorID     *string        `json:"author_id" nullable:"true" doc:"Null when the author's account was deleted."`
 	Reviewers    []reviewerBody `json:"reviewers"`
 	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at" doc:"When the body or the review_status last changed."`
+	UpdatedAt    time.Time      `json:"updated_at" doc:"When the body or the review_status last changed (or it went stale). Not an edit marker: use edited_at."`
+	EditedAt     *time.Time     `json:"edited_at" nullable:"true" doc:"When the note (body) was last edited, null if never. A status change does not set it."`
+	DecidedBy    *string        `json:"decided_by" nullable:"true" format:"uuid" doc:"Who last approved or requested changes. Kept when the request goes back to pending, so a client can say who approved before it went stale. Null if it was never decided, was decided before this was recorded, or that account was deleted."`
+	DecidedAt    *time.Time     `json:"decided_at" nullable:"true" doc:"When that decision was made. Null if never decided."`
+	DecisionNote *string        `json:"decision_note" nullable:"true" doc:"The optional note that came with that decision. Null if none was given."`
 }
 
 func asReviewRequestBody(r comment.ReviewRequest) reviewRequestBody {
 	b := reviewRequestBody{
-		ID:          r.ID,
-		FieldID:     r.FieldID,
-		AnchorText:  r.AnchorText,
-		StaleReason: r.StaleReason,
-		Body:        r.Body,
-		AuthorID:    r.AuthorID,
-		Reviewers:   make([]reviewerBody, len(r.Reviewers)),
-		CreatedAt:   r.CreatedAt.UTC(),
-		UpdatedAt:   r.UpdatedAt.UTC(),
+		ID:           r.ID,
+		FieldID:      r.FieldID,
+		AnchorText:   r.AnchorText,
+		StaleReason:  r.StaleReason,
+		Body:         r.Body,
+		AuthorID:     r.AuthorID,
+		Reviewers:    make([]reviewerBody, len(r.Reviewers)),
+		CreatedAt:    r.CreatedAt.UTC(),
+		UpdatedAt:    r.UpdatedAt.UTC(),
+		EditedAt:     utcPtr(r.EditedAt),
+		DecidedBy:    r.DecidedBy,
+		DecidedAt:    utcPtr(r.DecidedAt),
+		DecisionNote: r.DecisionNote,
 	}
 	if r.DocumentID != nil {
 		b.DocumentID = *r.DocumentID
@@ -122,6 +130,7 @@ type updateReviewRequestInput struct {
 	ID   string `path:"id" format:"uuid"`
 	Body struct {
 		ReviewStatus string `json:"review_status" enum:"approved,changes_requested,pending" doc:"The new overall state. Only a listed reviewer may set it. Null is not accepted."`
+		DecisionNote string `json:"decision_note,omitempty" maxLength:"50000" doc:"Optional short note for the requester, sent with approved or changes_requested and stored as decision_note (blank means none). 422 at body.decision_note with pending. Ignored, like the rest of the call, when the request already has that status, so a retry is safe."`
 	}
 }
 
@@ -244,12 +253,12 @@ func registerReviewRequests(api huma.API, svc *comment.Service, feed ticketFeed)
 		Summary:     "Approve, request changes on, or reopen a review request (reviewers only)",
 		Description: "Sets `review_status` to `approved`, `changes_requested` or `pending`. Only an account listed in `reviewers` may; anyone else who can see the request gets 403 `not_a_reviewer`. " +
 			"There is one status for the whole request, not one per reviewer: the last reviewer to act decides it. Setting the status it already has is a 200 that writes and publishes nothing. " +
-			"A change bumps `updated_at` and publishes `review_request.updated`.",
+			"A change bumps `updated_at`, records `decided_by`, `decided_at` and `decision_note` (approved or changes_requested; reopening keeps them) and publishes `review_request.updated`. It does not set `edited_at`.",
 		Metadata: needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *updateReviewRequestInput) (*reviewRequestOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
-		r, changed, err := svc.SetReviewStatus(ctx, me.AccountID, in.ID, in.Body.ReviewStatus)
+		r, changed, err := svc.SetReviewStatus(ctx, me.AccountID, in.ID, in.Body.ReviewStatus, in.Body.DecisionNote)
 		if err != nil {
 			return nil, reviewRequestError(err)
 		}

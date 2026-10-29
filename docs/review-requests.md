@@ -77,8 +77,20 @@ comments is a 422 at `header.Idempotency-Key`.
   id that is a plain comment, gets `404 review_request_not_found`.
 * `stale_reason` is null unless an approval was invalidated (below); a `PUT` that leaves `pending`
   (approves, or requests changes) clears it.
-* `updated_at` is when the note or the status last changed. A `PUT` that sets the status it
-  already has changes and announces nothing.
+* `updated_at` is when the note or the status last changed (or it went stale). It is **not** an
+  edit marker: the realtime event's `at` and the stale-approval write read it, so a status change
+  moves it. `edited_at` (LAM-132) is when the note was last edited through `PUT /comments/{id}`,
+  `null` if never; show "(edited)" from that. A `PUT` that sets the status it already has changes
+  and announces nothing.
+* A decision (LAM-132). `PUT` takes an optional `decision_note`, a short message for the requester
+  sent with `approved` or `changes_requested` (blank is none; with `pending` it is a 422 at
+  `body.decision_note`). The same write records `decided_by` (the caller) and `decided_at`, and
+  they come back with the note on every read and event. They describe the **last** decision and
+  are kept when the request returns to `pending`, by a reviewer or because it went stale, so a
+  client can still say who approved. A request never decided has all three `null`; one decided
+  before 0046 has `decided_at` but `decided_by` `null`. A retry that sets the status it already
+  has is a no-op and its note is dropped, so retries are safe; to change the note, change the
+  status. Plain comments never carry these fields.
 * The reviewer list is fixed at creation; there is no endpoint to add or remove reviewers yet.
 
 ## Stale approvals (LAM-122)

@@ -27,6 +27,11 @@ type reviewWire struct {
 	} `json:"reviewers"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	EditedAt     *time.Time `json:"edited_at"`
+	DecidedBy    *string    `json:"decided_by"`
+	DecidedAt    *time.Time `json:"decided_at"`
+	DecisionNote *string    `json:"decision_note"`
 }
 
 func (r reviewWire) reviewerIDs() []string {
@@ -675,5 +680,67 @@ func TestTheStaleThresholdIsASetting(t *testing.T) {
 	// A bad value or an unregistered key is a 422.
 	if rec := set(101); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("101: %d", rec.Code)
+	}
+}
+
+// LAM-132: a decision records who, when and the optional note; a status change is not an edit
+// of the note; a note edit is; reopening keeps the last decision; a retry is harmless.
+func TestADecisionRecordsWhoAndNoteAndIsNotAnEdit(t *testing.T) {
+	f := newFeed(t)
+	doc, fields := f.reviewDoc(t, "hello world")
+	r := f.review(t, f.willC, map[string]any{"document_id": doc.ID, "field_id": fields[0], "region_start": 0, "region_end": 5,
+		"body": "ok?", "reviewer_ids": []string{f.sarah.AccountID}})
+	if r.EditedAt != nil || r.DecidedBy != nil || r.DecidedAt != nil || r.DecisionNote != nil {
+		t.Fatalf("new request already decided or edited: %+v", r)
+	}
+
+	put := func(body map[string]any) (*httptest.ResponseRecorder, reviewWire) {
+		rec := call(t, f.mux, http.MethodPut, V1+"/review-requests/"+r.ID, body, f.sarahC)
+		var got reviewWire
+		decode(t, rec, &got)
+
+		return rec, got
+	}
+
+	rec, got := put(map[string]any{"review_status": "changes_requested", "decision_note": "  please shorten  "})
+	if rec.Code != http.StatusOK || got.DecidedBy == nil || *got.DecidedBy != f.sarah.AccountID || got.DecidedAt == nil ||
+		got.DecisionNote == nil || *got.DecisionNote != "please shorten" {
+		t.Fatalf("request changes = %d %+v", rec.Code, got)
+	}
+	// B8: updated_at moved (the event and sync read it), edited_at did not.
+	if !got.UpdatedAt.After(r.UpdatedAt) || got.EditedAt != nil {
+		t.Errorf("status change: updated_at %v (was %v), edited_at %v", got.UpdatedAt, r.UpdatedAt, got.EditedAt)
+	}
+
+	// A retry of the same call changes nothing, whatever note it carries.
+	if rec, again := put(map[string]any{"review_status": "changes_requested", "decision_note": "other"}); rec.Code != http.StatusOK ||
+		!again.UpdatedAt.Equal(got.UpdatedAt) || again.DecisionNote == nil || *again.DecisionNote != "please shorten" {
+		t.Errorf("retry = %d %+v", rec.Code, again)
+	}
+
+	// Approving without a note clears the old note; blank is none.
+	if _, ok := put(map[string]any{"review_status": "approved", "decision_note": "   "}); ok.DecisionNote != nil || ok.DecidedBy == nil {
+		t.Errorf("approve without note = %+v", ok)
+	}
+
+	// Reopening keeps the last decision, and a note with it is refused.
+	if _, pend := put(map[string]any{"review_status": "pending"}); pend.ReviewStatus != "pending" || pend.DecidedBy == nil || pend.DecidedAt == nil {
+		t.Errorf("reopen lost the last decision: %+v", pend)
+	}
+	rec, _ = put(map[string]any{"review_status": "pending", "decision_note": "x"})
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "body.decision_note") {
+		t.Errorf("note with pending: %d %s, want 422 at body.decision_note", rec.Code, rec.Body)
+	}
+
+	// Editing the note is an edit.
+	rec = call(t, f.mux, http.MethodPut, V1+"/comments/"+r.ID, map[string]any{"body": "ok? (reworded)"}, f.willC)
+	var c commentWire
+	decode(t, rec, &c)
+	if rec.Code != http.StatusOK || c.EditedAt == nil {
+		t.Fatalf("edit note = %d %+v", rec.Code, c)
+	}
+	if got := f.reviews(t, f.willC, where(cond("document_id", doc.ID), cond("review_status", "pending"))); len(got) != 1 ||
+		got[0].EditedAt == nil || got[0].DecisionNote != nil && *got[0].DecisionNote != "" {
+		t.Errorf("listed after edit = %+v", got)
 	}
 }
