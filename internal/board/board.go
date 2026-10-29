@@ -797,6 +797,22 @@ func mapStatuses(ctx context.Context, tx pgx.Tx, columnID, teamID string, status
 	return nil
 }
 
+// ColumnResult reads one column and its board, for announcing a change made outside this
+// package (a status delete unmapping it, LAM-134).
+func (s *Service) ColumnResult(ctx context.Context, accountID, boardID, columnID string) (Result, error) {
+	b, err := s.load(ctx, s.pool, accountID, boardID, false)
+	if err != nil {
+		return Result{}, err
+	}
+	for _, c := range b.Columns {
+		if c.ID == columnID {
+			return Result{Column: c, Board: b}, nil
+		}
+	}
+
+	return Result{}, ErrColumnNotFound
+}
+
 // finish reads the written column and its board back in the writing transaction, commits,
 // and returns both.
 func (s *Service) finish(ctx context.Context, tx pgx.Tx, accountID, boardID, columnID string) (Result, error) {

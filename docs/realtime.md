@@ -146,7 +146,7 @@ says nothing.
 time), `team_id`, `status_id` and `status` (the whole `StatusBody`; on `deleted`, the status as it
 was). They have **no** `ticket_id`, `version` or `ticket`. A reorder sends `status.updated` for
 each status whose position changed. A delete that moves tickets also sends one `ticket.updated`
-per moved ticket (archived ones included) at their new version. Apply `status.*` by upsert or
+per moved ticket (archived ones included) at their new version. It also sends one `board.column.updated` for every board column that showed the status (LAM-134): the status is gone from its `status_ids`, and the column may now be empty. The column is not re-pointed at `move_to`. Apply `status.*` by upsert or
 remove on `status_id`; there is no version, so re-list on doubt.
 
 ## Board events (LAM-85)
@@ -161,6 +161,7 @@ its `status_ids`; on `deleted`, the board as it was). `board.column.updated` als
 | create-board | `board.created` |
 | rename-board, reorder-columns, delete-column | `board.updated` (the delete's `board` no longer has the column) |
 | add-column, update-column, set-column-statuses | `board.column.updated` |
+| delete-status (per column that showed it) | `board.column.updated` |
 | delete-board | `board.deleted` |
 
 There is no version: replace the board (or the column) you hold with the one in the event, and re-list on
