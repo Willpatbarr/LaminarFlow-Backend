@@ -43,7 +43,8 @@ while reviewers are attached; the API has no such transition).
 * The offsets are checked against the field's text **at the time of the request**. They are
   not updated when the document is edited: an edit before the range leaves them pointing at
   different words. The server does not re-anchor (ADR 6: "re-anchors or orphans it when the
-  text changes" is a reader's job, LAM-122 and the UI).
+  text changes" is a reader's job, and the UI's). Stale approvals (below) use the offsets as
+  stored, so they inherit that drift.
 
 ### `anchor_text`
 
@@ -74,9 +75,44 @@ comments is a 422 at `header.Idempotency-Key`.
   approved. Per-reviewer verdicts need a new column and are not part of this API.
 * Anyone else who can see the request gets `403 not_a_reviewer`; one who cannot see it, or an
   id that is a plain comment, gets `404 review_request_not_found`.
+* `stale_reason` is null unless an approval was invalidated (below); a `PUT` that leaves `pending`
+  (approves, or requests changes) clears it.
 * `updated_at` is when the note or the status last changed. A `PUT` that sets the status it
   already has changes and announces nothing.
 * The reviewer list is fixed at creation; there is no endpoint to add or remove reviewers yet.
+
+## Stale approvals (LAM-122)
+
+An approval is about the text the reviewer saw. Every document write (`PUT /documents/{id}`,
+through `document.Save`) checks the document's **approved** review requests, in the same
+transaction as the write. Only `approved` ones: a `pending` or `changes_requested` request has
+no approval to lose.
+
+The rule, with nothing else in it:
+
+1. The anchored text is the field's text (`search.FieldText` of `body[field_id]`, or of
+   `body["content"]` when `field_id` is null) sliced by `region_start`..`region_end` in code
+   points, taken from the body before the write and from the body after it. A field that has
+   shrunk below the range yields what is left of it.
+2. Changed characters = `max(len(before), len(after))` less the common prefix less the common
+   suffix, in code points (the suffix is measured after the prefix, so they never overlap).
+   One typo is 1; rewriting a sentence is about its length. It is a size, not an edit distance.
+3. If changed characters are **more than** `review.stale_threshold_percent` percent of
+   `len(before)` (default 10; integer arithmetic, `changed * 100 > percent * len(before)`),
+   the request is set to `pending` with `stale_reason = "anchored text changed"`. Exactly on the
+   threshold is not stale. There is no small-text exception: in five characters, one is 20%.
+
+Approving again (or requesting changes) clears `stale_reason`. The change is announced as
+`review_request.updated` ([realtime.md](realtime.md#review-request-events-lam-113)).
+
+`review.stale_threshold_percent` is a workspace setting (`PUT /settings/{key}?scope=workspace&target_id=...`),
+an integer 0 to 100; unset means 10. A stored value that no longer validates is read as 10 rather
+than blocking document writes.
+
+Known limit, not fixed here: offsets are not shifted by edits before the region, so a request's
+anchor can drift and the rule then compares whatever sits at the old offsets. Fixing it needs an
+anchor-tracking design. Also not here: a create, archive or an aspect-field edit made without a
+document write (none exists today) does not run the rule.
 
 ## Listing
 
@@ -104,7 +140,7 @@ Filter fields: `document_id`, `field_id`, `author_id`, `reviewer_id`, `review_st
 
 editing the
 reviewer list, per-reviewer verdicts, review requests on tickets, and
-anything that reacts to the document changing (LAM-122).
+re-anchoring when the document changes.
 
 ## Choosing reviewers: `POST /api/v1/members/list`
 

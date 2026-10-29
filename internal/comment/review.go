@@ -73,14 +73,17 @@ var (
 type ReviewRequest struct {
 	Comment
 	AnchorText *string
-	Reviewers  []string
+	// StaleReason is why an approved request went back to pending (StaleReasonText), nil
+	// otherwise. Only ever set while the status is pending.
+	StaleReason *string
+	Reviewers   []string
 }
 
 func (r *ReviewRequest) dest() []any {
-	return append(r.Comment.dest(), &r.AnchorText, &r.Reviewers)
+	return append(r.Comment.dest(), &r.AnchorText, &r.StaleReason, &r.Reviewers)
 }
 
-const reviewColumns = columns + `, c.anchor_text,
+const reviewColumns = columns + `, c.anchor_text, c.stale_reason,
 	ARRAY(SELECT cr.account_id::text FROM comment_reviewer cr
 	       WHERE cr.comment_id = c.id ORDER BY cr.account_id)`
 
@@ -360,7 +363,8 @@ func (s *Service) reviewByID(ctx context.Context, q querier, id string) (ReviewR
 */
 
 // A plain comment, or one the caller cannot reach, is ErrNotFound. Setting the status it
-// already has writes nothing (and so is not announced). A change bumps updated_at: for a
+// already has writes nothing (and so is not announced). Leaving pending clears stale_reason
+// (approving again, LAM-122; the CHECK allows a reason only while pending). A change bumps updated_at: for a
 // review request, updated_at is the last time its body or its status changed.
 func (s *Service) SetReviewStatus(ctx context.Context, accountID, id, status string) (ReviewRequest, bool, error) {
 	switch status {
@@ -404,9 +408,11 @@ func (s *Service) SetReviewStatus(ctx context.Context, accountID, id, status str
 	}
 
 	if err := tx.QueryRow(ctx,
-		`UPDATE comment SET review_status = $2, updated_at = now() WHERE id = $1::uuid
-		 RETURNING review_status, updated_at`, id, status,
-	).Scan(&r.ReviewStatus, &r.UpdatedAt); err != nil {
+		`UPDATE comment SET review_status = $2, updated_at = now(),
+		        stale_reason = CASE WHEN $2 = 'pending' THEN stale_reason END
+		  WHERE id = $1::uuid
+		 RETURNING review_status, updated_at, stale_reason`, id, status,
+	).Scan(&r.ReviewStatus, &r.UpdatedAt, &r.StaleReason); err != nil {
 		return ReviewRequest{}, false, fmt.Errorf("comment: set review status: %w", err)
 	}
 

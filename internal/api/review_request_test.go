@@ -509,3 +509,171 @@ func TestTheSameKeyTwiceIsOneReviewRequestAndOneEvent(t *testing.T) {
 	wantDocProblem(t, f.postReview(t, f.willC, body, "Idempotency-Key", "ck-1"),
 		http.StatusUnprocessableEntity, "unprocessable_entity", "header.Idempotency-Key")
 }
+
+// LAM-122. An approval goes stale when the reviewed text materially changes.
+
+func (f feed) putDocText(t *testing.T, doc documentWire, field, text string) {
+	t.Helper()
+
+	rec := call(t, f.mux, http.MethodPut, V1+"/documents/"+doc.ID, map[string]any{
+		"title": "Spec", "type": doc.Type, "aspect_type_id": doc.AspectTypeID, "body": map[string]string{field: text},
+	}, f.willC)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit document: %d %.300s", rec.Code, rec.Body)
+	}
+}
+
+func (f feed) oneReview(t *testing.T, id string) staleWire {
+	t.Helper()
+
+	rec := call(t, f.mux, http.MethodPost, V1+"/review-requests/list", where(cond("document_id", f.docOf(t, id)),
+		map[string]any{"field": "review_status", "op": "in", "value": []string{"pending", "approved", "changes_requested"}}), f.willC)
+	var out struct {
+		Items []staleWire `json:"items"`
+	}
+	decode(t, rec, &out)
+	for _, r := range out.Items {
+		if r.ID == id {
+			return r
+		}
+	}
+	t.Fatalf("review request %s not listed: %s", id, rec.Body)
+
+	return staleWire{}
+}
+
+func (f feed) docOf(t *testing.T, id string) string {
+	t.Helper()
+
+	var doc string
+	if err := f.pool.QueryRow(testCtx(t), `SELECT document_id::text FROM comment WHERE id = $1::uuid`, id).Scan(&doc); err != nil {
+		t.Fatal(err)
+	}
+
+	return doc
+}
+
+type staleWire struct {
+	ID           string  `json:"id"`
+	ReviewStatus string  `json:"review_status"`
+	StaleReason  *string `json:"stale_reason"`
+}
+
+func TestATypoKeepsTheApprovalAndARewriteSendsItBackToPending(t *testing.T) {
+	f := newFeed(t)
+	const text = "Columns assume one status each, and a board shows them."
+	doc, fields := f.reviewDoc(t, text)
+	r := f.review(t, f.willC, map[string]any{"document_id": doc.ID, "field_id": fields[0], "region_start": 0, "region_end": 31,
+		"body": "ok?", "reviewer_ids": []string{f.sarah.AccountID}})
+	if rec := f.decide(t, f.sarahC, r.ID, "approved"); rec.Code != http.StatusOK {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body)
+	}
+	watcher := f.open(t, f.cookie(f.sarahC))
+
+	// One character of 31 is under 10%: the approval stands, and nothing is announced about it.
+	f.putDocText(t, doc, fields[0], "Columns assume one status eac, and a board shows them.")
+	if got := f.oneReview(t, r.ID); got.ReviewStatus != "approved" || got.StaleReason != nil {
+		t.Fatalf("after a typo = %+v", got)
+	}
+
+	// Rewriting the sentence changes far more than 10% of it.
+	f.putDocText(t, doc, fields[0], "Every column is fed by a label now, and a board shows them.")
+	got := f.oneReview(t, r.ID)
+	if got.ReviewStatus != "pending" || got.StaleReason == nil || *got.StaleReason != "anchored text changed" {
+		t.Fatalf("after a rewrite = %+v", got)
+	}
+
+	// It is announced like any status change, with the reason.
+	var ev eventWire
+	for {
+		if ev = readEvent(t, watcher); ev.Type == "review_request.updated" {
+			break
+		}
+	}
+	if ev.CommentID != r.ID || ev.DocumentID != doc.ID || ev.ReviewRequest["review_status"] != "pending" ||
+		ev.ReviewRequest["stale_reason"] != "anchored text changed" {
+		t.Errorf("event = %+v", ev)
+	}
+
+	// Approving again clears the reason; so does asking for changes.
+	if rec := f.decide(t, f.sarahC, r.ID, "approved"); rec.Code != http.StatusOK {
+		t.Fatalf("re-approve: %d %s", rec.Code, rec.Body)
+	}
+	if got := f.oneReview(t, r.ID); got.ReviewStatus != "approved" || got.StaleReason != nil {
+		t.Errorf("after approving again = %+v", got)
+	}
+}
+
+func TestOnlyApprovedRequestsGoStaleAndOnlyForTheirOwnField(t *testing.T) {
+	f := newFeed(t)
+	typeID, fields := f.aspectType(t, f.willC, "Summary", "Other")
+	doc := f.document(t, f.willC, map[string]any{"title": "Spec", "type": "aspect", "aspect_type_id": typeID,
+		"project_id": f.project.ID, "body": map[string]string{fields[0]: "alpha beta gamma", fields[1]: "one two three"}})
+	mk := func(field string) reviewWire {
+		return f.review(t, f.willC, map[string]any{"document_id": doc.ID, "field_id": field, "region_start": 0, "region_end": 13,
+			"body": "ok?", "reviewer_ids": []string{f.sarah.AccountID}})
+	}
+	approved, pending, other := mk(fields[0]), mk(fields[0]), mk(fields[1])
+	f.decide(t, f.sarahC, approved.ID, "approved")
+	f.decide(t, f.sarahC, other.ID, "approved")
+
+	rec := call(t, f.mux, http.MethodPut, V1+"/documents/"+doc.ID, map[string]any{
+		"title": "Spec", "type": "aspect", "aspect_type_id": typeID,
+		"body": map[string]string{fields[0]: "completely different words", fields[1]: "one two three"},
+	}, f.willC)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit: %d %s", rec.Code, rec.Body)
+	}
+
+	if got := f.oneReview(t, approved.ID); got.ReviewStatus != "pending" || got.StaleReason == nil {
+		t.Errorf("approved, text rewritten = %+v", got)
+	}
+	if got := f.oneReview(t, pending.ID); got.ReviewStatus != "pending" || got.StaleReason != nil {
+		t.Errorf("already pending = %+v, want no reason", got)
+	}
+	if got := f.oneReview(t, other.ID); got.ReviewStatus != "approved" || got.StaleReason != nil {
+		t.Errorf("approved, other field untouched = %+v", got)
+	}
+}
+
+func TestTheStaleThresholdIsASetting(t *testing.T) {
+	f := newFeed(t)
+	doc, fields := f.reviewDoc(t, "0123456789")
+	r := f.review(t, f.willC, map[string]any{"document_id": doc.ID, "field_id": fields[0], "region_start": 0, "region_end": 10,
+		"body": "ok?", "reviewer_ids": []string{f.sarah.AccountID}})
+
+	var ws string
+	if err := f.pool.QueryRow(testCtx(t), `SELECT workspace_id::text FROM workspace_member WHERE account_id = $1::uuid`, f.will.AccountID).Scan(&ws); err != nil {
+		t.Fatal(err)
+	}
+	set := func(value any) *httptest.ResponseRecorder {
+		return call(t, f.mux, http.MethodPut, V1+"/settings/review.stale_threshold_percent?scope=workspace&target_id="+ws,
+			map[string]any{"value": value}, f.willC)
+	}
+
+	// At the default of 10%, 2 of 10 characters would be stale; at 50% it is not.
+	if rec := set(50); rec.Code != http.StatusOK {
+		t.Fatalf("set: %d %s", rec.Code, rec.Body)
+	}
+	f.decide(t, f.sarahC, r.ID, "approved")
+	f.putDocText(t, doc, fields[0], "01234567xx")
+	if got := f.oneReview(t, r.ID); got.ReviewStatus != "approved" {
+		t.Errorf("2 of 10 at 50%% = %+v", got)
+	}
+	if rec := set(10); rec.Code != http.StatusOK {
+		t.Fatalf("set: %d %s", rec.Code, rec.Body)
+	}
+	f.putDocText(t, doc, fields[0], "01234567xy")
+	if got := f.oneReview(t, r.ID); got.ReviewStatus != "approved" {
+		t.Errorf("1 of 10 at 10%% is not more than 10%%: %+v", got)
+	}
+	f.putDocText(t, doc, fields[0], "0123456zzz")
+	if got := f.oneReview(t, r.ID); got.ReviewStatus != "pending" {
+		t.Errorf("3 of 10 at 10%% = %+v", got)
+	}
+
+	// A bad value or an unregistered key is a 422.
+	if rec := set(101); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("101: %d", rec.Code)
+	}
+}

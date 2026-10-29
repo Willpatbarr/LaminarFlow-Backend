@@ -1,4 +1,4 @@
-// fieldText lives here rather than in internal/document because internal/search is
+// FieldText lives here rather than in internal/document because internal/search is
 // now the only thing that extracts text. The ticket's standing rule is that this stays
 // the single implementation: two would drift the moment one learned about a field type
 // the other did not.
@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// fieldText reduces one field value to the plain text stored in search_index.
+// FieldText reduces one field value to the plain text stored in search_index.
 //
 // Both the live write path (Save) and the rebuild path must call this exact
 // function. Two extraction implementations would drift the moment one of them
@@ -18,7 +18,7 @@ import (
 // ticket exists to prevent.
 //
 // Input is always the result of decoding JSON, so this switch is exhaustive.
-func fieldText(value any) string {
+func FieldText(value any) string {
 	switch v := value.(type) {
 	case nil:
 		return ""
@@ -32,7 +32,7 @@ func fieldText(value any) string {
 	case []any:
 		parts := make([]string, 0, len(v))
 		for _, item := range v {
-			if text := fieldText(item); text != "" {
+			if text := FieldText(item); text != "" {
 				parts = append(parts, text)
 			}
 		}
@@ -49,7 +49,7 @@ func fieldText(value any) string {
 
 		parts := make([]string, 0, len(keys))
 		for _, key := range keys {
-			if text := fieldText(v[key]); text != "" {
+			if text := FieldText(v[key]); text != "" {
 				parts = append(parts, text)
 			}
 		}

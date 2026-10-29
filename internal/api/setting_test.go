@@ -14,7 +14,7 @@ import (
 // LAM-52's whole point, at the HTTP boundary: a typo is now a response rather than a
 // stored row and a shrug.
 func TestAnUnknownSettingKeyIs422(t *testing.T) {
-	_, _, err := resolve(settingKeyInput{Key: "kanban_colums"})
+	_, _, err := resolve(SettingKeyInput{Key: "kanban_colums"})
 
 	var e *Error
 	if !errors.As(err, &e) {
@@ -29,9 +29,9 @@ func TestAnUnknownSettingKeyIs422(t *testing.T) {
 }
 
 func TestARegisteredKeyResolves(t *testing.T) {
-	target, key, err := resolve(settingKeyInput{
+	target, key, err := resolve(SettingKeyInput{
 		Key:                "sprint.length_days",
-		settingTargetInput: settingTargetInput{Scope: "team", TargetID: "8b1c"},
+		SettingTargetInput: SettingTargetInput{Scope: "team", TargetID: "8b1c"},
 	})
 	if err != nil {
 		t.Fatalf("a registered key was rejected: %v", err)

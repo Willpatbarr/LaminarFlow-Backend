@@ -318,3 +318,42 @@ func TestCommentReviewerConstraints(t *testing.T) {
 		}
 	})
 }
+
+// 0042: stale_reason is set only while a review request is pending.
+func TestCommentStaleReasonNeedsPending(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	ws := defaultWorkspace(t, pool)
+
+	var doc string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO document (workspace_id, title) VALUES ($1::uuid, 'stale') RETURNING id::text`, ws,
+	).Scan(&doc); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []struct {
+		status, reason string
+		ok             bool
+	}{
+		{"pending", "anchored text changed", true},
+		{"approved", "anchored text changed", false},
+		{"changes_requested", "anchored text changed", false},
+		{"approved", "", true},
+	} {
+		var reason *string
+		if c.reason != "" {
+			reason = &c.reason
+		}
+		_, err := pool.Exec(ctx,
+			`INSERT INTO comment (document_id, body, review_status, stale_reason) VALUES ($1::uuid, 'x', $2, $3)`,
+			doc, c.status, reason)
+		if (err == nil) != c.ok {
+			t.Errorf("status %s with reason %q: err = %v, want ok=%v", c.status, c.reason, err, c.ok)
+		}
+	}
+
+	if _, err := pool.Exec(ctx, `INSERT INTO comment (document_id, body, stale_reason) VALUES ($1::uuid, 'x', 'r')`, doc); err == nil {
+		t.Error("a plain comment took a stale_reason")
+	}
+}

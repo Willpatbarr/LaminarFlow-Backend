@@ -216,7 +216,10 @@ Comments on a ticket or document that is later archived publish nothing: the par
 A review request is a comment (see [review-requests.md](review-requests.md)), and has two events of its own:
 
 * `review_request.created` - `POST /review-requests`.
-* `review_request.updated` - `PUT /review-requests/{id}` that changed the `review_status`. Setting the status
+* `review_request.updated` - `PUT /review-requests/{id}` that changed the `review_status`, and also an approved
+  request going stale (LAM-122): published after the `PUT /documents/{id}` that sent it back to `pending` commits,
+  with `stale_reason` set in the body and the document write's account as `actor_id`. One event per request, after
+  the `document.updated` of that write. Setting the status
   it already has publishes nothing, nor does a refused write.
 
 Both carry `type`, `comment_id` (the request's id), `document_id`, `actor_id`, `at` (the request's `updated_at`)

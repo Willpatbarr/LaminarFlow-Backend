@@ -101,7 +101,7 @@ func (s *Service) Rebuild(ctx context.Context) (Counts, error) {
 	}
 
 	// Documents first, and one at a time, because their text comes from Go rather
-	// than SQL: fieldText walks a decoded body. Tickets and comments index plain
+	// than SQL: FieldText walks a decoded body. Tickets and comments index plain
 	// columns, so each is a single set-based insert.
 	docs, err := readDocumentBodies(ctx, tx)
 	if err != nil {
