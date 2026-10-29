@@ -19,6 +19,8 @@ type activityWire struct {
 	Field         *string   `json:"field"`
 	SummaryBefore *string   `json:"summary_before"`
 	SummaryAfter  *string   `json:"summary_after"`
+	NameBefore    *string   `json:"name_before"`
+	NameAfter     *string   `json:"name_after"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -353,5 +355,54 @@ func TestAnEntryIsOnTheChangeFeedAfterItsWrite(t *testing.T) {
 	}
 	if ev := readEventAny(t, watcher); ev.Type != "activity.created" || ev.DocumentID != doc.ID || ev.TicketID != "" || ev.Activity["kind"] != "created" {
 		t.Errorf("document activity event = %+v", ev)
+	}
+}
+
+// LAM-137: the names are stored when the change happens, so a rename does not rewrite the
+// entry and a delete does not erase it.
+func TestStatusEntriesKeepTheirNamesThroughRenameAndDelete(t *testing.T) {
+	f := newFeed(t)
+	st := f.team(t).Statuses
+	first, second, third := st[0], st[1], st[2]
+
+	named := func(p *string) string {
+		if p == nil {
+			return "<nil>"
+		}
+
+		return *p
+	}
+
+	tk := f.withStatus(t, "Moved twice", first.ID)
+	for _, id := range []string{second.ID, first.ID} {
+		call(t, f.mux, http.MethodPut, V1+"/tickets/"+tk.ID,
+			replace("Moved twice", map[string]any{"description": "", "status_id": id}), f.willC)
+	}
+	other := f.withStatus(t, "Deleted under it", second.ID)
+
+	// Rename: the entries keep the name the status had at the time.
+	if rec := call(t, f.mux, http.MethodPut, f.statusPath("/"+second.ID), map[string]any{"name": "Renamed"}, f.willC); rec.Code != http.StatusOK {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body)
+	}
+	got := f.history(t, f.willC, "ticket", tk.ID)
+	if named(got[1].NameAfter) != second.Name || named(got[0].NameBefore) != second.Name || named(got[0].NameAfter) != first.Name {
+		t.Errorf("after a rename: %+v / %+v, want the old name %q", got[1], got[0], second.Name)
+	}
+
+	// Delete (moving the tickets to third): the names survive, and the moved ticket's entry has both.
+	if rec := call(t, f.mux, http.MethodDelete, f.statusPath("/"+second.ID+"?move_to="+third.ID), nil, f.willC); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body)
+	}
+	got = f.history(t, f.willC, "ticket", tk.ID)
+	if named(got[1].NameAfter) != second.Name || named(got[0].NameBefore) != second.Name || *got[1].SummaryAfter != second.ID {
+		t.Errorf("after a delete: %+v / %+v, want %q kept", got[1], got[0], second.Name)
+	}
+	moved := f.history(t, f.willC, "ticket", other.ID)
+	if moved[0].Kind != "status_changed" || named(moved[0].NameBefore) != "Renamed" || named(moved[0].NameAfter) != third.Name {
+		t.Errorf("status-delete entry = %+v, want Renamed -> %q", moved[0], third.Name)
+	}
+	// Not a status entry: no names.
+	if c := moved[len(moved)-1]; c.Kind != "created" || c.NameBefore != nil || c.NameAfter != nil {
+		t.Errorf("created entry = %+v, want no names", c)
 	}
 }

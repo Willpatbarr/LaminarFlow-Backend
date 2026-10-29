@@ -55,9 +55,47 @@ func lockSnapshot(ctx context.Context, tx pgx.Tx, id string) (s snapshot, ok boo
 // note records one entry about this ticket, made by actorID, and keeps it on the ticket so
 // the API can announce it once the transaction has committed.
 func (t *Ticket) note(ctx context.Context, tx activity.Tx, actorID, kind string, field, before, after *string) error {
+	return t.noteNamed(ctx, tx, actorID, kind, field, before, after, nil, nil)
+}
+
+// noteStatus records a status_changed entry with the names of both statuses as they are
+// now (LAM-137), so the entry still reads right after a rename or a delete.
+func (t *Ticket) noteStatus(ctx context.Context, tx activity.Tx, actorID string, before, after *string) error {
+	bn, err := statusName(ctx, tx, before)
+	if err != nil {
+		return err
+	}
+	an, err := statusName(ctx, tx, after)
+	if err != nil {
+		return err
+	}
+
+	return t.noteNamed(ctx, tx, actorID, activity.StatusChanged, nil, before, after, bn, an)
+}
+
+// statusName is the name of the status, or nil for no id or a status that is gone.
+func statusName(ctx context.Context, tx activity.Tx, id *string) (*string, error) {
+	if id == nil {
+		return nil, nil
+	}
+
+	var name string
+	err := tx.QueryRow(ctx, `SELECT name FROM status WHERE id = $1::uuid`, *id).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("ticket: status name: %w", err)
+	}
+
+	return &name, nil
+}
+
+func (t *Ticket) noteNamed(ctx context.Context, tx activity.Tx, actorID, kind string, field, before, after, beforeName, afterName *string) error {
 	e, err := activity.Record(ctx, tx, activity.Entry{
 		TicketID: &t.ID, ActorID: activity.Ptr(actorID),
 		Kind: kind, Field: field, Before: before, After: after,
+		BeforeName: beforeName, AfterName: afterName,
 	})
 	if err != nil {
 		return err
@@ -100,7 +138,13 @@ func (t *Ticket) diff(ctx context.Context, tx pgx.Tx, actorID string, before sna
 	for _, step := range []func() error{
 		func() error { return text("title", before.title, t.Title) },
 		func() error { return text("description", before.description, t.Description) },
-		func() error { return ref(activity.StatusChanged, nil, before.status, t.StatusID) },
+		func() error {
+			if same(before.status, t.StatusID) {
+				return nil
+			}
+
+			return t.noteStatus(ctx, tx, actorID, before.status, t.StatusID)
+		},
 		func() error { return ref(activity.AssigneeChanged, nil, before.assignee, t.AssigneeID) },
 		func() error { return ref(activity.ParentChanged, nil, before.epic, t.EpicID) },
 		func() error { return ref(activity.FieldChanged, &milestone, before.milestone, t.MilestoneID) },

@@ -260,7 +260,7 @@ not carry `reviewers` or `anchor_text`; keep what you hold. On doubt, re-list wi
 
 `activity.created` announces one entry of the activity log (`POST /activity/list`, [activity.md](activity.md)). It
 carries `type`, `activity_id`, `actor_id`, `at` (the entry's `created_at`), `activity` - the whole entry in exactly
-the shape of `ActivityBody` - and the entity it is about as `ticket_id` or `document_id` (exactly one). It has **no**
+the shape of `ActivityBody`, `name_before` / `name_after` included - and the entity it is about as `ticket_id` or `document_id` (exactly one). It has **no**
 `version`, `ticket` or `document`: the entity's own event says what it looks like now.
 
 It is published right after the `ticket.*` or `document.*` event of the write that made the entry, one event per entry

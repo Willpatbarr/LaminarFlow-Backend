@@ -37,6 +37,8 @@ type activityBody struct {
 	Field         *string   `json:"field" nullable:"true" doc:"Only for field_changed: ticket - title, description or milestone; document - title or fields."`
 	SummaryBefore *string   `json:"summary_before" nullable:"true" doc:"The value before the change; null for none. status_changed, assignee_changed, parent_changed (the epic), label_removed, aspect_type_changed and milestone carry the id of the thing, so they stay true after a rename. title and description carry the text, cut to 200 characters. A document's fields carry the sorted ids of the fields that had a value."`
 	SummaryAfter  *string   `json:"summary_after" nullable:"true" doc:"The value after the change, in the same form. label_added carries the label id here."`
+	NameBefore    *string   `json:"name_before" nullable:"true" doc:"Only for status_changed: the name of the status in summary_before as it was when the change happened (a later rename does not change it). Null for other kinds, for no status, and for old entries whose status was already deleted before names were stored."`
+	NameAfter     *string   `json:"name_after" nullable:"true" doc:"Only for status_changed: the name of the status in summary_after, in the same form."`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -50,6 +52,8 @@ func asActivityBody(e activity.Entry) activityBody {
 		Field:         e.Field,
 		SummaryBefore: e.Before,
 		SummaryAfter:  e.After,
+		NameBefore:    e.BeforeName,
+		NameAfter:     e.AfterName,
 		CreatedAt:     e.CreatedAt.UTC(),
 	}
 }
