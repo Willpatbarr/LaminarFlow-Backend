@@ -42,18 +42,18 @@ const (
 // which key - so scope and target travel as query parameters and the key as a path
 // segment. The alternative, /teams/{id}/settings/{key}, would need one route tree per
 // scope and there are no team or workspace routes yet to hang them on.
-type settingTargetInput struct {
+type SettingTargetInput struct {
 	Scope    string `query:"scope" required:"true" enum:"workspace,team" doc:"Which level the setting hangs at."`
 	TargetID string `query:"target_id" required:"true" format:"uuid" doc:"The workspace's or the team's id, matching scope."`
 }
 
-type settingKeyInput struct {
-	settingTargetInput
+type SettingKeyInput struct {
+	SettingTargetInput
 	Key string `path:"key" doc:"A registered key. An unregistered one is a 422 rather than a stored row nobody reads."`
 }
 
 type setSettingInput struct {
-	settingKeyInput
+	SettingKeyInput
 	Body struct {
 		Value json.RawMessage `json:"value" required:"true" doc:"The value, whose shape depends on the key."`
 	}
@@ -105,7 +105,7 @@ func settingError(err error) error {
 // resolve turns the request's three strings into the two typed things the service
 // takes. Lookup is the only string-to-Key path there is, so an unregistered key cannot
 // get past this line.
-func resolve(in settingKeyInput) (setting.Target, setting.Key, error) {
+func resolve(in SettingKeyInput) (setting.Target, setting.Key, error) {
 	key, ok := setting.Lookup(in.Key)
 	if !ok {
 		return setting.Target{}, setting.Key{}, NewError(http.StatusUnprocessableEntity,
@@ -136,7 +136,7 @@ func registerSettings(api huma.API, svc *setting.Service) {
 		Description: "Registered keys only. A stored row whose key is not registered is skipped rather than " +
 			"returned or raised - one bad row must not break the settings screen for everyone.\n\n" + registered,
 		Metadata: needs(auth.SettingRead),
-	}, func(ctx context.Context, in *settingTargetInput) (*settingListOutput, error) {
+	}, func(ctx context.Context, in *SettingTargetInput) (*settingListOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
 		values, err := svc.List(ctx, me.AccountID,
@@ -162,7 +162,7 @@ func registerSettings(api huma.API, svc *setting.Service) {
 		Description: "404 with code setting_not_set means nothing is configured - fall back to the default. " +
 			"That is a different answer from an unknown key, which is a 422.\n\n" + registered,
 		Metadata: needs(auth.SettingRead),
-	}, func(ctx context.Context, in *settingKeyInput) (*settingOutput, error) {
+	}, func(ctx context.Context, in *SettingKeyInput) (*settingOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
 		target, key, err := resolve(*in)
@@ -193,7 +193,7 @@ func registerSettings(api huma.API, svc *setting.Service) {
 	}, func(ctx context.Context, in *setSettingInput) (*settingOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
-		target, key, err := resolve(in.settingKeyInput)
+		target, key, err := resolve(in.SettingKeyInput)
 		if err != nil {
 			return nil, err
 		}
@@ -216,7 +216,7 @@ func registerSettings(api huma.API, svc *setting.Service) {
 		Description: "Deletes the row. There is no value that means \"the default\" - absence is the default, " +
 			"and writing one would freeze today's default into the row.\n\n" + registered,
 		Metadata: needs(auth.SettingWrite),
-	}, func(ctx context.Context, in *settingKeyInput) (*struct{}, error) {
+	}, func(ctx context.Context, in *SettingKeyInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
 
 		target, key, err := resolve(*in)

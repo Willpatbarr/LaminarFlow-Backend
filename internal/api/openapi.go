@@ -114,7 +114,12 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	registerSprints(api, sprintSvc, ticketSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerMilestones(api, milestoneSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerLabels(api, labelSvc, ticketFeed{hub: hub, projects: projSvc})
-	registerDocuments(api, documentSvc, ticketSvc, ticketFeed{hub: hub, projects: projSvc})
+	if documentSvc != nil && commentSvc != nil {
+		// Approvals go stale in the document write's own transaction (LAM-122); comment cannot be
+		// called from document (it imports it), so the write path is handed the reaction here.
+		documentSvc.OnWrite(commentSvc.StaleReviews)
+	}
+	registerDocuments(api, documentSvc, ticketSvc, commentSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerComments(api, commentSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerReviewRequests(api, commentSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerSavedViews(api, savedViewSvc)

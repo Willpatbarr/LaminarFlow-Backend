@@ -45,6 +45,7 @@ type reviewRequestBody struct {
 	RegionStart  int            `json:"region_start" doc:"Start of the range, in characters (Unicode code points) of the field's stored Markdown string, counting from 0. See docs/review-requests.md."`
 	RegionEnd    int            `json:"region_end" doc:"End of the range, exclusive; equal to region_start for a caret."`
 	AnchorText   *string        `json:"anchor_text" nullable:"true" doc:"The text of the field between region_start and region_end when the request was made. A snapshot: it does not follow later edits of the document."`
+	StaleReason  *string        `json:"stale_reason" nullable:"true" doc:"Why an approved request went back to pending: \"anchored text changed\" when a document edit changed more of the anchored text than review.stale_threshold_percent allows (docs/review-requests.md). Null otherwise; cleared when a reviewer approves or requests changes."`
 	Body         string         `json:"body" doc:"The note."`
 	ReviewStatus string         `json:"review_status" enum:"pending,approved,changes_requested" doc:"The request's overall state. There is no per-reviewer verdict: a reviewer's action sets this."`
 	AuthorID     *string        `json:"author_id" nullable:"true" doc:"Null when the author's account was deleted."`
@@ -55,14 +56,15 @@ type reviewRequestBody struct {
 
 func asReviewRequestBody(r comment.ReviewRequest) reviewRequestBody {
 	b := reviewRequestBody{
-		ID:         r.ID,
-		FieldID:    r.FieldID,
-		AnchorText: r.AnchorText,
-		Body:       r.Body,
-		AuthorID:   r.AuthorID,
-		Reviewers:  make([]reviewerBody, len(r.Reviewers)),
-		CreatedAt:  r.CreatedAt.UTC(),
-		UpdatedAt:  r.UpdatedAt.UTC(),
+		ID:          r.ID,
+		FieldID:     r.FieldID,
+		AnchorText:  r.AnchorText,
+		StaleReason: r.StaleReason,
+		Body:        r.Body,
+		AuthorID:    r.AuthorID,
+		Reviewers:   make([]reviewerBody, len(r.Reviewers)),
+		CreatedAt:   r.CreatedAt.UTC(),
+		UpdatedAt:   r.UpdatedAt.UTC(),
 	}
 	if r.DocumentID != nil {
 		b.DocumentID = *r.DocumentID

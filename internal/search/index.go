@@ -106,7 +106,7 @@ func indexDocument(ctx context.Context, tx pgx.Tx, docID string, body map[string
 			        d.workspace_id, d.project_id, d.team_id, d.title
 			   FROM document d
 			  WHERE d.id = $1::uuid`,
-			docID, fieldID, fieldText(value),
+			docID, fieldID, FieldText(value),
 		); err != nil {
 			return fmt.Errorf("search: index field %q: %w", fieldID, err)
 		}

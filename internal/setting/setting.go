@@ -387,3 +387,36 @@ func scopedRead(scope Scope) string {
 type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
+
+// Queryer is what Workspace needs: the pool, or a transaction.
+type Queryer interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// Workspace reads one workspace-scoped setting for the system, not for a caller: no
+// reachability check, because the caller is server code that already holds a workspace id from
+// a row it is writing (LAM-122 reads review.stale_threshold_percent while a document write is
+// in flight, in that write's transaction). It is still gated by the registry, so only a
+// registered workspace-scoped key can be asked for. ErrNotSet: nothing is configured.
+func Workspace(ctx context.Context, q Queryer, workspaceID string, key Key) (json.RawMessage, error) {
+	def, ok := Registry[key]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownKey, key)
+	}
+	if def.Scope != WorkspaceScope {
+		return nil, fmt.Errorf("%w: %q is %s-scoped, not %s", ErrWrongScope, key, def.Scope, WorkspaceScope)
+	}
+
+	var value json.RawMessage
+	err := q.QueryRow(ctx,
+		`SELECT s.value FROM setting s WHERE s.workspace_id = $1::uuid AND s.key = $2`,
+		workspaceID, key.String()).Scan(&value)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotSet
+	}
+	if err != nil {
+		return nil, fmt.Errorf("setting: workspace read: %w", err)
+	}
+
+	return value, nil
+}

@@ -112,7 +112,17 @@ var (
 	// distinction 0025 spends a paragraph on precisely because "Kanban columns"
 	// reads like the board. board.column_sources would have repeated the confusion.
 	BoardColumnSources = Key{name: "board.column_sources"}
+
+	// ReviewStaleThresholdPercent is LAM-122's: an approved review request goes back to
+	// pending when the characters changed in its anchored text exceed this percentage of
+	// that text's length. Workspace-scoped: it is a house rule about reviews, and a review
+	// request belongs to a document, which belongs to a workspace. Unset means
+	// DefaultReviewStaleThresholdPercent.
+	ReviewStaleThresholdPercent = Key{name: "review.stale_threshold_percent"}
 )
+
+// DefaultReviewStaleThresholdPercent is what ReviewStaleThresholdPercent means when unset.
+const DefaultReviewStaleThresholdPercent = 10
 
 // BoardColumnSource values are the sources a board column may derive from, and they are
 // the same closed set board.group_by's CHECK holds.
@@ -165,6 +175,21 @@ var Registry = map[Key]Definition{
 			// end_date centuries out that nobody notices until a report does.
 			if days < 1 || days > 365 {
 				return fmt.Errorf("%w: expected 1 to 365 days, got %d", ErrWrongShape, days)
+			}
+			return nil
+		},
+	},
+
+	ReviewStaleThresholdPercent: {
+		Scope:   WorkspaceScope,
+		Summary: "Percent of an approved review request's anchored text that may change before the approval goes stale. Default 10.",
+		Validate: func(raw json.RawMessage) error {
+			var pct int
+			if err := json.Unmarshal(raw, &pct); err != nil {
+				return fmt.Errorf("%w: expected a whole number of percent", ErrWrongShape)
+			}
+			if pct < 0 || pct > 100 {
+				return fmt.Errorf("%w: expected 0 to 100 percent, got %d", ErrWrongShape, pct)
 			}
 			return nil
 		},

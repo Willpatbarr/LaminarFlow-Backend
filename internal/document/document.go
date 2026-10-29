@@ -90,7 +90,31 @@ type Service struct {
 	// tables, document may not read them (aspect/boundary_test.go), so it asks. Built
 	// from the same pool: aspect.Service holds nothing else.
 	aspects *aspect.Service
+
+	// reactions run inside an update's transaction; see OnWrite.
+	reactions []Reaction
 }
+
+// Change is what an update did to a document's body, handed to each Reaction.
+type Change struct {
+	DocumentID  string
+	WorkspaceID string
+	Before      map[string]any
+	After       map[string]any
+}
+
+// Reaction is code that must move in step with a document's body but owns tables this package
+// may not write (LAM-122: internal/comment, which owns review requests and itself imports this
+// package, so it cannot be called directly). It runs in the update's transaction, after the
+// body is written and before the commit, so its writes and the body commit or roll back
+// together. It returns the ids of the review requests it sent back to pending, which the
+// caller announces after the commit (Document.StaledReviews).
+type Reaction func(ctx context.Context, tx pgx.Tx, c Change) ([]string, error)
+
+// OnWrite registers a Reaction. Call it while wiring the service, before it serves requests;
+// it is not safe to call concurrently with writes. Only updates react: a create has no
+// earlier text for anything to be stale against.
+func (s *Service) OnWrite(r Reaction) { s.reactions = append(s.reactions, r) }
 
 // NewService returns a Service backed by pool.
 func NewService(pool *pgxpool.Pool) *Service {
@@ -123,6 +147,11 @@ type Document struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	ArchivedAt *time.Time
+
+	// StaledReviews is set only on the Document an update returns: the ids of approved
+	// review requests that update sent back to pending because the text they were about
+	// changed materially (LAM-122). The caller announces them after the commit.
+	StaledReviews []string
 }
 
 // columns and dest are written once because the row is scanned from four statements.
@@ -318,9 +347,18 @@ func (s *Service) WriteIdempotent(ctx context.Context, p SaveParams) (Document, 
 			return d, true, nil
 		}
 	} else {
-		d, err = s.update(ctx, tx, p, normalized)
+		var before map[string]any
+		d, before, err = s.update(ctx, tx, p, normalized)
 		if err != nil {
 			return Document{}, false, err
+		}
+
+		for _, react := range s.reactions {
+			staled, err := react(ctx, tx, Change{DocumentID: d.ID, WorkspaceID: d.WorkspaceID, Before: before, After: d.Body})
+			if err != nil {
+				return Document{}, false, err
+			}
+			d.StaledReviews = append(d.StaledReviews, staled...)
 		}
 	}
 
@@ -576,24 +614,24 @@ func (s *Service) insertWorkspace(ctx context.Context, tx pgx.Tx, p SaveParams) 
 // update replaces the row under a lock, so the version it checks is the version it writes
 // over: two writers holding the same version both reach the lock, and the second reads the
 // first's commit.
-func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[string]any) (Document, error) {
+func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[string]any) (Document, map[string]any, error) {
 	cur, err := s.lock(ctx, tx, p.ID, p.WorkspaceID, p.AccountID)
 	if err != nil {
-		return Document{}, err
+		return Document{}, nil, err
 	}
 	if err := cur.refuse(p.IfVersion, false); err != nil {
-		return Document{}, err
+		return Document{}, nil, err
 	}
 
 	converting := cur.Type == TypeNormal && p.Type == TypeAspect
 	body, err = s.checkBody(ctx, cur.WorkspaceID, p, body, cur.Body, converting)
 	if err != nil {
-		return Document{}, err
+		return Document{}, nil, err
 	}
 
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return Document{}, fmt.Errorf("marshal body: %w", err)
+		return Document{}, nil, fmt.Errorf("marshal body: %w", err)
 	}
 
 	var d Document
@@ -608,10 +646,10 @@ func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 		string(raw), p.Title, p.Type, p.aspectType(), p.ID,
 	))
 	if err != nil {
-		return Document{}, fmt.Errorf("write body: %w", err)
+		return Document{}, nil, fmt.Errorf("write body: %w", err)
 	}
 
-	return d, nil
+	return d, cur.Body, nil
 }
 
 // memberOf is the caller-scoping predicate, for the one place it is composed into a list.

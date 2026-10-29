@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/comment"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/document"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
@@ -345,7 +346,7 @@ func bodyValues(in map[string]string) map[string]any {
 │      →  POST /api/v1/documents, GET /api/v1/documents/{id}
 */
 
-func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Service, feed ticketFeed) {
+func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Service, comments *comment.Service, feed ticketFeed) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-document",
@@ -453,6 +454,13 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 		}
 
 		feed.publishDocument(realtime.DocumentUpdated, me.AccountID, d)
+
+		// Approvals this write made stale (LAM-122), announced after the commit like the rest.
+		for _, id := range d.StaledReviews {
+			if r, err := comments.ReviewByID(ctx, id); err == nil {
+				feed.publishReviewRequest(realtime.ReviewRequestUpdated, me.AccountID, r)
+			}
+		}
 
 		return asDocumentOutput(d), nil
 	})
