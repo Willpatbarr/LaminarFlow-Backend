@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/activity"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/filter"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/search"
 
@@ -80,6 +81,14 @@ func (s *Service) setArchived(ctx context.Context, accountID, id string, archive
 	))
 	if err != nil {
 		return Document{}, fmt.Errorf("document: set archived: %w", err)
+	}
+
+	kind := activity.Unarchived
+	if archive {
+		kind = activity.Archived
+	}
+	if err := d.note(ctx, tx, accountID, kind, nil, nil, nil); err != nil {
+		return Document{}, err
 	}
 
 	if err := search.ClearDocument(ctx, tx, d.ID); err != nil {

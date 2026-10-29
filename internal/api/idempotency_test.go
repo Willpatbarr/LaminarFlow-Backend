@@ -59,6 +59,11 @@ func TestTheSameKeyTwiceIsOneTicketAndOneEvent(t *testing.T) {
 	marker := f.create(t, f.willC, "marker")
 	expectEvent(t, readEvent(t, watcher), "ticket.created", marker.ID, 1, f.will.AccountID)
 
+	// The marker's own log entry follows it (LAM-89); the replay made none.
+	if ev := readEventAny(t, watcher); ev.Type != "activity.created" || ev.TicketID != marker.ID {
+		t.Errorf("event after the marker = %+v, want its activity.created", ev)
+	}
+
 	// And nothing further is waiting.
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
@@ -262,7 +267,7 @@ func TestAnInvalidBodyIsStillRefusedOnAReplay(t *testing.T) {
 }
 
 func TestTheOpenAPIDocumentsTheKeyAndTheReplay(t *testing.T) {
-	api := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI()
+	api := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI()
 	op := api.Paths[V1+"/tickets"].Post
 	if op == nil {
 		t.Fatal("no POST /tickets in the document")

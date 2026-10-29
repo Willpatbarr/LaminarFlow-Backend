@@ -95,6 +95,9 @@ const (
 	// LAM-113. A review request event carries the request in `review_request`; see Event.
 	ReviewRequestCreated = "review_request.created"
 	ReviewRequestUpdated = "review_request.updated"
+
+	// LAM-89. An activity event carries the log entry in `activity`; see Event.
+	ActivityCreated = "activity.created"
 )
 
 // helloFrame is the first frame on every connection. A socket that is open is not a
@@ -192,6 +195,15 @@ type Event struct {
 	// ReviewRequest, the REST ReviewRequestBody whole. Same rules as comment.*: no Version,
 	// no Ticket or Document.
 	ReviewRequest any `json:"review_request,omitempty"`
+
+	// LAM-89. activity.created carries ActivityID and Activity, the REST ActivityBody whole, and
+	// the entity it is about in TicketID or DocumentID (exactly one). It is published right
+	// after the ticket.* or document.* event of the write that made the entry, one per entry,
+	// and carries no Version, Ticket or Document: the entity's own event says what it looks
+	// like now. An entry is immutable and never deleted by itself, so there is no
+	// activity.updated or activity.deleted; entries vanish only with their ticket or document.
+	ActivityID string `json:"activity_id,omitempty"`
+	Activity   any    `json:"activity,omitempty"`
 }
 
 /*

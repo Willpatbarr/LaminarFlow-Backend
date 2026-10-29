@@ -16,6 +16,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/activity"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -85,6 +87,19 @@ func MoveStatus(ctx context.Context, q Tx, accountID, from, to string) ([]Ticket
 		}
 		out = append(out, t)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// The statement has to be finished before the transaction runs another.
+	rows.Close()
 
-	return out, rows.Err()
+	// A status delete changes every one of these tickets' status, so each gets its entry
+	// (LAM-89). The transaction is the caller's, so they commit or roll back together.
+	for i := range out {
+		if err := out[i].note(ctx, q, accountID, activity.StatusChanged, nil, &from, &to); err != nil {
+			return nil, err
+		}
+	}
+
+	return out, nil
 }

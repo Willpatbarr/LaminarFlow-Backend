@@ -18,6 +18,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/activity"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/search"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
@@ -152,6 +153,10 @@ type Document struct {
 	// review requests that update sent back to pending because the text they were about
 	// changed materially (LAM-122). The caller announces them after the commit.
 	StaledReviews []string
+
+	// Activity is set only on the Document a write returns: the log entries that write made
+	// (LAM-89), for the caller to announce after the commit. Reads leave it nil.
+	Activity []activity.Entry
 }
 
 // columns and dest are written once because the row is scanned from four statements.
@@ -505,6 +510,10 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 		return Document{}, false, fmt.Errorf("write body: %w", err)
 	}
 
+	if err := d.note(ctx, tx, p.AccountID, activity.Created, nil, nil, nil); err != nil {
+		return Document{}, false, err
+	}
+
 	return d, false, nil
 }
 
@@ -647,6 +656,10 @@ func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 	))
 	if err != nil {
 		return Document{}, nil, fmt.Errorf("write body: %w", err)
+	}
+
+	if err := d.diff(ctx, tx, p.AccountID, cur); err != nil {
+		return Document{}, nil, err
 	}
 
 	return d, cur.Body, nil

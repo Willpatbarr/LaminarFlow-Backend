@@ -343,14 +343,19 @@ func TestEachDocumentWriteReachesAColleagueOnTheFeed(t *testing.T) {
 		Document   documentWire `json:"document"`
 	}) {
 		t.Helper()
-		kind0, data, err := conn.Read(testCtx(t))
-		if err != nil || kind0 != 1 {
-			t.Fatalf("read: %v", err)
+		for {
+			kind0, data, err := conn.Read(testCtx(t))
+			if err != nil || kind0 != 1 {
+				t.Fatalf("read: %v", err)
+			}
+			if err := json.Unmarshal(data, &ev); err != nil {
+				t.Fatalf("event %s: %v", data, err)
+			}
+			// LAM-89: each write also announces its log entry; activity_test.go covers those.
+			if ev.Type != "activity.created" {
+				return ev.Type, ev
+			}
 		}
-		if err := json.Unmarshal(data, &ev); err != nil {
-			t.Fatalf("event %s: %v", data, err)
-		}
-		return ev.Type, ev
 	}
 
 	d := f.document(t, f.willC, map[string]any{"title": "t", "project_id": f.project.ID})

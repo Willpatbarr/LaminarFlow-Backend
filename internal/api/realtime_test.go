@@ -528,9 +528,26 @@ type eventWire struct {
 	SprintID    string         `json:"sprint_id"`
 	MilestoneID string         `json:"milestone_id"`
 	LabelID     string         `json:"label_id"`
+
+	ActivityID string         `json:"activity_id"`
+	Activity   map[string]any `json:"activity"`
 }
 
+// readEvent is the next event a test about something else cares about: the activity.created
+// events (LAM-89) that follow every ticket and document write are skipped, so the dozens of
+// tests that read ticket.*, comment.* and the rest in sequence do not each have to step over
+// them. activity_test.go reads them with readEventAny.
 func readEvent(t *testing.T, c *websocket.Conn) eventWire {
+	t.Helper()
+
+	for {
+		if ev := readEventAny(t, c); ev.Type != "activity.created" {
+			return ev
+		}
+	}
+}
+
+func readEventAny(t *testing.T, c *websocket.Conn) eventWire {
 	t.Helper()
 
 	kind, data, err := c.Read(testCtx(t))
