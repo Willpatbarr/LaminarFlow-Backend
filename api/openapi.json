@@ -2058,6 +2058,45 @@
         ],
         "type": "object"
       },
+      "ListEnvelopeMemberBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/v1/schemas/ListEnvelopeMemberBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemberBody"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_cursor": {
+            "description": "Pass back as cursor for the next page. Null when there is none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more"
+        ],
+        "type": "object"
+      },
       "ListEnvelopeMilestoneBody": {
         "additionalProperties": false,
         "properties": {
@@ -2646,6 +2685,44 @@
           "workspace_id",
           "permissions",
           "scopes"
+        ],
+        "type": "object"
+      },
+      "MemberBody": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "description": "The id comments carry as author_id and review requests as reviewers[].account_id.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the person joined the workspace.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "description": "Workspace role.",
+            "enum": [
+              "owner",
+              "admin",
+              "member"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "display_name",
+          "email",
+          "role",
+          "created_at"
         ],
         "type": "object"
       },
@@ -6509,6 +6586,45 @@
           }
         },
         "summary": "Rename or recolour a label"
+      }
+    },
+    "/api/v1/members/list": {
+      "post": {
+        "description": "Reads a page. POST rather than GET because nested and/or filters do not encode cleanly in a query string, and a per-caller ticket list is not cacheable - so a GET would buy nothing and cost expressiveness. Nothing is written.\n\nPagination is keyset: pass the previous page's `next_cursor` back as `cursor`. A cursor is only valid for the filter and sort it was minted under; changing either restarts from the first page.\n\nFilterable and sortable fields:\n\n- `created_at` (time)\n- `display_name` (text)\n- `email` (text)\n- `role` (text)\n\nPage size defaults to 50 and may not exceed 200.",
+        "operationId": "list-members",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListEnvelopeMemberBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List the people in the caller's workspace (a read - see the description for why it is a POST)"
       }
     },
     "/api/v1/milestones": {

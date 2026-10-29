@@ -105,3 +105,23 @@ Filter fields: `document_id`, `field_id`, `author_id`, `reviewer_id`, `review_st
 editing the
 reviewer list, per-reviewer verdicts, review requests on tickets, and
 anything that reacts to the document changing (LAM-122).
+
+## Choosing reviewers: `POST /api/v1/members/list`
+
+`reviewer_ids` must be members of the document's workspace, so a client needs to list them.
+`POST /api/v1/members/list` (permission `team:read`) returns the people in the **caller's
+workspace** (the one `GET /auth/me` reports, ADR 0004), as a standard list (`filter`, `sort`,
+`limit`, `cursor`):
+
+| Item field | Notes |
+|---|---|
+| `account_id` | The id `author_id` and `reviewers[].account_id` carry. |
+| `display_name`, `email` | Filterable and sortable. |
+| `role` | `owner`, `admin` or `member` (workspace role). |
+| `created_at` | When the person joined the workspace. |
+
+The default sort is display name. `password_hash` is not returned and not in the filter
+vocabulary. It is the workspace and not a team on purpose: reviewers are validated against
+`workspace_member`, and nothing writes `team_member` yet, so a team roster would be empty and
+could offer people the reviewer check then refuses. A client also uses it to show author
+names on comments (`comment.author_id` is `null` only after the author's account was deleted).
