@@ -203,7 +203,7 @@ func (m *moveProject) UnmarshalJSON(b []byte) error {
 func (moveProject) Schema(huma.Registry) *huma.Schema {
 	return &huma.Schema{
 		Type: "string", Format: "uuid", Nullable: true,
-		Description: "Move the document to this project, or send null to make it team-wide (no project). Omit to leave it where it is. Filing under a project clears a team_id. Not the caller's: 422 project_not_found at body.project_id.",
+		Description: "Move the document to this project, or send null to make it team-wide (no project). Omit to leave it where it is. Filing under a project clears a team_id; null files it under the team of the project it leaves. Not the caller's: 422 project_not_found at body.project_id.",
 	}
 }
 

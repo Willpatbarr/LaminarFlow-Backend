@@ -679,7 +679,9 @@ func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 		     UPDATE document
 		        SET body = $1::jsonb, title = $2, type = $3, aspect_type_id = $4::uuid,
 		            project_id = CASE WHEN $6::boolean THEN $7::uuid ELSE project_id END,
-		            team_id = CASE WHEN $6::boolean AND $7::uuid IS NOT NULL THEN NULL ELSE team_id END,
+		            team_id = CASE WHEN NOT $6::boolean THEN team_id
+		                           WHEN $7::uuid IS NOT NULL THEN NULL
+		                           ELSE COALESCE((SELECT pr.team_id FROM project pr WHERE pr.id = document.project_id), team_id) END,
 		            updated_at = now(), version = version + 1
 		      WHERE id = $5::uuid
 		  RETURNING *)

@@ -389,6 +389,29 @@ func TestTheDocumentDeclaresItsConflictAndTitleLimit(t *testing.T) {
 
 // LAM-138: PUT can move a document between projects and take it out of its project. Omitting
 // project_id leaves it alone, which is what every PUT before this one relied on.
+func TestTeamWideDocumentSurvivesAProjectRoundTrip(t *testing.T) {
+	f := newFeed(t)
+	d := f.document(t, f.willC, map[string]any{"title": "T", "team_id": f.project.TeamID})
+	put := func(v int, pid any) {
+		t.Helper()
+		rec := call(t, f.mux, http.MethodPut, V1+"/documents/"+d.ID, map[string]any{"title": "T", "project_id": pid}, f.willC, "If-Match", `"`+strconv.Itoa(v)+`"`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("put: %d %s", rec.Code, rec.Body)
+		}
+	}
+	put(1, f.project.ID)
+	put(2, nil)
+
+	rec := call(t, f.mux, http.MethodPost, V1+"/documents/list", map[string]any{"team_id": f.project.TeamID}, f.willC)
+	var out struct {
+		Items []documentWire `json:"items"`
+	}
+	decode(t, rec, &out)
+	if len(out.Items) != 1 || out.Items[0].ID != d.ID || out.Items[0].ProjectID != nil {
+		t.Errorf("team list after team-wide -> project -> team-wide = %+v", out.Items)
+	}
+}
+
 func TestPutMovesADocumentBetweenProjectsAndToTeamWide(t *testing.T) {
 	f := newFeed(t)
 	second := createProject(t, f.mux, f.willC, f.project.TeamID, "Second")
