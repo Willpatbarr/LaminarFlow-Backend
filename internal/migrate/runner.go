@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -213,6 +214,34 @@ func Status(ctx context.Context, pool *pgxpool.Pool, migrations []Migration) ([]
 	})
 
 	return records, err
+}
+
+// Ahead returns the applied versions that are higher than the newest embedded
+// migration, ascending. A non-empty result means the database was migrated by a
+// newer binary than this one. Gaps below the newest known version (a deleted
+// old file) are not "ahead" and stay visible through Status only.
+func Ahead(ctx context.Context, pool *pgxpool.Pool, migrations []Migration) ([]int64, error) {
+	records, err := Status(ctx, pool, migrations)
+	if err != nil {
+		return nil, err
+	}
+
+	var newest int64
+	for _, m := range migrations {
+		if m.Version > newest {
+			newest = m.Version
+		}
+	}
+
+	var ahead []int64
+	for _, r := range records {
+		if r.Applied && r.Version > newest {
+			ahead = append(ahead, r.Version)
+		}
+	}
+	sort.Slice(ahead, func(i, j int) bool { return ahead[i] < ahead[j] })
+
+	return ahead, nil
 }
 
 // Pending returns the migrations that Up would apply. main.go uses it to refuse

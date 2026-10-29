@@ -42,6 +42,15 @@ services:
       # APP_BIND=0.0.0.0 deliberately if that is what you want.
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:${APP_PORT:-8080}"
     mem_limit: 512m
+    # Overrides the image's HEALTHCHECK (which only checks /healthz) so the
+    # service reports healthy only while the database answers too. The image is
+    # distroless: no curl, so the binary checks itself.
+    healthcheck:
+      test: ["CMD", "/laminarflow", "healthcheck", "/healthz/db"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
   db:
     image: postgres:17

@@ -180,9 +180,11 @@ to reach for instead:
     curl localhost:8080/healthz
     curl localhost:8080/healthz/db
 
-The container's own healthcheck runs `/laminarflow healthcheck`, which asks the
-server over loopback rather than needing curl. `docker inspect` shows its
-history.
+The image's own healthcheck runs `/laminarflow healthcheck`, which asks the
+server over loopback rather than needing curl; `docker inspect` shows its
+history. It takes an optional path (default `/healthz`). The compose `app`
+service overrides the image check with `healthcheck /healthz/db`, so it reports
+healthy only while the database answers as well.
 
 If you genuinely need a shell in the image, rebuild the final stage on
 `alpine:3` instead of distroless — one line in the `Dockerfile`. Prefer not to
@@ -249,8 +251,13 @@ first run also creates everything below. `BACKEND_REF`, `FRONTEND_REF`,
 | Uploaded files | `~/laminarflow/files`, chowned to 65532 by a throwaway container |
 
 Back up `pgdata` and `files` together (`~/laminarflow/backup.sh`, nightly from the user crontab at 03:15; see "Backup, restore and export"). The app is at `http://192.168.4.46:8080`
-(`APP_BIND=0.0.0.0` in that `.env`: LAN only; Tailscale exposure is not
-configured). It restarts on boot through `restart: unless-stopped` and the
+(`APP_BIND=0.0.0.0` in that `.env`: LAN only, good for `curl` and health
+checks). **The production URL is the Tailscale HTTPS one,
+`https://williams-thinkcentre-m70s-gen-3.taild87743.ts.net`.** Browser login
+needs HTTPS because the session cookie is `__Host-` prefixed and `Secure`, so
+signing in over plain `http://192.168.4.46:8080` does not work; that address is
+for `curl` and health only. `sudo tailscale serve --bg --yes 8080` was run once
+on the PC; the setting persists across reboots, so it needs no repeating. It restarts on boot through `restart: unless-stopped` and the
 systemd-enabled Docker service. Each deploy tags the image `laminarflow:<sha>`
 and records it as `APP_IMAGE`, so rolling back the image is editing that line
 and `docker compose up -d` (see the migration caveat in `deploy/README.md`).
@@ -266,7 +273,11 @@ stays private to the tailnet. It is not involved in running the app.
     curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up
 
 The app is then reachable at `http://<host>.<tailnet>.ts.net:<APP_PORT>` from
-anything on the tailnet.
+anything on the tailnet. That is plain HTTP, which is enough for `curl` but not
+for a browser login (the session cookie is `__Host-`/`Secure`). For the browser,
+put HTTPS in front with `sudo tailscale serve --bg --yes <APP_PORT>`, which
+serves `https://<host>.<tailnet>.ts.net` and proxies to the local port. Run it
+once; it persists. This is what the home server does.
 
 `APP_BIND` defaults to `127.0.0.1`, which Tailscale can still route to while the
 local network cannot. Setting it to `0.0.0.0` exposes the app to the LAN — do
