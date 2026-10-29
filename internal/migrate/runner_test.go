@@ -253,6 +253,58 @@ func TestStatusReportsBothStates(t *testing.T) {
 	}
 }
 
+// A database migrated by a newer binary must be reported as ahead, and a
+// database at or behind the binary must not.
+func TestAheadReportsVersionsNewerThanTheBinary(t *testing.T) {
+	ctx := context.Background()
+	pool := newPool(t)
+
+	loaded, err := Load(steps)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := Up(ctx, pool, loaded); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+
+	ahead, err := Ahead(ctx, pool, loaded)
+	if err != nil {
+		t.Fatalf("ahead: %v", err)
+	}
+	if len(ahead) != 0 {
+		t.Fatalf("ahead = %v on an up-to-date database, want none", ahead)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO schema_migrations (version, name) VALUES (7, 'from_the_future'), (5, 'also_future')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	ahead, err = Ahead(ctx, pool, loaded)
+	if err != nil {
+		t.Fatalf("ahead: %v", err)
+	}
+	if len(ahead) != 2 || ahead[0] != 5 || ahead[1] != 7 {
+		t.Fatalf("ahead = %v, want [5 7]", ahead)
+	}
+
+	// Only the older binary's own migrations: not ahead.
+	older, err := Load(fstest.MapFS{"0001_parent.sql": steps["0001_parent.sql"]})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM schema_migrations WHERE version > 2`); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	ahead, err = Ahead(ctx, pool, older)
+	if err != nil {
+		t.Fatalf("ahead: %v", err)
+	}
+	if len(ahead) != 1 || ahead[0] != 2 {
+		t.Fatalf("ahead = %v for a binary that only knows 0001, want [2]", ahead)
+	}
+}
+
 // Baseline is for adopting a hand-built schema. It must record without running,
 // and must refuse once the database has any history of its own.
 func TestBaselineRecordsWithoutRunning(t *testing.T) {

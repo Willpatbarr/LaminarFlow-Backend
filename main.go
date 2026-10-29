@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -38,7 +39,7 @@ func main() {
 	// binary checks itself. Handled before anything else so it never opens a
 	// database connection or reads config it does not need.
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
-		os.Exit(healthcheck())
+		os.Exit(healthcheck(os.Args[2:]))
 	}
 
 	cfg, err := config.Load()
@@ -123,6 +124,20 @@ func ensureSchema(ctx context.Context, pool *pgxpool.Pool, autoApply bool) error
 		return err
 	}
 
+	// Before anything else, including auto-apply: a database that is ahead of
+	// this binary (an image rolled back without `migrate down`) must not be
+	// served, and Up would otherwise report nothing to do and carry on.
+	ahead, err := migrate.Ahead(ctx, pool, loaded)
+	if err != nil {
+		return err
+	}
+	if len(ahead) > 0 {
+		return fmt.Errorf(
+			"database schema is newer than this binary: applied migration(s) %s are unknown here (newest this binary knows: %04d). "+
+				"Deploy a newer image, or roll the schema back with `migrate down` first",
+			formatVersions(ahead), loaded[len(loaded)-1].Version)
+	}
+
 	if autoApply {
 		applied, err := migrate.Up(ctx, pool, loaded)
 		if err != nil {
@@ -148,6 +163,14 @@ func ensureSchema(ctx context.Context, pool *pgxpool.Pool, autoApply bool) error
 	return nil
 }
 
+func formatVersions(vs []int64) string {
+	parts := make([]string, len(vs))
+	for i, v := range vs {
+		parts[i] = fmt.Sprintf("%04d", v)
+	}
+	return strings.Join(parts, ", ")
+}
+
 // frontendFS picks the bundle the server will serve. An empty dir means the
 // bundle embedded at build time, which is what a deployed binary uses.
 func frontendFS(dir string) (fs.FS, error) {
@@ -167,9 +190,20 @@ func frontendFS(dir string) (fs.FS, error) {
 }
 
 // healthcheck asks the running server whether it is alive and returns a process
-// exit code. It deliberately hits /healthz rather than /healthz/db: a database
-// blip should not make a supervisor restart a healthy process.
-func healthcheck() int {
+// exit code. The optional argument is the path to request: it defaults to
+// /healthz, so the image's own HEALTHCHECK does not fail on a database blip and
+// get a healthy process restarted. The compose file passes /healthz/db, so the
+// app service only reports healthy while the database is reachable too.
+func healthcheck(args []string) int {
+	path := "/healthz"
+	if len(args) > 0 {
+		path = args[0]
+	}
+	if !strings.HasPrefix(path, "/") {
+		fmt.Fprintf(os.Stderr, "healthcheck: path %q must start with /\n", path)
+		return 2
+	}
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = config.DefaultPort
@@ -177,7 +211,7 @@ func healthcheck() int {
 
 	client := &http.Client{Timeout: healthcheckTimeout}
 
-	resp, err := client.Get("http://127.0.0.1:" + port + "/healthz")
+	resp, err := client.Get("http://127.0.0.1:" + port + path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
 		return 1
