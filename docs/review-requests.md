@@ -18,12 +18,16 @@ while reviewers are attached; the API has no such transition).
 
 `field_id`, `region_start`, `region_end` say where in the document the request is.
 
-* `field_id` is a field of the document's **aspect type** (`aspect_type_field.id`). It is
-  required, so a request can only be made on an aspect document; a normal document (whose one
-  value sits under `content`) is a 422 at `body.field_id`. If the field is later removed from
-  the type, `field_id` becomes null and the request keeps its offsets and `anchor_text`.
-* The offsets index into **the stored value of that field**: the Markdown string at
-  `document.body[field_id]` (ADR 6), exactly as `GET /documents/{id}` returns it, **not** the
+* **Aspect document:** `field_id` is required and is a field of its aspect type
+  (`aspect_type_field.id`); omitting it or naming another type's field is a 422 at
+  `body.field_id`. If the field is later removed from the type, `field_id` becomes null and
+  the request keeps its offsets and `anchor_text`.
+* **Normal document:** send **no** `field_id` (naming one is a 422 at `body.field_id`). The
+  range is in the document's one value, `document.body["content"]` (ADR 6), and the stored
+  `field_id` is null. A null `field_id` therefore means `content` on a normal document; the
+  document's `type` says which reading applies.
+* The offsets index into **the stored value**: the Markdown string at
+  `document.body[field_id]` (or `body["content"]`) (ADR 6), exactly as `GET /documents/{id}` returns it, **not** the
   rendered text, not the editor's document and not ProseMirror positions. Markup characters
   (`**`, `[label](lf://...)`) count.
 * The unit is a **character: a Unicode code point**. Not a byte, and not a UTF-16 unit, so a
@@ -50,6 +54,14 @@ text has changed (compare it with the text now at the range; if the offsets have
 search the field for it) without keeping every document version. LAM-122 builds on it; this
 API does not interpret it. Rows created before 0041 and plain comments have `anchor_text`
 null.
+
+## Idempotency-Key
+
+`POST /review-requests` takes `Idempotency-Key` exactly as `POST /comments` does and uses the
+same column and index (0040): the same key from the same account returns the request as it is
+now, `Idempotent-Replayed: true`, and creates and publishes nothing; the body of a replay is
+ignored. Keys are shared with plain comments, so a key already used by one of your plain
+comments is a 422 at `header.Idempotency-Key`.
 
 ## Reviewers and status
 
@@ -90,6 +102,6 @@ Filter fields: `document_id`, `field_id`, `author_id`, `reviewer_id`, `review_st
 
 ## Not here
 
-Idempotency-Key on create (comments have it; review requests do not yet), editing the
-reviewer list, per-reviewer verdicts, review requests on tickets or on normal documents, and
+editing the
+reviewer list, per-reviewer verdicts, review requests on tickets, and
 anything that reacts to the document changing (LAM-122).

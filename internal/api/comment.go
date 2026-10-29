@@ -125,6 +125,11 @@ func commentError(err error) error {
 				"send exactly one of ticket_id and document_id", "body", "exactly one of ticket_id and document_id is required")
 		}
 
+		if fe.Field == "Idempotency-Key" {
+			return newFieldError(defaultCode(http.StatusUnprocessableEntity),
+				"the Idempotency-Key was not accepted", "header.Idempotency-Key", fe.Kind.Error())
+		}
+
 		return newFieldError(defaultCode(http.StatusUnprocessableEntity),
 			"the "+fe.Field+" was not accepted", "body."+fe.Field, fe.Kind.Error())
 	}

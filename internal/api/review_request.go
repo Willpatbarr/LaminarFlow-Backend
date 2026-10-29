@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
@@ -40,7 +41,7 @@ type reviewerBody struct {
 type reviewRequestBody struct {
 	ID           string         `json:"id"`
 	DocumentID   string         `json:"document_id"`
-	FieldID      *string        `json:"field_id" nullable:"true" doc:"The aspect field the request is anchored to. Null only after that field was removed from the type; the request and its offsets are kept."`
+	FieldID      *string        `json:"field_id" nullable:"true" doc:"The aspect field the request is anchored to. Null for a normal document (the range is in its content), and after the field was removed from the aspect type; the request and its offsets are kept."`
 	RegionStart  int            `json:"region_start" doc:"Start of the range, in characters (Unicode code points) of the field's stored Markdown string, counting from 0. See docs/review-requests.md."`
 	RegionEnd    int            `json:"region_end" doc:"End of the range, exclusive; equal to region_start for a caret."`
 	AnchorText   *string        `json:"anchor_text" nullable:"true" doc:"The text of the field between region_start and region_end when the request was made. A snapshot: it does not follow later edits of the document."`
@@ -83,9 +84,10 @@ func asReviewRequestBody(r comment.ReviewRequest) reviewRequestBody {
 }
 
 type createReviewRequestInput struct {
-	Body struct {
-		DocumentID  string   `json:"document_id" format:"uuid" doc:"The document to review. Must be an aspect document: the field must belong to its aspect type."`
-		FieldID     string   `json:"field_id" format:"uuid" doc:"The aspect field the range is in; 422 at body.field_id when it is not a field of the document's aspect type."`
+	IdempotencyKey string `header:"Idempotency-Key" maxLength:"128" pattern:"^[ -~]+$" example:"2b0a7c9e-5d1f-4c8e-9a53-0f2f8d6b1e47" doc:"Makes the create safe to retry, exactly as on POST /comments (and sharing its keys: a key already used by a plain comment of yours is a 422). The same key from the same account returns the request as it is now with Idempotent-Replayed: true and creates and publishes nothing; a replay ignores the body it carries."`
+	Body           struct {
+		DocumentID  string   `json:"document_id" format:"uuid" doc:"The document to review."`
+		FieldID     *string  `json:"field_id,omitempty" format:"uuid" nullable:"true" doc:"Required for an aspect document: the field the range is in, which must belong to its aspect type. Omit it for a normal document, whose range is in its content (body key content). 422 at body.field_id otherwise."`
 		RegionStart int      `json:"region_start" minimum:"0" doc:"Start of the range: a character offset into the field's stored Markdown string. See docs/review-requests.md."`
 		RegionEnd   int      `json:"region_end" minimum:"0" doc:"End of the range, exclusive; 0 <= region_start <= region_end <= the field's length in characters (equal to region_start is a caret). 422 at body.region_end otherwise."`
 		Body        string   `json:"body" minLength:"1" maxLength:"50000" doc:"The note to the reviewers. Up to 50,000 characters; not blank."`
@@ -95,6 +97,23 @@ type createReviewRequestInput struct {
 
 type reviewRequestOutput struct {
 	Body reviewRequestBody
+}
+
+type createReviewRequestOutput struct {
+	Replayed string `header:"Idempotent-Replayed" enum:"true,false" doc:"Only when Idempotency-Key was sent. true: that key had been used, nothing was created, and the body is the original request as it is now."`
+	Body     reviewRequestBody
+}
+
+func (in *createReviewRequestInput) Resolve(ctx huma.Context) []error {
+	return resolveIdempotencyKey(ctx)
+}
+
+func (in *createReviewRequestInput) key() *string {
+	if in.IdempotencyKey == "" {
+		return nil
+	}
+
+	return &in.IdempotencyKey
 }
 
 type updateReviewRequestInput struct {
@@ -155,30 +174,39 @@ func registerReviewRequests(api huma.API, svc *comment.Service, feed ticketFeed)
 		Method:      http.MethodPost,
 		Path:        V1 + "/review-requests",
 		Summary:     "Ask for a review of a range of a document field",
-		Description: "Creates a comment on the document with `review_status` `pending`, anchored to `field_id` and the range `region_start`..`region_end`, and attaches the reviewers, in one transaction. " +
-			"Offsets count characters (Unicode code points) of the field's stored Markdown string; the range must lie inside the field's current text. `anchor_text` records what was in the range. " +
+		Description: "Creates a comment on the document with `review_status` `pending`, anchored to the range `region_start`..`region_end`, and attaches the reviewers, in one transaction. " +
+			"On an aspect document the range is in `field_id`; on a normal document send no `field_id` and it is in `content`. Offsets count characters (Unicode code points) of that stored Markdown string; the range must lie inside the field's current text. `anchor_text` records what was in the range. " +
 			"Each reviewer must be a member of the document's workspace. A document the caller cannot see (absent, archived, another workspace) is a 404. " +
 			"The request is also a comment: it is returned by `POST /comments/list`, its note is edited and the request deleted through `/comments/{id}` by its author, and it is indexed for search. " +
-			"Publishes `review_request.created`. Callable with an API token holding `ticket:write`.",
+			"Publishes `review_request.created`. Send `Idempotency-Key` to make the create safe to retry, as on `POST /comments`. Callable with an API token holding `ticket:write`.",
 		Metadata: needs(auth.TicketWrite),
-	}, func(ctx context.Context, in *createReviewRequestInput) (*reviewRequestOutput, error) {
+	}, func(ctx context.Context, in *createReviewRequestInput) (*createReviewRequestOutput, error) {
 		me, _ := auth.FromContext(ctx)
 
-		r, err := svc.CreateReview(ctx, me.AccountID, comment.ReviewParams{
+		r, replayed, err := svc.CreateReview(ctx, me.AccountID, comment.ReviewParams{
 			DocumentID:  in.Body.DocumentID,
 			FieldID:     in.Body.FieldID,
 			RegionStart: in.Body.RegionStart,
 			RegionEnd:   in.Body.RegionEnd,
 			Body:        in.Body.Body,
 			ReviewerIDs: in.Body.ReviewerIDs,
+
+			IdempotencyKey: in.key(),
 		})
 		if err != nil {
 			return nil, reviewRequestError(err)
 		}
 
-		feed.publishReviewRequest(realtime.ReviewRequestCreated, me.AccountID, r)
+		if !replayed {
+			feed.publishReviewRequest(realtime.ReviewRequestCreated, me.AccountID, r)
+		}
 
-		return &reviewRequestOutput{Body: asReviewRequestBody(r)}, nil
+		out := &createReviewRequestOutput{Body: asReviewRequestBody(r)}
+		if in.key() != nil {
+			out.Replayed = strconv.FormatBool(replayed)
+		}
+
+		return out, nil
 	})
 
 	registerList(api, listSpec[reviewRequestBody]{

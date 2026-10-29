@@ -722,14 +722,17 @@
             "type": "string"
           },
           "document_id": {
-            "description": "The document to review. Must be an aspect document: the field must belong to its aspect type.",
+            "description": "The document to review.",
             "format": "uuid",
             "type": "string"
           },
           "field_id": {
-            "description": "The aspect field the range is in; 422 at body.field_id when it is not a field of the document's aspect type.",
+            "description": "Required for an aspect document: the field the range is in, which must belong to its aspect type. Omit it for a normal document, whose range is in its content (body key content). 422 at body.field_id otherwise.",
             "format": "uuid",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "region_end": {
             "description": "End of the range, exclusive; 0 \u003c= region_start \u003c= region_end \u003c= the field's length in characters (equal to region_start is a caret). 422 at body.region_end otherwise.",
@@ -758,7 +761,6 @@
         },
         "required": [
           "document_id",
-          "field_id",
           "region_start",
           "region_end",
           "body",
@@ -3124,7 +3126,7 @@
             "type": "string"
           },
           "field_id": {
-            "description": "The aspect field the request is anchored to. Null only after that field was removed from the type; the request and its offsets are kept.",
+            "description": "The aspect field the request is anchored to. Null for a normal document (the range is in its content), and after the field was removed from the aspect type; the request and its offsets are kept.",
             "type": [
               "string",
               "null"
@@ -6904,8 +6906,24 @@
     },
     "/api/v1/review-requests": {
       "post": {
-        "description": "Creates a comment on the document with `review_status` `pending`, anchored to `field_id` and the range `region_start`..`region_end`, and attaches the reviewers, in one transaction. Offsets count characters (Unicode code points) of the field's stored Markdown string; the range must lie inside the field's current text. `anchor_text` records what was in the range. Each reviewer must be a member of the document's workspace. A document the caller cannot see (absent, archived, another workspace) is a 404. The request is also a comment: it is returned by `POST /comments/list`, its note is edited and the request deleted through `/comments/{id}` by its author, and it is indexed for search. Publishes `review_request.created`. Callable with an API token holding `ticket:write`.",
+        "description": "Creates a comment on the document with `review_status` `pending`, anchored to the range `region_start`..`region_end`, and attaches the reviewers, in one transaction. On an aspect document the range is in `field_id`; on a normal document send no `field_id` and it is in `content`. Offsets count characters (Unicode code points) of that stored Markdown string; the range must lie inside the field's current text. `anchor_text` records what was in the range. Each reviewer must be a member of the document's workspace. A document the caller cannot see (absent, archived, another workspace) is a 404. The request is also a comment: it is returned by `POST /comments/list`, its note is edited and the request deleted through `/comments/{id}` by its author, and it is indexed for search. Publishes `review_request.created`. Send `Idempotency-Key` to make the create safe to retry, as on `POST /comments`. Callable with an API token holding `ticket:write`.",
         "operationId": "create-review-request",
+        "parameters": [
+          {
+            "description": "Makes the create safe to retry, exactly as on POST /comments (and sharing its keys: a key already used by a plain comment of yours is a 422). The same key from the same account returns the request as it is now with Idempotent-Replayed: true and creates and publishes nothing; a replay ignores the body it carries.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "Makes the create safe to retry, exactly as on POST /comments (and sharing its keys: a key already used by a plain comment of yours is a 422). The same key from the same account returns the request as it is now with Idempotent-Replayed: true and creates and publishes nothing; a replay ignores the body it carries.",
+              "examples": [
+                "2b0a7c9e-5d1f-4c8e-9a53-0f2f8d6b1e47"
+              ],
+              "maxLength": 128,
+              "pattern": "^[ -~]+$",
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -6925,7 +6943,19 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "Idempotent-Replayed": {
+                "schema": {
+                  "description": "Only when Idempotency-Key was sent. true: that key had been used, nothing was created, and the body is the original request as it is now.",
+                  "enum": [
+                    "true",
+                    "false"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {

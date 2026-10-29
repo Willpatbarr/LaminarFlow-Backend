@@ -200,7 +200,8 @@ func TestAReviewRequestIsRefusedWithTheFieldNamed(t *testing.T) {
 		location string
 	}{
 		{"field of another type", base(map[string]any{"field_id": other[0]}), "body.field_id"},
-		{"normal document", base(map[string]any{"document_id": plain.ID}), "body.field_id"},
+		{"field on a normal document", base(map[string]any{"document_id": plain.ID}), "body.field_id"},
+		{"no field on an aspect document", map[string]any{"document_id": doc.ID, "region_start": 0, "region_end": 1, "body": "x", "reviewer_ids": sarah}, "body.field_id"},
 		{"non-member reviewer", base(map[string]any{"reviewer_ids": []string{f.sarah.AccountID, f.carol.AccountID}}), "body.reviewer_ids[1]"},
 		{"unknown account", base(map[string]any{"reviewer_ids": []string{"99999999-9999-4999-8999-999999999999"}}), "body.reviewer_ids[0]"},
 		{"reviewer twice", base(map[string]any{"reviewer_ids": []string{f.sarah.AccountID, f.sarah.AccountID}}), "body.reviewer_ids[1]"},
@@ -209,7 +210,6 @@ func TestAReviewRequestIsRefusedWithTheFieldNamed(t *testing.T) {
 		{"negative", base(map[string]any{"region_start": -1}), "body.region_start"},
 		{"past the end", base(map[string]any{"region_end": 12}), "body.region_end"},
 		{"blank note", base(map[string]any{"body": "  "}), "body.body"},
-		{"no field", map[string]any{"document_id": doc.ID, "region_start": 0, "region_end": 1, "body": "x", "reviewer_ids": sarah}, ""},
 		{"no document", map[string]any{"field_id": fields[0], "region_start": 0, "region_end": 1, "body": "x", "reviewer_ids": sarah}, ""},
 	} {
 		rec := f.postReview(t, f.willC, tc.body)
@@ -430,4 +430,82 @@ func TestReviewRequestsFollowTheTicketScopes(t *testing.T) {
 	if got := f.reviews(t, f.willC, where(cond("document_id", doc.ID))); len(got) != 1 || !strings.Contains(got[0].Body, "agent") {
 		t.Errorf("listed = %+v", got)
 	}
+}
+
+func TestANormalDocumentIsReviewedInItsContent(t *testing.T) {
+	f := newFeed(t)
+	doc := f.document(t, f.willC, map[string]any{"title": "Notes", "project_id": f.project.ID,
+		"body": map[string]string{"content": "# Meeting\nShip it on Friday."}})
+	body := func(start, end int) map[string]any {
+		return map[string]any{"document_id": doc.ID, "region_start": start, "region_end": end,
+			"body": "Friday?", "reviewer_ids": []string{f.sarah.AccountID}}
+	}
+
+	r := f.review(t, f.willC, body(21, 27))
+	if r.FieldID != nil || r.DocumentID != doc.ID || r.ReviewStatus != "pending" || r.AnchorText == nil || *r.AnchorText != "Friday" {
+		t.Fatalf("created = %+v (anchor %v)", r, r.AnchorText)
+	}
+	wantDocProblem(t, f.postReview(t, f.willC, body(0, 99)), http.StatusUnprocessableEntity, "unprocessable_entity", "body.region_end")
+
+	if rec := f.decide(t, f.sarahC, r.ID, "approved"); rec.Code != http.StatusOK {
+		t.Errorf("approve: %d %s", rec.Code, rec.Body)
+	}
+	if got := f.reviews(t, f.sarahC, where(cond("document_id", doc.ID), cond("review_status", "approved"))); len(got) != 1 {
+		t.Errorf("listed = %+v", got)
+	}
+
+	// An empty normal document takes only the caret at 0.
+	empty := f.document(t, f.willC, map[string]any{"title": "Empty", "project_id": f.project.ID})
+	rec := f.postReview(t, f.willC, map[string]any{"document_id": empty.ID, "region_start": 0, "region_end": 0,
+		"body": "x", "reviewer_ids": []string{f.sarah.AccountID}})
+	if rec.Code != http.StatusOK {
+		t.Errorf("caret in an empty document: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestTheSameKeyTwiceIsOneReviewRequestAndOneEvent(t *testing.T) {
+	f := newFeed(t)
+	doc, fields := f.reviewDoc(t, "hello world")
+	watcher := f.open(t, f.cookie(f.sarahC))
+	body := map[string]any{"document_id": doc.ID, "field_id": fields[0], "region_start": 0, "region_end": 5,
+		"body": "ok?", "reviewer_ids": []string{f.sarah.AccountID}}
+
+	first := f.postReview(t, f.willC, body, "Idempotency-Key", "rk-1")
+	if first.Code != http.StatusOK || first.Header().Get("Idempotent-Replayed") != "false" {
+		t.Fatalf("first: %d replayed=%q %s", first.Code, first.Header().Get("Idempotent-Replayed"), first.Body)
+	}
+	var a reviewWire
+	decode(t, first, &a)
+	if ev := readEvent(t, watcher); ev.Type != "review_request.created" {
+		t.Fatalf("event = %+v", ev)
+	}
+
+	f.decide(t, f.sarahC, a.ID, "approved")
+	readEvent(t, watcher) // review_request.updated
+
+	// The replay ignores its body, returns the current copy, and publishes nothing.
+	body["body"] = "different"
+	second := f.postReview(t, f.willC, body, "Idempotency-Key", "rk-1")
+	var b reviewWire
+	decode(t, second, &b)
+	if second.Code != http.StatusOK || second.Header().Get("Idempotent-Replayed") != "true" ||
+		b.ID != a.ID || b.Body != "ok?" || b.ReviewStatus != "approved" || len(b.Reviewers) != 1 {
+		t.Fatalf("replay: %d %q %+v", second.Code, second.Header().Get("Idempotent-Replayed"), b)
+	}
+	if got := f.reviews(t, f.willC, where(cond("document_id", doc.ID), cond("review_status", "approved"))); len(got) != 1 {
+		t.Errorf("review requests = %+v, want one", got)
+	}
+	f.decide(t, f.sarahC, a.ID, "pending")
+	if ev := readEvent(t, watcher); ev.Type != "review_request.updated" {
+		t.Errorf("next event = %+v, want the update (the replay published nothing)", ev)
+	}
+
+	// Keys are per account, and a key of a plain comment is not answered with that comment.
+	other := f.postReview(t, f.sarahC, body, "Idempotency-Key", "rk-1")
+	if other.Header().Get("Idempotent-Replayed") != "false" {
+		t.Errorf("another account's first use replayed: %d %s", other.Code, other.Body)
+	}
+	f.postComment(t, f.willC, map[string]any{"document_id": doc.ID, "body": "plain"}, "Idempotency-Key", "ck-1")
+	wantDocProblem(t, f.postReview(t, f.willC, body, "Idempotency-Key", "ck-1"),
+		http.StatusUnprocessableEntity, "unprocessable_entity", "header.Idempotency-Key")
 }
