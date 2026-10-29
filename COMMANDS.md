@@ -65,7 +65,7 @@ database that predates the runner — it refuses once any migration is recorded.
 
     set -a && source .env && set +a && psql "$DATABASE_URL" -c '\dt'
 
-## Rebuild every search_index row from the document blobs
+## Rebuild every search_index row (also re-strips Markdown from snippets, LAM-143)
 
     set -a && source .env && set +a && go run ./cmd/reindex
 
