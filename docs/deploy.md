@@ -13,7 +13,7 @@ instructions live.
 |------|------------|
 | `/laminarflow` | The server. Entrypoint. Serves the API and the frontend on one port. |
 | `/migrate` | Schema tool — `up`, `down [n]`, `status`, `baseline`. |
-| `/reindex` | Rebuilds `search_index` from the document blobs. |
+| `/reindex` | Rebuilds `search_index` from its sources. Not needed after a deploy: the server does it itself when the index format changes (see Search index below). |
 | `/export` | Writes the whole workspace as a zip of JSON and Markdown (see Export below). |
 
 Base is `gcr.io/distroless/static-debian12:nonroot` — CA certificates, timezone
@@ -316,3 +316,19 @@ Not present, and deliberately so:
   (`PGDATA_HOST`) and the files folder (`FILES_HOST`).
 * **No Tailscale hostname anywhere.** Tailscale is a property of the host, not
   the app; the app binds a port and does not care what reaches it.
+
+## Search index
+
+`search_index` carries a format version (`search_index_version`, migration 0049; the
+code's is `search.IndexVersion`). On startup, after migrations, the server compares
+the two and, if the stored one is older, rebuilds the whole index once and stores the
+new version. Nothing to run by hand when a release changes how text is indexed
+(LAM-143 was the first: Markdown stripped to plain text).
+
+- The rebuild is logged (`search: rebuilding` / `search: rebuilt index`) and runs
+  before the server listens, so the first start after such a release is slower in
+  proportion to the data.
+- If it fails, the failure is logged and the server starts anyway; search shows the
+  old text until the next start tries again. `/reindex` is still there to run by hand.
+- Two instances starting together rebuild once (an advisory lock inside the rebuild
+  transaction).
