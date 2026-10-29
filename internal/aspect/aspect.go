@@ -676,3 +676,26 @@ func Bootstrap(ctx context.Context, tx pgx.Tx, teamID string, names []string) ([
 
 	return out, nil
 }
+
+// AllFields returns every field of every aspect type, grouped by type id and in display
+// order, read inside the caller's transaction. Not scoped to an account: it is for the
+// whole-database export (internal/export), which labels document sections from it.
+func (s *Service) AllFields(ctx context.Context, tx pgx.Tx) (map[string][]Field, error) {
+	rows, err := tx.Query(ctx,
+		`SELECT `+fieldColumns+` FROM aspect_type_field f ORDER BY f.aspect_type_id, f.position, f.label, f.id`)
+	if err != nil {
+		return nil, fmt.Errorf("aspect: all fields: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string][]Field{}
+	for rows.Next() {
+		var f Field
+		if err := rows.Scan(&f.ID, &f.AspectTypeID, &f.Label, &f.Position, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("aspect: all fields scan: %w", err)
+		}
+		out[f.AspectTypeID] = append(out[f.AspectTypeID], f)
+	}
+
+	return out, rows.Err()
+}

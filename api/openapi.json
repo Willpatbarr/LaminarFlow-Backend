@@ -7178,6 +7178,45 @@
         "summary": "Rename an epic or change its description"
       }
     },
+    "/api/v1/export": {
+      "post": {
+        "description": "Session only: a token caller gets 403 `insufficient_scope` (token export waits for an `export:read` permission). `application/zip` holding one JSON file per table (`tickets.json`, `documents.json` without bodies, `teams.json`, `projects.json`, `settings.json`, `aspect_types.json`, and so on), `documents/\u003cid\u003e.md` with each document's body as Markdown (aspect documents get one section per field, headed by the field's label), and `manifest.json` with the schema version, time and row counts. Archived records are included. Passwords, API tokens and sessions are not. Attachment records are in `attachments.json`; the file bytes are not in the zip (use `scripts/backup.sh`). All of it is read in one transaction, so the files agree with each other. This is an export for people and scripts, not a backup.",
+        "operationId": "export-data",
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The zip.",
+            "headers": {
+              "Content-Disposition": {
+                "description": "attachment; filename=\"laminarflow-export-\u003cUTC timestamp\u003e.zip\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Export everything as a zip"
+      }
+    },
     "/api/v1/labels": {
       "post": {
         "description": "A name already used in the team is a 409 `label_name_taken`. Announced as `label.created`.",

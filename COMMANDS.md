@@ -69,6 +69,21 @@ database that predates the runner — it refuses once any migration is recorded.
 
     set -a && source .env && set +a && go run ./cmd/reindex
 
+## Export everything as a zip — JSON for every table, Markdown for documents
+
+Same zip as `POST /api/v1/export`. `-o -` writes to stdout. Attachment bytes are not in it;
+`scripts/backup.sh` is the backup.
+
+    set -a && source .env && set +a && go run ./cmd/export -o export.zip
+
+## Back up and restore the deployed stack — database and files folder
+
+Run from the deploy directory on the host (see docs/deploy.md). Restore refuses to run
+over existing data.
+
+    ./scripts/backup.sh
+    ./scripts/restore.sh backups/laminarflow-backup-<timestamp>.tar.gz
+
 ## Create the test bootstrap database — first-time setup
 
 `TestMain` creates its own throwaway database per run and applies the
