@@ -1,7 +1,7 @@
 # Deploying LaminarFlow
 
 One image, two hosts, no host-specific values compiled in. Everything that
-differs between the Raspberry Pi, the eventual home server, and a cloud VM comes
+differs between the Raspberry Pi, the home server, and a cloud VM comes
 from the environment.
 
 The image itself is generic. This document is the only place host-specific
@@ -151,15 +151,46 @@ Confirm with `docker info` — it warns when the limit support is missing.
 **Restart at boot** is handled by `restart: unless-stopped`. There is no Cockpit
 here and none is needed.
 
-## Host: home server (later)
+## Host: home server (Ubuntu PC, current)
 
-Same image, same compose file, same `.env` shape. Two differences:
+The home server is an x86_64 Ubuntu PC on the LAN (`willbarr@192.168.4.46`). It
+also runs a Minecraft server, so the deploy is built to be a polite neighbour:
+the image is built there at `nice 19` with a CPU and memory cap, a watchdog aborts
+the build if available memory drops below 1.5 GB, and the containers have memory
+limits (app 512m, Postgres 1g). Ports 25565, 25575 and 8443 belong to other
+things; the app publishes only **8080**.
 
-**Cockpit** handles host-level administration — updates, disks, systemd — and
-stays private to the tailnet. It is not involved in running the app; the app is
-compose like anywhere else.
+**Deploy and redeploy, from a checkout on your workstation (no root needed):**
 
-**Storage** is whatever the server's data mount is, set through `PGDATA_HOST` and `FILES_HOST`.
+    ./scripts/deploy-remote.sh willbarr@192.168.4.46
+
+It streams `git archive` of `main` from both repositories (committed work only)
+to `~/laminarflow/build` on the PC, builds the amd64 image there, runs
+`docker compose up -d`, waits for the container to report healthy and checks
+`/healthz` and `/healthz/db`. The database and uploaded files are kept. The
+first run also creates everything below. `BACKEND_REF`, `FRONTEND_REF`,
+`FRONTEND_REPO`, `REMOTE_DIR`, `APP_BIND`, `BUILD_CPUS`, `BUILD_MEM` and
+`MIN_AVAIL_MB` override the defaults.
+
+| What | Where on the PC |
+|------|-----------------|
+| Compose file | `~/laminarflow/docker-compose.yml` (copied from `deploy/`) |
+| Secrets and settings | `~/laminarflow/.env`, mode 600, generated on first run, never committed |
+| Postgres data | `~/laminarflow/pgdata` |
+| Uploaded files | `~/laminarflow/files`, chowned to 65532 by a throwaway container |
+
+Back up `pgdata` and `files` together. The app is at `http://192.168.4.46:8080`
+(`APP_BIND=0.0.0.0` in that `.env`: LAN only; Tailscale exposure is not
+configured). It restarts on boot through `restart: unless-stopped` and the
+systemd-enabled Docker service. Each deploy tags the image `laminarflow:<sha>`
+and records it as `APP_IMAGE`, so rolling back the image is editing that line
+and `docker compose up -d` (see the migration caveat in `deploy/README.md`).
+
+The PC has no `buildx` plugin, so the script falls back to the classic builder
+with a rewritten copy of the Dockerfile (generated on the PC, not committed).
+
+**Cockpit** handles host-level administration - updates, disks, systemd - and
+stays private to the tailnet. It is not involved in running the app.
 
 ## Both hosts: Tailscale
 

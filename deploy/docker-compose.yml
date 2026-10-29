@@ -41,7 +41,7 @@ services:
       # misconfigured firewall does not silently expose this to a LAN. Set
       # APP_BIND=0.0.0.0 deliberately if that is what you want.
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:${APP_PORT:-8080}"
-    mem_limit: 256m
+    mem_limit: 512m
 
   db:
     image: postgres:17
@@ -66,7 +66,7 @@ services:
       -c maintenance_work_mem=64MB
     # Silently ignored on Raspberry Pi OS unless /boot/firmware/cmdline.txt has
     # cgroup_enable=memory cgroup_memory=1 (verify with `docker info`).
-    mem_limit: 512m
+    mem_limit: 1g
     healthcheck:
       test:
         [
