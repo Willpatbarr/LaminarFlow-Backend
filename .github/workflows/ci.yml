@@ -47,6 +47,29 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://laminarflow:laminarflow@localhost:5432/laminarflow_test?sslmode=disable
 
+      # The README quickstart, run for real (LAM-123): a fresh database, the server
+      # started on it, one registration to get a session, one token minted from that
+      # session - and from there the script holds only the token and sends nothing else.
+      - name: Run the API quickstart
+        run: |
+          set -eu
+          export PGPASSWORD=laminarflow
+          psql -h localhost -U laminarflow -d laminarflow_test -c 'CREATE DATABASE quickstart'
+          go build -o "$RUNNER_TEMP/laminarflow" .
+          DATABASE_URL='postgres://laminarflow:laminarflow@localhost:5432/quickstart?sslmode=disable' \
+            MIGRATE_ON_STARTUP=true PORT=18080 ATTACHMENT_DIR="$RUNNER_TEMP/files" \
+            "$RUNNER_TEMP/laminarflow" >"$RUNNER_TEMP/server.log" 2>&1 &
+          trap 'cat "$RUNNER_TEMP/server.log"' EXIT
+          for _ in $(seq 1 30); do curl -sf localhost:18080/healthz/db >/dev/null && break; sleep 1; done
+          jar="$RUNNER_TEMP/session.jar"
+          api=http://localhost:18080/api/v1
+          curl -sf -c "$jar" -X POST "$api/auth/register" -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","password":"correct-horse-battery","display_name":"CI"}' >/dev/null
+          token=$(curl -sf -b "$jar" -X POST "$api/auth/tokens" -H 'Content-Type: application/json' \
+            -d '{"label":"ci quickstart","scopes":["ticket:read","ticket:write","project:read","project:write","team:read","team:write"]}' | jq -er .token)
+          rm "$jar"
+          LF_TOKEN="$token" LF_URL=http://localhost:18080 ./scripts/agent-quickstart.sh
+
       # The spec is generated but committed, so the only way it goes stale is
       # a handler change without a regeneration. This is that alarm.
       - name: Check the OpenAPI spec is current
