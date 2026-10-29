@@ -10,6 +10,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/dbtest"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/migrate"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
 	"github.com/Willpatbarr/LaminarFlow-Backend/migrations"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -456,5 +457,204 @@ func TestTwoTypesMayShareAName(t *testing.T) {
 
 	if _, err := w.svc.CreateType(context.Background(), w.member, w.team, "Class"); err != nil {
 		t.Errorf("a second type named Class was refused: %v", err)
+	}
+}
+
+// LAM-110. The portable form: what leaves, what arrives, and what is refused.
+
+func TestExportCarriesNoIDAndTheFieldsInOrder(t *testing.T) {
+	w := newWorld(t)
+	typ := w.newType(t, "Class")
+	w.addFields(t, typ.ID, "Purpose", "Methods", "Notes")
+
+	got, err := w.svc.Export(context.Background(), w.member, typ.ID)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	if got.FormatVersion != aspect.FormatVersion || got.Name != "Class" {
+		t.Errorf("export = %+v", got)
+	}
+	var ls []string
+	for _, f := range got.Fields {
+		ls = append(ls, f.Label)
+	}
+	if !equal(ls, []string{"Purpose", "Methods", "Notes"}) {
+		t.Errorf("labels = %v", ls)
+	}
+}
+
+func TestExportOfAnOutsidersTypeIsNotFound(t *testing.T) {
+	w := newWorld(t)
+	typ := w.newType(t, "Class")
+
+	if _, err := w.svc.Export(context.Background(), w.outsid, typ.ID); !errors.Is(err, aspect.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestImportRoundTripsBetweenTeamsWithFreshIDs(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+
+	src := w.newType(t, "Class")
+	srcFields := w.addFields(t, src.ID, "Purpose", "Methods", "Notes")
+
+	var other string
+	if err := w.pool.QueryRow(ctx, `INSERT INTO team (workspace_id, name) VALUES ($1::uuid, 'Other team') RETURNING id::text`, w.workspace).Scan(&other); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := w.svc.Export(ctx, w.member, src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := w.svc.Import(ctx, w.member, other, p)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	if got.ID == src.ID || got.TeamID != other || got.Name != "Class" {
+		t.Errorf("imported = %+v", got)
+	}
+	if !equal(labels(got.Fields), []string{"Purpose", "Methods", "Notes"}) {
+		t.Errorf("labels = %v", labels(got.Fields))
+	}
+	for i, f := range got.Fields {
+		if f.ID == srcFields[i].ID {
+			t.Errorf("field %d kept its id %s", i, f.ID)
+		}
+	}
+
+	// Re-exporting the copy gives the same file back.
+	again, err := w.svc.Export(ctx, w.member, got.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Name != p.Name || len(again.Fields) != len(p.Fields) {
+		t.Errorf("re-export = %+v, want %+v", again, p)
+	}
+}
+
+func TestImportOrdersByPositionAndKeepsFileOrderOnTies(t *testing.T) {
+	w := newWorld(t)
+
+	got, err := w.svc.Import(context.Background(), w.member, w.team, aspect.Portable{
+		FormatVersion: 1, Name: "Mixed",
+		Fields: []aspect.PortableField{{Label: "C", Position: 9}, {Label: "A", Position: 1}, {Label: "B", Position: 1}, {Label: "D", Position: 20}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !equal(labels(got.Fields), []string{"A", "B", "C", "D"}) {
+		t.Errorf("labels = %v", labels(got.Fields))
+	}
+	for i, f := range got.Fields {
+		if f.Position != i+1 {
+			t.Errorf("field %q position %d, want %d", f.Label, f.Position, i+1)
+		}
+	}
+}
+
+func TestImportNeverOverwritesAndSuffixesAClash(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+
+	orig := w.newType(t, "Class")
+	w.addFields(t, orig.ID, "Keep me")
+
+	p := aspect.Portable{FormatVersion: 1, Name: "Class", Fields: []aspect.PortableField{{Label: "New", Position: 1}}}
+	for _, want := range []string{"Class (2)", "Class (3)"} {
+		got, err := w.svc.Import(ctx, w.member, w.team, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Name != want {
+			t.Errorf("name = %q, want %q", got.Name, want)
+		}
+	}
+
+	after, err := w.svc.Get(ctx, w.member, orig.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Name != "Class" || !equal(labels(after.Fields), []string{"Keep me"}) {
+		t.Errorf("the original changed: %+v", after)
+	}
+}
+
+func TestAClashOnALongestNameStillFits(t *testing.T) {
+	w := newWorld(t)
+	long := ""
+	for i := 0; i < aspect.MaxNameLength; i++ {
+		long += "x"
+	}
+	w.newType(t, long)
+
+	got, err := w.svc.Import(context.Background(), w.member, w.team, aspect.Portable{FormatVersion: 1, Name: long})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len([]rune(got.Name)); n != aspect.MaxNameLength || got.Name == long {
+		t.Errorf("name %q has %d characters", got.Name, n)
+	}
+}
+
+func TestImportIntoAnUnreachableTeamIsNotFound(t *testing.T) {
+	w := newWorld(t)
+
+	_, err := w.svc.Import(context.Background(), w.outsid, w.team, aspect.Portable{FormatVersion: 1, Name: "X"})
+	if !errors.Is(err, aspect.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAnInvalidFileNamesTheFieldAndCreatesNothing(t *testing.T) {
+	w := newWorld(t)
+
+	tooMany := make([]aspect.PortableField, aspect.MaxImportFields+1)
+	for i := range tooMany {
+		tooMany[i] = aspect.PortableField{Label: "f"}
+	}
+	long := make([]rune, aspect.MaxLabelLength+1)
+	for i := range long {
+		long[i] = 'a'
+	}
+
+	cases := map[string]struct {
+		in    aspect.Portable
+		field string
+	}{
+		"version":  {aspect.Portable{FormatVersion: 2, Name: "X"}, "format_version"},
+		"blank":    {aspect.Portable{FormatVersion: 1, Name: "  "}, "name"},
+		"label":    {aspect.Portable{FormatVersion: 1, Name: "X", Fields: []aspect.PortableField{{Label: "ok", Position: 1}, {Label: " ", Position: 2}}}, "fields[1].label"},
+		"long":     {aspect.Portable{FormatVersion: 1, Name: "X", Fields: []aspect.PortableField{{Label: string(long), Position: 1}}}, "fields[0].label"},
+		"position": {aspect.Portable{FormatVersion: 1, Name: "X", Fields: []aspect.PortableField{{Label: "a", Position: -1}}}, "fields[0].position"},
+		"too many": {aspect.Portable{FormatVersion: 1, Name: "X", Fields: tooMany}, "fields"},
+	}
+
+	for name, c := range cases {
+		_, err := w.svc.Import(context.Background(), w.member, w.team, c.in)
+
+		var fe *aspect.FormatError
+		var le *textlimit.FieldError
+		switch {
+		case errors.As(err, &fe):
+			if fe.Field != c.field {
+				t.Errorf("%s: field %q, want %q", name, fe.Field, c.field)
+			}
+		case errors.As(err, &le):
+			if le.Field != c.field {
+				t.Errorf("%s: field %q, want %q", name, le.Field, c.field)
+			}
+		default:
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+
+	types, err := w.svc.ListTypes(context.Background(), w.member, w.team)
+	if err != nil || len(types) != 0 {
+		t.Errorf("types = %v, err %v, want none", types, err)
 	}
 }

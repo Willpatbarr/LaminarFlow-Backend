@@ -4,8 +4,9 @@
 ╠═ declares ════════════════════════════════════════════════════════════════════════════
 ║      CodeAspectNotFound      const
 ║      CodeFieldSetWrong       const
+║      CodeAspectFormatUnsupported   const
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
-║      NewHumaAPI  →  eight operations under /aspect-types
+║      NewHumaAPI  →  eleven operations under /aspect-types
 ╚═══════════════════════════════════════════════════════════════════════════════════════
 */
 
@@ -31,6 +32,12 @@ const CodeAspectNotFound = "aspect_type_not_found"
 // the schema could have caught - the set is only wrong relative to the rows that exist
 // - so it needs a code a client can branch on to refetch and retry.
 const CodeFieldSetWrong = "field_set_mismatch"
+
+// An import file whose format_version this server does not read. Its own code, because
+// the fix is different from every other 422 here: not a value to correct but a file from
+// a newer (or older) server to re-export. Every other refusal of a file is the derived
+// unprocessable_entity, with errors[0].location naming the field.
+const CodeAspectFormatUnsupported = "aspect_format_unsupported"
 
 // Eight operations rather than one PUT over a whole aspect type, and that is the shape
 // LAM-44 is about. A PUT of the full type would make every field edit a body rewrite
@@ -68,6 +75,40 @@ type createAspectTypeInput struct {
 	Body struct {
 		TeamID string `json:"team_id" required:"true" format:"uuid"`
 		Name   string `json:"name" required:"true" minLength:"1"`
+	}
+}
+
+// The portable form (LAM-110, docs/aspect-type-format.md). No ids anywhere in it, and
+// `additionalProperties: false` on both objects: a key this version does not know is a
+// 422 naming it, not a value silently dropped on the way to a team that then wonders
+// where it went.
+type portableFieldBody struct {
+	_ struct{} `additionalProperties:"false"`
+
+	Label    string `json:"label" required:"true" minLength:"1" maxLength:"100" doc:"At most 100 characters, and not only whitespace."`
+	Position int    `json:"position" required:"true" minimum:"0" maximum:"1000000" doc:"Ordering only: import sorts by it (ties keep file order) and renumbers 1..n, so gaps and repeats are fine."`
+}
+
+type portableBody struct {
+	_ struct{} `additionalProperties:"false"`
+
+	FormatVersion int                 `json:"format_version" required:"true" doc:"Always 1 for now. Any other number is a 422 aspect_format_unsupported at body.format_version."`
+	Name          string              `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"At most 100 characters, and not only whitespace."`
+	Fields        []portableFieldBody `json:"fields" required:"true" maxItems:"100" doc:"At most 100, in the order they should appear. May be empty."`
+}
+
+type exportAspectTypeOutput struct {
+	Body portableBody
+}
+
+type importAspectTypeInput struct {
+	Body struct {
+		_ struct{} `additionalProperties:"false"`
+
+		TeamID        string              `json:"team_id" required:"true" format:"uuid" doc:"The team that gets the new type."`
+		FormatVersion int                 `json:"format_version" required:"true" doc:"Always 1 for now. Any other number is a 422 aspect_format_unsupported at body.format_version."`
+		Name          string              `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"At most 100 characters, and not only whitespace."`
+		Fields        []portableFieldBody `json:"fields" required:"true" maxItems:"100" doc:"At most 100, in the order they should appear. May be empty."`
 	}
 }
 
@@ -153,6 +194,22 @@ func aspectError(err error) error {
 	}
 
 	return err
+}
+
+// importError maps a refused file onto a 422 whose errors[0].location is the field.
+// Nil for anything else, so the caller falls through to aspectError.
+func importError(err error) *Error {
+	var fe *aspect.FormatError
+	if errors.As(err, &fe) {
+		code := defaultCode(http.StatusUnprocessableEntity)
+		if fe.Unsupported {
+			code = CodeAspectFormatUnsupported
+		}
+
+		return newFieldError(code, "the file was not accepted: "+fe.Field+" "+fe.Message, "body."+fe.Field, fe.Message)
+	}
+
+	return limitError(err)
 }
 
 /*
@@ -260,6 +317,66 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		}
 
 		return &fieldOutput{Body: asFieldBody(f)}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "export-aspect-type",
+		Method:      http.MethodGet,
+		Path:        V1 + "/aspect-types/{id}/export",
+		Summary:     "Export an aspect type as portable JSON",
+		Description: "The type's name and fields, in position order, with `format_version` and no ids - safe to hand to another team, " +
+			"which gets fresh ids on import. Nothing is recorded or changed. Needs `aspect:read`. See docs/aspect-type-format.md.",
+		Metadata: needs(auth.AspectRead),
+	}, func(ctx context.Context, in *aspectTypeInput) (*exportAspectTypeOutput, error) {
+		me, _ := auth.FromContext(ctx)
+
+		p, err := svc.Export(ctx, me.AccountID, in.ID)
+		if err != nil {
+			return nil, aspectError(err)
+		}
+
+		out := &exportAspectTypeOutput{}
+		out.Body = portableBody{FormatVersion: p.FormatVersion, Name: p.Name, Fields: make([]portableFieldBody, len(p.Fields))}
+		for i, f := range p.Fields {
+			out.Body.Fields[i] = portableFieldBody{Label: f.Label, Position: f.Position}
+		}
+
+		return out, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "import-aspect-type",
+		Method:      http.MethodPost,
+		Path:        V1 + "/aspect-types/import",
+		Summary:     "Create a new aspect type from portable JSON",
+		Description: "Always creates a NEW type in `team_id`; it never replaces or edits an existing one. Fields get fresh ids, " +
+			"in the file's position order. If the team already has a type with that name the new one is named \"<name> (2)\", " +
+			"then \"(3)\" and so on - read the name in the response. A file is refused whole, as a 422 whose `errors[0].location` " +
+			"is the field (`body.format_version`, `body.name`, `body.fields[2].label`, or an unknown key); nothing is created. " +
+			"Needs `aspect:write`. See docs/aspect-type-format.md.",
+		Metadata: needs(auth.AspectWrite),
+	}, func(ctx context.Context, in *importAspectTypeInput) (*aspectTypeOutput, error) {
+		me, _ := auth.FromContext(ctx)
+
+		p := aspect.Portable{
+			FormatVersion: in.Body.FormatVersion,
+			Name:          in.Body.Name,
+			Fields:        make([]aspect.PortableField, len(in.Body.Fields)),
+		}
+		for i, f := range in.Body.Fields {
+			p.Fields[i] = aspect.PortableField{Label: f.Label, Position: f.Position}
+		}
+
+		t, err := svc.Import(ctx, me.AccountID, in.Body.TeamID, p)
+		if err != nil {
+			if e := importError(err); e != nil {
+				return nil, e
+			}
+
+			return nil, aspectError(err)
+		}
+
+		return &aspectTypeOutput{Body: asAspectTypeBody(t)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
