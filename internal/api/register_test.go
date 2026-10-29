@@ -9,11 +9,13 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/dbtest"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/migrate"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/storage"
 	"github.com/Willpatbarr/LaminarFlow-Backend/migrations"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -59,8 +61,23 @@ func registrationMux(t *testing.T, emptyInstall bool) (*http.ServeMux, *pgxpool.
 		}
 	}
 
-	return NewMux(pool, bundle, testHub(t)), pool
+	dir := t.TempDir()
+	files, err := storage.NewLocal(dir)
+	if err != nil {
+		t.Fatalf("attachment storage: %v", err)
+	}
+	mux := NewMux(pool, bundle, testHub(t), WithAttachments(files, testMaxAttachmentBytes))
+	attachmentRoots.Store(mux, dir)
+
+	return mux, pool
 }
+
+// testMaxAttachmentBytes is small enough that an oversize upload is a quick test.
+const testMaxAttachmentBytes = 64 << 10
+
+// attachmentRoots finds the folder a test mux keeps its files in, so a test can look at
+// the disk. Keyed by mux because registrationMux returns only the mux and the pool.
+var attachmentRoots sync.Map
 
 func call(t *testing.T, mux *http.ServeMux, method, path string, body any, cookie string, header ...string) *httptest.ResponseRecorder {
 	t.Helper()

@@ -22,3 +22,7 @@ pgdata
 .idea
 .vscode
 .DS_Store
+
+# Uploaded files from a local run (LAM-90).
+data
+files

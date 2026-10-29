@@ -230,7 +230,7 @@ duplicate; not retrying loses the work. LAM-75.
 
 1 to 128 printable ASCII characters (space to `~`); a UUID is the obvious choice. Anything
 else — empty, longer than 128, non-ASCII or a control character, or the header sent twice —
-is a `422` on `header.Idempotency-Key`. `POST /tickets`, `POST /documents` (LAM-126) and `POST /comments` (LAM-99) take it;
+is a `422` on `header.Idempotency-Key`. `POST /tickets`, `POST /documents` (LAM-126), `POST /comments` (LAM-99) and `POST /attachments` (LAM-90) take it;
 the other writes are
 already safe to repeat (`PUT` replaces, archive and unarchive are refused when repeated, and
 all three can carry `If-Match`).
@@ -323,3 +323,40 @@ Each failure is a `422` at its own field with its own code: `status_not_found` a
 `status_id` and `assignee_id` are **optional keys on create** — absent means null — and stay
 required keys (null allowed) on `PUT`, which is a full replace. `description` is optional on
 create the same way. `bare` is optional on team and project creation, default false.
+
+## 12. Files: `/attachments`
+
+LAM-90. A file belongs to exactly one ticket or document, and its metadata is
+`id`, `ticket_id` / `document_id`, `filename`, `content_type`, `size_bytes`, `created_by`,
+`created_at` and `url`.
+
+**Upload** is `POST /attachments`, `multipart/form-data`: the owner (`ticket_id` or
+`document_id`) and then `file`. The owner field must come first — it is checked before a byte is
+stored, and a stream cannot be rewound — which `FormData` does if you append it first. The
+response is the metadata. It takes `Idempotency-Key` (§10): a replay returns the first
+attachment and does not read the body.
+
+**Limits and types.** The size limit is per file and is enforced while the file is read, so an
+oversize upload is refused part-way: `413 attachment_too_large` with `limit_bytes`. The type is
+decided server-side from the file's first bytes; what the client declared only breaks ties
+between kinds of text and Office files. Only a closed list is stored (raster images, pdf,
+text, csv, markdown, json, zip, gzip, Office files, generic binary): HTML, SVG and XML are
+`415 attachment_type_not_allowed`. The filename is sanitised and is only ever used to name a
+download; the file is stored under a generated uuid.
+
+**The stable URL.** `url` is `/api/v1/attachments/{id}`, relative to the origin, and does not
+change. A document that embeds an image stores that URL in its Markdown: `![alt](/api/v1/attachments/<id>)`.
+It needs the same credential as any other call; in a browser the session cookie goes with an
+`<img>` request, so it renders. A token must hold `ticket:read`.
+
+**Download** returns the bytes with the stored `Content-Type`, `X-Content-Type-Options: nosniff`
+and a restrictive `Content-Security-Policy`. `Content-Disposition` is `inline` for png, jpeg,
+gif and webp, so they embed, and `attachment` (with `filename*`, RFC 6266) for everything else.
+
+**Auth and scope.** A session, or a token with `ticket:write` to upload and delete and
+`ticket:read` to download and list — no new scope, as for comments. Visibility is the owner's:
+a caller who cannot see the ticket or document gets `404 not_found` for its files too, and any
+member who can see it may delete them.
+
+**Where the bytes live.** `ATTACHMENT_DIR` (a volume in the deployed stack — see
+[deploy.md](deploy.md)), behind the `Storage` interface in `internal/storage`.

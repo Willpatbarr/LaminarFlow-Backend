@@ -15,6 +15,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/account"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/activity"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/attachment"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/board"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/comment"
@@ -55,6 +56,7 @@ import (
 │      documentSvc  *document.Service  nil only for cmd/openapi
 │      savedViewSvc *savedview.Service nil only for cmd/openapi
 │      searchSvc    *search.Service    nil only for cmd/openapi
+│      attachmentSvc *attachment.Service nil only for cmd/openapi
 │      hub          *realtime.Hub      nil publishes nothing
 ├─ out ───────────────────────────────────────────
 │      huma.API    the same API cmd/openapi emits
@@ -66,7 +68,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	settingSvc *setting.Service, teamSvc *team.Service, projSvc *project.Service,
 	accountSvc *account.Service, boardSvc *board.Service, epicSvc *epic.Service, sprintSvc *sprint.Service,
 	milestoneSvc *milestone.Service, labelSvc *label.Service, documentSvc *document.Service,
-	savedViewSvc *savedview.Service, searchSvc *search.Service, commentSvc *comment.Service, activitySvc *activity.Service, hub *realtime.Hub) huma.API {
+	savedViewSvc *savedview.Service, searchSvc *search.Service, commentSvc *comment.Service, activitySvc *activity.Service, attachmentSvc *attachment.Service, hub *realtime.Hub) huma.API {
 	// Before anything can raise an error. huma.NewError is a global, so this
 	// is the one place that sets it - see useErrorEnvelope.
 	useErrorEnvelope()
@@ -124,6 +126,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	registerComments(api, commentSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerReviewRequests(api, commentSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerActivity(api, activitySvc, ticketSvc, documentSvc)
+	registerAttachments(api, attachmentSvc)
 	registerSavedViews(api, savedViewSvc)
 	registerSearch(api, searchSvc)
 

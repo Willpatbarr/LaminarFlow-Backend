@@ -26,7 +26,7 @@ import (
 func operations(t *testing.T) map[string]*huma.Operation {
 	t.Helper()
 
-	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI()
+	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI()
 
 	out := map[string]*huma.Operation{}
 	for path, item := range doc.Paths {

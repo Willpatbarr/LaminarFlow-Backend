@@ -7,3 +7,6 @@ LaminarFlow-Backend
 # the build output is an artifact and does not belong in git.
 /web/dist/*
 !/web/dist/.gitkeep
+
+# Uploaded files written by a local `go run` (ATTACHMENT_DIR default).
+/data/

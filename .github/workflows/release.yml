@@ -128,7 +128,7 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/assets/nope-STALE.js)" = "404"
 
           echo "--- unknown API route returns JSON, not the app shell ---"
-          curl -s localhost:8080/api/nope | grep -q '"error":"not found"'
+          curl -s localhost:8080/api/nope | grep -q '"code":"not_found"'
 
           echo "--- the image's own healthcheck command ---"
           docker exec lf-app /laminarflow healthcheck

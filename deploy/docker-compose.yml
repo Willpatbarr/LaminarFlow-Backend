@@ -29,6 +29,13 @@ services:
       # image expects the schema to follow. The binary still defaults to off, so
       # nothing else inherits this.
       MIGRATE_ON_STARTUP: ${MIGRATE_ON_STARTUP:-true}
+      # Uploaded files (LAM-90) live on the volume below. State, like Postgres: back it up.
+      ATTACHMENT_DIR: /data/files
+      MAX_ATTACHMENT_BYTES: ${MAX_ATTACHMENT_BYTES:-26214400}
+    volumes:
+      # Host path is configurable for the same reason PGDATA_HOST is. The folder must be
+      # writable by uid 65532 (the image's nonroot user): see docs/deploy.md.
+      - ${FILES_HOST:-./files}:/data/files
     ports:
       # Bound to the tailnet interface by default rather than 0.0.0.0, so a
       # misconfigured firewall does not silently expose this to a LAN. Set

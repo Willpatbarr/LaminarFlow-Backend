@@ -21,7 +21,9 @@ func TestNoSQLOutsideThisPackage(t *testing.T) {
 		// internal/ticket reads document to link to it (same workspace as the ticket) and to list a
 		// ticket's linked documents (LAM-111). Both are reads inside statements that also hold
 		// ticket_document, which is why they cannot be a call into this package.
-		Readers: []string{"comment", "search", "ticket"},
+		// internal/attachment (LAM-90) reads document the way comment does, to prove the owner of an
+		// upload is live and in the caller's workspace, and to reach its workspace on every read.
+		Readers: []string{"attachment", "comment", "search", "ticket"},
 		// LAM-44 added internal/aspect, whose entire claim is that a field edit
 		// touches no document. Proving that means making a document, editing a
 		// field, and reading the document back - from outside, because this guard
