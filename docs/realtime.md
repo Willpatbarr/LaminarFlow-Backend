@@ -211,7 +211,25 @@ successful write publishes; a create replayed with its `Idempotency-Key` does no
 Comments on a ticket or document that is later archived publish nothing: the parent's own
 `*.archived` event is the signal to hide the thread, and `*.unarchived` brings it back.
 
+## Review request events (LAM-113)
+
+A review request is a comment (see [review-requests.md](review-requests.md)), and has two events of its own:
+
+* `review_request.created` - `POST /review-requests`.
+* `review_request.updated` - `PUT /review-requests/{id}` that changed the `review_status`. Setting the status
+  it already has publishes nothing, nor does a refused write.
+
+Both carry `type`, `comment_id` (the request's id), `document_id`, `actor_id`, `at` (the request's `updated_at`)
+and `review_request` - the whole request in exactly the shape of `ReviewRequestBody`, `reviewers` included. Like
+`comment.*` they have **no** `version`, no `ticket` and no `document`; dispatch on `type`.
+
+Apply one to the review requests you hold for that document: upsert by `id`. The request is also a comment
+in the document's thread, so a client that keeps both lists keys them by `id`. A **body edit or a delete** goes
+through the comment endpoints and publishes `comment.updated` / `comment.deleted`, whose `comment.review_status`
+is non-null for a review request: remove by `id` from both lists on `comment.deleted`. A `comment.updated` does
+not carry `reviewers` or `anchor_text`; keep what you hold. On doubt, re-list with `POST /review-requests/list`.
+
 ## Not here yet
 
-No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones, labels, documents and comments,
+No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones, labels, documents, comments and review requests,
 no client-to-server messages, no resume. Each is additive.

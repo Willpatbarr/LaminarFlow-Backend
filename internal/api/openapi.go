@@ -115,6 +115,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	registerLabels(api, labelSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerDocuments(api, documentSvc, ticketSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerComments(api, commentSvc, ticketFeed{hub: hub, projects: projSvc})
+	registerReviewRequests(api, commentSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerSavedViews(api, savedViewSvc)
 	registerSearch(api, searchSvc)
 

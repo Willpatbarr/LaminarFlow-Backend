@@ -91,6 +91,10 @@ const (
 	CommentCreated = "comment.created"
 	CommentUpdated = "comment.updated"
 	CommentDeleted = "comment.deleted"
+
+	// LAM-113. A review request event carries the request in `review_request`; see Event.
+	ReviewRequestCreated = "review_request.created"
+	ReviewRequestUpdated = "review_request.updated"
 )
 
 // helloFrame is the first frame on every connection. A socket that is open is not a
@@ -183,6 +187,11 @@ type Event struct {
 	// happened - a client must not apply a comment event as a ticket event.
 	CommentID string `json:"comment_id,omitempty"`
 	Comment   any    `json:"comment,omitempty"`
+
+	// LAM-113. review_request.* carries CommentID (the request is a comment), DocumentID and
+	// ReviewRequest, the REST ReviewRequestBody whole. Same rules as comment.*: no Version,
+	// no Ticket or Document.
+	ReviewRequest any `json:"review_request,omitempty"`
 }
 
 /*
