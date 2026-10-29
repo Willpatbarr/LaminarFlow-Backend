@@ -18,6 +18,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"unicode"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
 
@@ -192,6 +193,193 @@ func useErrorEnvelope() {
 
 		return &Error{ErrorModel: *base, Code: defaultCode(status)}
 	}
+}
+
+/*
+┌─ api ───────────────────────────────────────────
+│  keeps credentials out of errors[].value
+├─ in ────────────────────────────────────────────
+│      ctx      huma.Context   unused
+│      status   string         unused: the body's own status decides
+│      v        any            the response body about to be written
+├─ out ───────────────────────────────────────────
+│      any      the same body, its errors[] scrubbed; never an error
+├─ example ───────────────────────────────────────
+│      body.password  →  no "value" at all
+│      body.nested.token = "x"  →  "[redacted]"
+*/
+
+// scrubErrorValues is a huma transformer, so it runs on every error body huma writes -
+// one it raised on a failed validation, one a handler returned, one built by hand with
+// an ErrorDetail - and no route can forget it. See docs/api-errors.md, "What errors[].value
+// holds", for the rules and for why `value` stays at all.
+//
+// It is a transformer and not part of useErrorEnvelope because the envelope constructor
+// sees only what huma raises: a handler that returns NewError(...) with its own Errors,
+// as saved views do, never passes through it.
+func scrubErrorValues(_ huma.Context, _ string, v any) (any, error) {
+	switch e := v.(type) {
+	case *Error:
+		e.Errors = scrubDetails(e.Errors)
+	case *huma.ErrorModel:
+		e.Errors = scrubDetails(e.Errors)
+	}
+
+	return v, nil
+}
+
+// redacted stands where a credential was inside a larger value, so the shape of what
+// the client sent stays recognisable.
+const redacted = "[redacted]"
+
+// credentialWords are the fragments that make a key credential-like, matched against the
+// key lower-cased with `_`, `-` and spaces removed - so password, new_password, Password,
+// api-key and apiKey all hit. A fragment and not a list of exact names, because the next
+// route will name its field something nobody listed. `key` alone is deliberately absent:
+// a setting's key is a name, not a secret.
+var credentialWords = []string{
+	"password", "passwd", "passphrase", "secret", "token", "apikey", "accesskey",
+	"privatekey", "credential", "authorization", "cookie", "bearer", "session",
+}
+
+func isCredentialKey(key string) bool {
+	norm := strings.Map(func(r rune) rune {
+		if r == '_' || r == '-' || unicode.IsSpace(r) {
+			return -1
+		}
+		return unicode.ToLower(r)
+	}, key)
+
+	for _, w := range credentialWords {
+		if strings.Contains(norm, w) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// locationSegments splits huma's location - body.items[0].password - into its names,
+// dropping the indexes.
+func locationSegments(loc string) []string {
+	var out []string
+
+	for _, part := range strings.Split(loc, ".") {
+		if i := strings.IndexByte(part, '['); i >= 0 {
+			part = part[:i]
+		}
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+
+	return out
+}
+
+// scrubDetails returns errs with each value made safe to send. It builds new details
+// and never edits the ones it was handed, which a handler may keep.
+func scrubDetails(errs []*huma.ErrorDetail) []*huma.ErrorDetail {
+	if errs == nil {
+		return nil
+	}
+
+	out := make([]*huma.ErrorDetail, len(errs))
+	for i, d := range errs {
+		if d == nil {
+			continue
+		}
+
+		c := *d
+		c.Value = scrubDetailValue(d)
+		out[i] = &c
+	}
+
+	return out
+}
+
+// scrubDetailValue decides what, if anything, of a detail's value goes out.
+//
+// Dropped outright:
+//   - anything located in the request body, whatever its name or type. This is the rule
+//     that does the work. The client just sent that value and holds a copy, so echoing it
+//     tells it nothing location and message do not; and a body is where secrets are. Key
+//     names cannot find them all: a password typed into the email box, a token pasted as
+//     a label, a password sent as an array. huma's own values here are the offending
+//     scalar, the whole enclosing object on "unexpected property", or the raw request
+//     text of a body that would not parse;
+//   - a header or cookie value: those are where credentials travel;
+//   - a value at a location with a credential-like name wherever it is, so a query
+//     parameter named token goes too.
+//
+// Kept: what is left is the URL - query and path values, which are in the access logs of
+// every proxy already and which a caller cannot otherwise see a 422 refer to - with
+// credential-like keys inside them redacted at any depth, in objects and arrays.
+func scrubDetailValue(d *huma.ErrorDetail) any {
+	if d.Value == nil {
+		return nil
+	}
+
+	segs := locationSegments(d.Location)
+	if len(segs) == 0 {
+		return nil
+	}
+
+	switch strings.ToLower(segs[0]) {
+	case "body", "header", "cookie":
+		return nil
+	}
+	for _, s := range segs {
+		if isCredentialKey(s) {
+			return nil
+		}
+	}
+
+	return scrubValue(d.Value)
+}
+
+// scrubValue redacts credential-like keys inside v. A type it does not recognise is
+// round-tripped through JSON so the walk sees plain maps and slices; if that fails the
+// value is dropped, since a value that cannot be inspected cannot be shown.
+func scrubValue(v any) any {
+	switch x := v.(type) {
+	case nil, string, bool, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return x
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, val := range x {
+			if isCredentialKey(k) {
+				out[k] = redacted
+				continue
+			}
+			out[k] = scrubValue(val)
+		}
+
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, val := range x {
+			out[i] = scrubValue(val)
+		}
+
+		return out
+	}
+
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+
+	var plain any
+	if err := json.Unmarshal(raw, &plain); err != nil {
+		return nil
+	}
+
+	switch plain.(type) {
+	case map[string]any, []any:
+		return scrubValue(plain)
+	}
+
+	return plain
 }
 
 // defaultCode names a failure huma raised on its own behalf, where no handler
