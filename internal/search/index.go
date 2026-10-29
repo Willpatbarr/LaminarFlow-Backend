@@ -135,7 +135,7 @@ func indexDocument(ctx context.Context, tx pgx.Tx, docID string, body map[string
 // field_id stays null. search_index_document_rows_carry_a_field is a biconditional, so
 // a field_id here would fail the check rather than be ignored.
 func IndexTicket(ctx context.Context, tx pgx.Tx, ticketID string) error {
-	if _, err := tx.Exec(ctx, ticketInsert+` AND t.id = $1::uuid`, ticketID); err != nil {
+	if _, err := indexTickets(ctx, tx, ` AND t.id = $1::uuid`, ticketID); err != nil {
 		return fmt.Errorf("search: index ticket %s: %w", ticketID, err)
 	}
 
@@ -143,12 +143,12 @@ func IndexTicket(ctx context.Context, tx pgx.Tx, ticketID string) error {
 }
 
 func indexAllTickets(ctx context.Context, tx pgx.Tx) (int, error) {
-	tag, err := tx.Exec(ctx, ticketInsert)
+	n, err := indexTickets(ctx, tx, "")
 	if err != nil {
 		return 0, fmt.Errorf("search: index tickets: %w", err)
 	}
 
-	return int(tag.RowsAffected()), nil
+	return n, nil
 }
 
 // A ticket reaches its workspace through project and team, which is the chain LAM-26
@@ -160,18 +160,66 @@ func indexAllTickets(ctx context.Context, tx pgx.Tx) (int, error) {
 // is why internal/ticket calls ClearTicket on archive rather than only updating the
 // row.
 //
-// The trailing WHERE lets the single-ticket form append AND without a second copy of
-// the statement, which is what keeps the live path and the rebuild identical.
-const ticketInsert = `
-	INSERT INTO search_index
-	     (ticket_id, content, workspace_id, project_id, team_id, title_or_preview)
-	SELECT t.id,
-	       t.title || CASE WHEN t.description = '' THEN '' ELSE E'\n' || t.description END,
-	       tm.workspace_id, t.project_id, p.team_id, t.title
+// The rows are read and then inserted from Go, because the description is Markdown and
+// PlainText is Go (LAM-143). The trailing where lets the single-ticket form append AND
+// without a second copy of the statement, which is what keeps the live path and the
+// rebuild identical.
+const ticketSelect = `
+	SELECT t.id::text, t.title, t.description,
+	       tm.workspace_id::text, t.project_id::text, p.team_id::text
 	  FROM ticket t
 	  JOIN project p ON p.id = t.project_id
 	  JOIN team tm   ON tm.id = p.team_id
 	 WHERE t.archived_at IS NULL`
+
+const ticketInsert = `
+	INSERT INTO search_index
+	     (ticket_id, content, workspace_id, project_id, team_id, title_or_preview)
+	VALUES ($1::uuid, $2, $3::uuid, $4::uuid, $5::uuid, $6)`
+
+func indexTickets(ctx context.Context, tx pgx.Tx, where string, args ...any) (int, error) {
+	rows, err := tx.Query(ctx, ticketSelect+where, args...)
+	if err != nil {
+		return 0, err
+	}
+	batch := &pgx.Batch{}
+	for rows.Next() {
+		var id, title, description, workspace, project, team string
+		if err := rows.Scan(&id, &title, &description, &workspace, &project, &team); err != nil {
+			rows.Close()
+
+			return 0, err
+		}
+		content := title
+		if description != "" {
+			content += "\n" + PlainText(description)
+		}
+		batch.Queue(ticketInsert, id, content, workspace, project, team, title)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	return batch.Len(), sendBatch(ctx, tx, batch)
+}
+
+// sendBatch runs every queued statement and surfaces the first failure.
+func sendBatch(ctx context.Context, tx pgx.Tx, batch *pgx.Batch) error {
+	if batch.Len() == 0 {
+		return nil
+	}
+	results := tx.SendBatch(ctx, batch)
+	for range batch.Len() {
+		if _, err := results.Exec(); err != nil {
+			results.Close()
+
+			return err
+		}
+	}
+
+	return results.Close()
+}
 
 /*
 ┌─ search ────────────────────────────────────────
@@ -194,7 +242,7 @@ const ticketInsert = `
 // workspace by different routes. That is why this is a LEFT JOIN over both rather than
 // one chain.
 func IndexComment(ctx context.Context, tx pgx.Tx, commentID string) error {
-	if _, err := tx.Exec(ctx, commentInsert+` AND c.id = $1::uuid`, commentID); err != nil {
+	if _, err := indexComments(ctx, tx, ` AND c.id = $1::uuid`, commentID); err != nil {
 		return fmt.Errorf("search: index comment %s: %w", commentID, err)
 	}
 
@@ -202,27 +250,24 @@ func IndexComment(ctx context.Context, tx pgx.Tx, commentID string) error {
 }
 
 func indexAllComments(ctx context.Context, tx pgx.Tx) (int, error) {
-	tag, err := tx.Exec(ctx, commentInsert)
+	n, err := indexComments(ctx, tx, "")
 	if err != nil {
 		return 0, fmt.Errorf("search: index comments: %w", err)
 	}
 
-	return int(tag.RowsAffected()), nil
+	return n, nil
 }
 
 // COALESCE picks whichever arm the comment uses. A document's project_id and team_id
 // are nullable, so a document comment may be workspace-scoped only; a ticket comment
-// is always fully scoped.
-const commentInsert = `
-	INSERT INTO search_index
-	     (comment_id, content, workspace_id, project_id, team_id, title_or_preview,
-	      parent_reference)
-	SELECT c.id,
+// is always fully scoped. The body is Markdown, so content and preview are its
+// PlainText (LAM-143).
+const commentSelect = `
+	SELECT c.id::text,
 	       c.body,
-	       COALESCE(tm.workspace_id, d.workspace_id),
-	       COALESCE(t.project_id, d.project_id),
-	       COALESCE(p.team_id, d.team_id),
-	       c.body,
+	       COALESCE(tm.workspace_id, d.workspace_id)::text,
+	       COALESCE(t.project_id, d.project_id)::text,
+	       COALESCE(p.team_id, d.team_id)::text,
 	       COALESCE(t.title, d.title)
 	  FROM comment c
 	  LEFT JOIN ticket t   ON t.id = c.ticket_id
@@ -230,6 +275,36 @@ const commentInsert = `
 	  LEFT JOIN team tm    ON tm.id = p.team_id
 	  LEFT JOIN document d ON d.id = c.document_id
 	 WHERE true`
+
+const commentInsert = `
+	INSERT INTO search_index
+	     (comment_id, content, workspace_id, project_id, team_id, title_or_preview,
+	      parent_reference)
+	VALUES ($1::uuid, $2, $3::uuid, $4::uuid, $5::uuid, $2, $6)`
+
+func indexComments(ctx context.Context, tx pgx.Tx, where string, args ...any) (int, error) {
+	rows, err := tx.Query(ctx, commentSelect+where, args...)
+	if err != nil {
+		return 0, err
+	}
+	batch := &pgx.Batch{}
+	for rows.Next() {
+		var id, body string
+		var workspace, project, team, parent *string
+		if err := rows.Scan(&id, &body, &workspace, &project, &team, &parent); err != nil {
+			rows.Close()
+
+			return 0, err
+		}
+		batch.Queue(commentInsert, id, PlainText(body), workspace, project, team, parent)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	return batch.Len(), sendBatch(ctx, tx, batch)
+}
 
 /*
 ┌─ search ────────────────────────────────────────

@@ -70,8 +70,8 @@ func TestANormalDocumentIsVersionOneAndIndexed(t *testing.T) {
 		t.Errorf("document = %+v, want version 1, normal, live, no aspect type", d)
 	}
 
-	if got := indexSnapshot(t, pool)[d.ID+"|"+ContentKey]; got != "# hello" {
-		t.Errorf("indexed content = %q, want the Markdown", got)
+	if got := indexSnapshot(t, pool)[d.ID+"|"+ContentKey]; got != "hello" {
+		t.Errorf("indexed content = %q, want the Markdown as plain text (LAM-143)", got)
 	}
 
 	d2, err := svc.Write(ctx, SaveParams{WorkspaceID: ws, ID: d.ID, Title: "Notes", Body: map[string]any{ContentKey: "bye"}})

@@ -23,7 +23,9 @@ func FieldText(value any) string {
 	case nil:
 		return ""
 	case string:
-		return v
+		// Field values are Markdown (LAM-88). Index what a person reads, so the
+		// snippet cut from this text has no syntax in it (LAM-143).
+		return PlainText(v)
 	case bool:
 		return strconv.FormatBool(v)
 	case float64:
