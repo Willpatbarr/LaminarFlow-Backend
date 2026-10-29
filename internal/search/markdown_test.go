@@ -98,3 +98,81 @@ func TestFindSnippetsArePlainText(t *testing.T) {
 		}
 	}
 }
+
+// LAM-143: the index rebuilds itself once when its stored version is older than the
+// code's, and not at all when it is current.
+func TestEnsureCurrentRebuildsOnceForAnOldVersion(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	f := newFixture(t, pool)
+	svc := search.NewService(pool)
+
+	setVersion := func(v int) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `UPDATE search_index_version SET version = $1`, v); err != nil {
+			t.Fatalf("set version: %v", err)
+		}
+	}
+	// A stale row stands in for one written before the format change.
+	stale := func() {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `UPDATE search_index SET content = 'STALE' WHERE ticket_id = $1::uuid`, f.ticket); err != nil {
+			t.Fatalf("stale: %v", err)
+		}
+	}
+	content := func() string {
+		t.Helper()
+		var c string
+		if err := pool.QueryRow(ctx, `SELECT content FROM search_index WHERE ticket_id = $1::uuid`, f.ticket).Scan(&c); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return c
+	}
+
+	setVersion(0)
+	stale()
+	if rebuilt, err := svc.EnsureCurrent(ctx); err != nil || !rebuilt {
+		t.Fatalf("old version: rebuilt=%v err=%v, want a rebuild", rebuilt, err)
+	}
+	if content() == "STALE" {
+		t.Error("old version: the index was not rebuilt")
+	}
+
+	stale()
+	if rebuilt, err := svc.EnsureCurrent(ctx); err != nil || rebuilt {
+		t.Fatalf("current version: rebuilt=%v err=%v, want none", rebuilt, err)
+	}
+	if content() != "STALE" {
+		t.Error("current version: the index was rebuilt again")
+	}
+}
+
+// Two instances starting together: exactly one rebuilds.
+func TestEnsureCurrentIsSafeConcurrently(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	newFixture(t, pool)
+	if _, err := pool.Exec(ctx, `UPDATE search_index_version SET version = 0`); err != nil {
+		t.Fatalf("set version: %v", err)
+	}
+
+	results := make(chan bool, 4)
+	for range 4 {
+		go func() {
+			rebuilt, err := search.NewService(pool).EnsureCurrent(ctx)
+			if err != nil {
+				t.Errorf("ensure: %v", err)
+			}
+			results <- rebuilt
+		}()
+	}
+	n := 0
+	for range 4 {
+		if <-results {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d instances rebuilt, want exactly 1", n)
+	}
+}

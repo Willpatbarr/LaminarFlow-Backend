@@ -20,6 +20,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/db"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/migrate"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/search"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/storage"
 	"github.com/Willpatbarr/LaminarFlow-Backend/migrations"
 	"github.com/Willpatbarr/LaminarFlow-Backend/web"
@@ -57,6 +58,12 @@ func main() {
 
 	if err := ensureSchema(context.Background(), pool, cfg.MigrateOnStartup); err != nil {
 		log.Fatalf("schema: %v", err)
+	}
+
+	// After the schema, because it reads search_index_version. A failure is logged and
+	// startup goes on: search stays stale until the next start retries (LAM-143).
+	if _, err := search.NewService(pool).EnsureCurrent(context.Background()); err != nil {
+		log.Printf("search: index rebuild failed, search may show old snippets until the next start: %v", err)
 	}
 
 	bundle, err := frontendFS(cfg.FrontendDir)

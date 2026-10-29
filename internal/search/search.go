@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -88,13 +89,29 @@ type Counts struct {
 // an operator repairing a derived table, and the wrong thing to expose to a caller
 // acting inside one workspace.
 func (s *Service) Rebuild(ctx context.Context) (Counts, error) {
-	var counts Counts
-
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return counts, fmt.Errorf("search: begin: %w", err)
+		return Counts{}, fmt.Errorf("search: begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	counts, err := rebuildIn(ctx, tx)
+	if err != nil {
+		return counts, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return counts, fmt.Errorf("search: commit: %w", err)
+	}
+
+	return counts, nil
+}
+
+// rebuildIn is Rebuild's body inside a transaction the caller owns, so EnsureCurrent
+// can rebuild and store the new version atomically.
+func rebuildIn(ctx context.Context, tx pgx.Tx) (Counts, error) {
+	var counts Counts
+	var err error
 
 	if _, err := tx.Exec(ctx, `DELETE FROM search_index`); err != nil {
 		return counts, fmt.Errorf("search: clear index: %w", err)
@@ -123,10 +140,6 @@ func (s *Service) Rebuild(ctx context.Context) (Counts, error) {
 
 	if counts.Projects, err = indexAllProjects(ctx, tx); err != nil {
 		return counts, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return counts, fmt.Errorf("search: commit: %w", err)
 	}
 
 	return counts, nil
