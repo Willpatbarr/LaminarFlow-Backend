@@ -23,7 +23,7 @@ may read what happened to it. There is no write operation; entries exist only as
 
 ## Entry
 
-`id`, `entity_type`, `entity_id`, `actor_id`, `kind`, `field`, `summary_before`, `summary_after`, `created_at`.
+`id`, `entity_type`, `entity_id`, `actor_id`, `kind`, `field`, `summary_before`, `summary_after`, `name_before`, `name_after`, `created_at`.
 
 * `actor_id` is the account that made the change. A token acts as its owner, so a change made with a token is
   recorded as that account; the token itself is not recorded. Null when the account has since been deleted
@@ -33,6 +33,11 @@ may read what happened to it. There is no write operation; entries exist only as
   `aspect_type_changed` and the `milestone` field they are the **ids** before and after (null for none), so an entry
   stays true after a rename; resolve names from what you already hold. For `title` and `description` they are the text,
   cut to 200 characters with an ellipsis.
+* `name_before` / `name_after` (LAM-137) are set only on `status_changed`: the names of the statuses in
+  `summary_before` / `summary_after` **as they were when the change happened**. It is a snapshot: renaming a status
+  later does not rewrite old entries, and deleting one does not erase its name from history. Null for every other
+  kind, for "no status", and for entries written before names were stored whose status had already been deleted
+  (migration 0048 backfilled the rest). Show `name_*` first and fall back to the live name, then to "a deleted status".
 * `created_at` is the transaction's time, so the entries of one write share it; among those the order is arbitrary
   but stable (by `id`).
 

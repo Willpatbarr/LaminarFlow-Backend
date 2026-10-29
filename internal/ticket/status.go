@@ -95,8 +95,17 @@ func MoveStatus(ctx context.Context, q Tx, accountID, from, to string) ([]Ticket
 
 	// A status delete changes every one of these tickets' status, so each gets its entry
 	// (LAM-89). The transaction is the caller's, so they commit or roll back together.
+	// The names are read here, before the caller deletes the status.
+	fromName, err := statusName(ctx, q, &from)
+	if err != nil {
+		return nil, err
+	}
+	toName, err := statusName(ctx, q, &to)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
-		if err := out[i].note(ctx, q, accountID, activity.StatusChanged, nil, &from, &to); err != nil {
+		if err := out[i].noteNamed(ctx, q, accountID, activity.StatusChanged, nil, &from, &to, fromName, toName); err != nil {
 			return nil, err
 		}
 	}

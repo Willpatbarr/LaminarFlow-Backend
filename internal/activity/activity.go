@@ -77,6 +77,8 @@ const maxSummaryChars = 200
 ┃      Kind             string     one of the constants above
 ┃      Field            *string    field_changed only
 ┃      Before, After    *string    summary_before / summary_after
+┃      BeforeName,      *string    status_changed only: the status names at the time
+┃      AfterName
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      the writers; Record fills ID and CreatedAt
 */
@@ -89,6 +91,8 @@ type Entry struct {
 	Field      *string
 	Before     *string
 	After      *string
+	BeforeName *string
+	AfterName  *string
 	CreatedAt  time.Time
 }
 
@@ -131,10 +135,10 @@ type Tx interface {
 // because that is the whole point: the entry commits with the change or not at all.
 func Record(ctx context.Context, tx Tx, e Entry) (Entry, error) {
 	err := tx.QueryRow(ctx,
-		`INSERT INTO activity (ticket_id, document_id, actor_id, kind, field, summary_before, summary_after)
-		 VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7)
+		`INSERT INTO activity (ticket_id, document_id, actor_id, kind, field, summary_before, summary_after, name_before, name_after)
+		 VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9)
 		 RETURNING id::text, created_at`,
-		e.TicketID, e.DocumentID, e.ActorID, e.Kind, e.Field, e.Before, e.After,
+		e.TicketID, e.DocumentID, e.ActorID, e.Kind, e.Field, e.Before, e.After, e.BeforeName, e.AfterName,
 	).Scan(&e.ID, &e.CreatedAt)
 	if err != nil {
 		return Entry{}, fmt.Errorf("activity: record %s: %w", e.Kind, err)
@@ -293,7 +297,7 @@ func (s *Service) List(ctx context.Context, p ListParams) (Page, error) {
 
 	rows, err := s.pool.Query(ctx,
 		`SELECT a.id::text, a.ticket_id::text, a.document_id::text, a.actor_id::text, a.kind,
-		        a.field, a.summary_before, a.summary_after, a.created_at, `+strings.Join(plan.Keys, ", ")+`
+		        a.field, a.summary_before, a.summary_after, a.name_before, a.name_after, a.created_at, `+strings.Join(plan.Keys, ", ")+`
 		   FROM activity a
 		  WHERE `+column+` = $1::uuid AND (`+plan.Where+`) `+plan.Order+` LIMIT $`+strconv.Itoa(len(args)),
 		args...)
@@ -312,7 +316,7 @@ func (s *Service) List(ctx context.Context, p ListParams) (Page, error) {
 			key = make([]*string, len(plan.Keys))
 		)
 		dest := []any{&e.ID, &e.TicketID, &e.DocumentID, &e.ActorID, &e.Kind,
-			&e.Field, &e.Before, &e.After, &e.CreatedAt}
+			&e.Field, &e.Before, &e.After, &e.BeforeName, &e.AfterName, &e.CreatedAt}
 		for i := range key {
 			dest = append(dest, &key[i])
 		}

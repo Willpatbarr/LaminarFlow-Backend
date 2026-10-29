@@ -17,8 +17,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Willpatbarr/LaminarFlow-Backend/internal/activity"
-
 	"github.com/jackc/pgx/v5"
 )
 
@@ -139,7 +137,7 @@ func (s *Service) Move(ctx context.Context, accountID string, p MoveParams) (Tic
 	}
 
 	if !same(wasStatus, t.StatusID) {
-		if err := t.note(ctx, tx, accountID, activity.StatusChanged, nil, wasStatus, t.StatusID); err != nil {
+		if err := t.noteStatus(ctx, tx, accountID, wasStatus, t.StatusID); err != nil {
 			return Ticket{}, nil, err
 		}
 	}
