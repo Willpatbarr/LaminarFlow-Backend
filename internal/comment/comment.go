@@ -21,10 +21,9 @@
 // ticket or document, and every write here indexes (or un-indexes) the comment in
 // internal/search inside the same transaction, so search never disagrees with the table.
 //
-// This package is plain comments. A review request is the same row with review_status set
-// and reviewers in comment_reviewer (LAM-113); nothing here accepts either, but nothing
-// here forecloses them: Comment already carries ReviewStatus (always nil on this path), and
-// every statement scopes through the parent, not through the kind of comment.
+// Plain comments are comment.go. A review request is the same row with review_status set
+// and reviewers in comment_reviewer (LAM-113); review.go writes those, and Create here
+// accepts neither. Every statement scopes through the parent, not through the kind of comment.
 package comment
 
 import (
@@ -246,21 +245,8 @@ func (s *Service) Create(ctx context.Context, accountID string, p CreateParams) 
 	// document.aspect_type_id's nullable column constrains nothing). A field removed between
 	// this and the insert is caught by the foreign key and mapped below.
 	if p.FieldID != nil {
-		if aspectTypeID == nil {
-			return Comment{}, false, &FieldError{Field: "field_id", Kind: ErrFieldNotOnDoc}
-		}
-		ids, err := s.aspects.FieldIDs(ctx, workspaceID, *aspectTypeID)
-		if err != nil {
-			return Comment{}, false, fmt.Errorf("comment: fields of type: %w", err)
-		}
-		found := false
-		for _, id := range ids {
-			if strings.EqualFold(id, *p.FieldID) {
-				found = true
-			}
-		}
-		if !found {
-			return Comment{}, false, &FieldError{Field: "field_id", Kind: ErrFieldNotOnDoc}
+		if err := s.checkField(ctx, workspaceID, aspectTypeID, *p.FieldID); err != nil {
+			return Comment{}, false, err
 		}
 	}
 
@@ -319,6 +305,25 @@ func (s *Service) Create(ctx context.Context, accountID string, p CreateParams) 
 	}
 
 	return c, false, nil
+}
+
+// checkField proves fieldID is a field of the document's aspect type (nil for a normal
+// document, which has none).
+func (s *Service) checkField(ctx context.Context, workspaceID string, aspectTypeID *string, fieldID string) error {
+	if aspectTypeID == nil {
+		return &FieldError{Field: "field_id", Kind: ErrFieldNotOnDoc}
+	}
+	ids, err := s.aspects.FieldIDs(ctx, workspaceID, *aspectTypeID)
+	if err != nil {
+		return fmt.Errorf("comment: fields of type: %w", err)
+	}
+	for _, id := range ids {
+		if strings.EqualFold(id, fieldID) {
+			return nil
+		}
+	}
+
+	return &FieldError{Field: "field_id", Kind: ErrFieldNotOnDoc}
 }
 
 // target proves the caller can reach the live ticket or document, and returns its workspace
