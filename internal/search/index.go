@@ -6,6 +6,7 @@
 ║      ClearDocument      func
 ║      IndexTicket        func
 ║      IndexComment       func
+║      ClearComment       func
 ║      IndexProject       func
 ║      ClearProject       func
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
@@ -229,6 +230,31 @@ const commentInsert = `
 	  LEFT JOIN team tm    ON tm.id = p.team_id
 	  LEFT JOIN document d ON d.id = c.document_id
 	 WHERE true`
+
+/*
+┌─ search ────────────────────────────────────────
+│  removes one comment's row, before reindexing or deleting it
+├─ in ────────────────────────────────────────────
+│      ctx          context.Context
+│      tx           pgx.Tx
+│      commentID    string
+├─ out ───────────────────────────────────────────
+│      error
+*/
+
+// ClearComment mirrors ClearTicket. An edit is clear-then-index, because the body is
+// denormalised into the row (content and title_or_preview) and an edit that only inserted
+// would leave the old text findable; a delete is clear alone. internal/comment calls it
+// inside the transaction that writes the comment (LAM-99).
+func ClearComment(ctx context.Context, tx pgx.Tx, commentID string) error {
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM search_index WHERE comment_id = $1::uuid`, commentID,
+	); err != nil {
+		return fmt.Errorf("search: clear comment %s: %w", commentID, err)
+	}
+
+	return nil
+}
 
 // documentBody is one document's id paired with its decoded body.
 type documentBody struct {

@@ -14,9 +14,11 @@ import (
 // are grantable; writes are not.
 func TestNoTicketSQLOutsideThisPackage(t *testing.T) {
 	sqlguard.Assert(t, sqlguard.Rule{
-		Owner:   "ticket",
-		Tables:  []string{"ticket"},
-		Readers: []string{"search"},
+		Owner:  "ticket",
+		Tables: []string{"ticket"},
+		// internal/comment reads ticket to prove a comment's parent is live and in the caller's
+		// workspace (LAM-99), inside the statement that writes the comment.
+		Readers: []string{"comment", "search"},
 		// A comment needs a ticket to hang off; an index row needs one to describe;
 		// and internal/account needs an assigned ticket to prove that deleting an
 		// account leaves the work and drops only the name. Those fixtures are

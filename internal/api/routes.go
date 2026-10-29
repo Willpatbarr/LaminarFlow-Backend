@@ -8,6 +8,7 @@ import (
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/board"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/comment"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/document"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/epic"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/frontend"
@@ -33,11 +34,11 @@ func NewMux(pool *pgxpool.Pool, bundle fs.FS, hub *realtime.Hub) *http.ServeMux 
 
 	mux.HandleFunc("GET /healthz", live())
 	mux.HandleFunc("GET /healthz/db", ready(pool))
-	authSvc, accountSvc := auth.NewService(pool), account.NewService(pool)
-	NewHumaAPI(mux, authSvc, ticket.NewService(pool), aspect.NewService(pool), setting.NewService(pool),
+	authSvc, accountSvc, aspectSvc := auth.NewService(pool), account.NewService(pool), aspect.NewService(pool)
+	NewHumaAPI(mux, authSvc, ticket.NewService(pool), aspectSvc, setting.NewService(pool),
 		team.NewService(pool), project.NewService(pool), accountSvc, board.NewService(pool),
 		epic.NewService(pool), sprint.NewService(pool), milestone.NewService(pool), label.NewService(pool), document.NewService(pool),
-		savedview.NewService(pool), search.NewService(pool), hub)
+		savedview.NewService(pool), search.NewService(pool), comment.NewService(pool, aspectSvc), hub)
 
 	// Handlers huma cannot describe. Registered before the /api/ catch-all below for
 	// readability only: the mux picks the most specific pattern whatever the order, so

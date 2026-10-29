@@ -504,15 +504,18 @@ func ticketPut(title string) map[string]any {
 }
 
 type eventWire struct {
-	Type     string         `json:"type"`
-	TicketID string         `json:"ticket_id"`
-	Version  int            `json:"version"`
-	ActorID  string         `json:"actor_id"`
-	At       time.Time      `json:"at"`
-	Ticket   map[string]any `json:"ticket"`
-	Document map[string]any `json:"document"`
-	TeamID   string         `json:"team_id"`
-	StatusID string         `json:"status_id"`
+	Type       string         `json:"type"`
+	TicketID   string         `json:"ticket_id"`
+	Version    int            `json:"version"`
+	ActorID    string         `json:"actor_id"`
+	At         time.Time      `json:"at"`
+	Ticket     map[string]any `json:"ticket"`
+	Document   map[string]any `json:"document"`
+	CommentID  string         `json:"comment_id"`
+	DocumentID string         `json:"document_id"`
+	Comment    map[string]any `json:"comment"`
+	TeamID     string         `json:"team_id"`
+	StatusID   string         `json:"status_id"`
 
 	ProjectID string         `json:"project_id"`
 	BoardID   string         `json:"board_id"`
