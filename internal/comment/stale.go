@@ -110,50 +110,96 @@ func threshold(ctx context.Context, tx pgx.Tx, workspaceID string) (int, error) 
 // not shifted by edits before the region: a request whose range has drifted compares
 // whatever now sits at the old offsets (a known limit, docs/review-requests.md).
 //
-// Only approved requests are touched. A pending or changes_requested request has no approval
+// Only approved requests can go stale. A pending or changes_requested request has no approval
 // to invalidate.
+//
+// LAM-136: when c.Conversion is set (a normal document became an aspect), every review request
+// anchored to ContentKey, whatever its status, is first pointed at the field the text moved to
+// (same offsets) or, if the text was not moved as is, at wherever its anchor_text is found in the
+// new fields (new offsets); one that cannot be found is left alone. Plain comments have no approval, so they are only re-pointed. A re-anchored approval
+// compares the moved text, so the conversion alone does not make it stale. The returned ids
+// include the re-anchored requests, which the caller announces as review_request.updated.
 func (s *Service) StaleReviews(ctx context.Context, tx pgx.Tx, c document.Change) ([]string, error) {
 	rows, err := tx.Query(ctx,
-		`SELECT id::text, field_id::text, region_start, region_end FROM comment
-		  WHERE document_id = $1::uuid AND review_status = 'approved'
-		  ORDER BY created_at, id FOR UPDATE`, c.DocumentID)
+		`SELECT id::text, field_id::text, region_start, region_end, COALESCE(review_status, ''), COALESCE(anchor_text, '')
+		   FROM comment
+		  WHERE document_id = $1::uuid
+		    AND (($2 AND region_start IS NOT NULL) OR review_status = 'approved')
+		  ORDER BY created_at, id FOR UPDATE`, c.DocumentID, c.Conversion != nil)
 	if err != nil {
-		return nil, fmt.Errorf("comment: approved reviews: %w", err)
+		return nil, fmt.Errorf("comment: reviews: %w", err)
 	}
 
 	type anchor struct {
-		id         string
-		key        string
-		start, end int
+		id          string
+		fieldID     *string
+		start, end  int
+		hasRegion   bool
+		approved    bool
+		anchorText  string
+		before, aft string // body keys the text was read from before and after the write
 	}
-	var approved []anchor
+	var reviews []anchor
 	for rows.Next() {
 		var (
-			a       anchor
-			fieldID *string
-			start   *int
-			end     *int
+			a      anchor
+			start  *int
+			end    *int
+			status string
 		)
-		if err := rows.Scan(&a.id, &fieldID, &start, &end); err != nil {
+		if err := rows.Scan(&a.id, &a.fieldID, &start, &end, &status, &a.anchorText); err != nil {
 			rows.Close()
-			return nil, fmt.Errorf("comment: approved reviews scan: %w", err)
+			return nil, fmt.Errorf("comment: reviews scan: %w", err)
 		}
-		a.key = document.ContentKey
-		if fieldID != nil {
-			a.key = *fieldID
+		a.before = document.ContentKey
+		if a.fieldID != nil {
+			a.before = *a.fieldID
 		}
-		if start == nil || end == nil {
-			continue
+		a.aft = a.before
+		if start != nil && end != nil {
+			a.start, a.end, a.hasRegion = *start, *end, true
 		}
-		a.start, a.end = *start, *end
-		approved = append(approved, a)
+		a.approved = status == "approved"
+		reviews = append(reviews, a)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("comment: approved reviews rows: %w", err)
+		return nil, fmt.Errorf("comment: reviews rows: %w", err)
+	}
+
+	var changed []string
+
+	// LAM-136: the document became an aspect, so what anchored into ContentKey follows the text
+	// into its field, in this transaction. Open and decided requests alike; the status is not
+	// touched. Plain comments (review_status null) are re-pointed the same way.
+	if c.Conversion != nil {
+		for i := range reviews {
+			a := &reviews[i]
+			if a.fieldID != nil || !a.hasRegion {
+				continue
+			}
+			field, start, end, ok := reanchor(c, a.start, a.end, a.anchorText)
+			if !ok {
+				continue
+			}
+			if _, err := tx.Exec(ctx,
+				`UPDATE comment SET field_id = $2::uuid, region_start = $3, region_end = $4, updated_at = now()
+				  WHERE id = $1::uuid`, a.id, field, start, end); err != nil {
+				return nil, fmt.Errorf("comment: re-anchor review: %w", err)
+			}
+			a.aft, a.start, a.end = field, start, end
+			changed = append(changed, a.id)
+		}
+	}
+
+	var approved []anchor
+	for _, a := range reviews {
+		if a.approved && a.hasRegion {
+			approved = append(approved, a)
+		}
 	}
 	if len(approved) == 0 {
-		return nil, nil
+		return changed, nil
 	}
 
 	percent, err := threshold(ctx, tx, c.WorkspaceID)
@@ -161,10 +207,13 @@ func (s *Service) StaleReviews(ctx context.Context, tx pgx.Tx, c document.Change
 		return nil, err
 	}
 
-	var staled []string
 	for _, a := range approved {
-		before := slice(search.FieldText(c.Before[a.key]), a.start, a.end)
-		after := slice(search.FieldText(c.After[a.key]), a.start, a.end)
+		if a.aft != a.before && c.Conversion != nil && c.Conversion.MovedTo == "" {
+			// Re-anchored by search: the same text by construction, so nothing went stale.
+			continue
+		}
+		before := slice(search.FieldText(c.Before[a.before]), a.start, a.end)
+		after := slice(search.FieldText(c.After[a.aft]), a.start, a.end)
 		if !isStale(before, after, percent) {
 			continue
 		}
@@ -174,10 +223,36 @@ func (s *Service) StaleReviews(ctx context.Context, tx pgx.Tx, c document.Change
 			  WHERE id = $1::uuid`, a.id, StaleReasonText); err != nil {
 			return nil, fmt.Errorf("comment: stale review: %w", err)
 		}
-		staled = append(staled, a.id)
+		changed = append(changed, a.id)
 	}
 
-	return staled, nil
+	return changed, nil
+}
+
+// reanchor says where a request that anchored into ContentKey points once the document is an
+// aspect. When the text moved to a field it is that field at the same offsets (the text moved
+// unchanged); otherwise the stored anchor_text is searched for in the fields in type order and
+// the offsets are the first match, in code points. ok is false when there is nothing to point
+// at: the text was not carried, the anchor_text is empty (a caret) or is nowhere in the body.
+func reanchor(c document.Change, start, end int, anchorText string) (field string, newStart, newEnd int, ok bool) {
+	if c.Conversion.MovedTo != "" {
+		return c.Conversion.MovedTo, start, end, true
+	}
+	if anchorText == "" {
+		return "", 0, 0, false
+	}
+
+	needle := []rune(anchorText)
+	for _, id := range c.Conversion.Fields {
+		hay := []rune(search.FieldText(c.After[id]))
+		for i := 0; i+len(needle) <= len(hay); i++ {
+			if string(hay[i:i+len(needle)]) == anchorText {
+				return id, i, i + len(needle), true
+			}
+		}
+	}
+
+	return "", 0, 0, false
 }
 
 // ReviewByID reads one review request as it is now, for announcing a change made elsewhere

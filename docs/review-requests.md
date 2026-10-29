@@ -114,6 +114,24 @@ The rule, with nothing else in it:
    the request is set to `pending` with `stale_reason = "anchored text changed"`. Exactly on the
    threshold is not stale. There is no small-text exception: in five characters, one is 20%.
 
+### Turning a document into an Aspect (LAM-136)
+
+`PUT /documents/{id}` that turns a normal document into an aspect document moves its `content`
+text into the type's first field. In the same transaction, every review request on the document
+whose `field_id` is null and which has a region (open or decided, any status) is pointed at that
+field: `field_id` becomes the first field, `region_start`/`region_end` stay (the text moved
+unchanged), and `review_status` is untouched. The text is not "changed", so an approval is not made
+stale by the conversion itself. Each re-anchored request is announced as `review_request.updated`. Plain comments with a region and a
+null `field_id` (an API client can create them) are re-pointed by the same rule and announced as
+`comment.updated`; having no approval, one whose anchor cannot be found is simply left as it is.
+
+If the text did not move as is (the same request also filled the first field, so the old `content`
+was dropped), each request is re-anchored by searching its stored `anchor_text` in the new fields,
+in the type's order, and the first match gives the new field and offsets (in code points); an
+approval so re-anchored stays approved, as it is the same text. A request whose `anchor_text` is
+empty (a caret) or cannot be found is left exactly as it was: `field_id` null, offsets unchanged.
+It then matches no field, and an approved one goes back to pending as "anchored text changed".
+
 Approving again (or requesting changes) clears `stale_reason`. The change is announced as
 `review_request.updated` ([realtime.md](realtime.md#review-request-events-lam-113)).
 

@@ -381,6 +381,21 @@ func (s *Service) byKey(ctx context.Context, q querier, accountID, key string) (
 	return c, nil
 }
 
+// CommentByID reads one comment as it is now, for announcing a change made elsewhere (a document
+// conversion, LAM-136). Not scoped by reach: the caller is server code that has just written it.
+func (s *Service) CommentByID(ctx context.Context, id string) (Comment, error) {
+	var c Comment
+	err := s.pool.QueryRow(ctx, `SELECT `+columns+` FROM `+from+` WHERE c.id = $1::uuid`, id).Scan(c.dest()...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Comment{}, ErrNotFound
+	}
+	if err != nil {
+		return Comment{}, fmt.Errorf("comment: by id: %w", err)
+	}
+
+	return c, nil
+}
+
 /*
 ┌─ comment ───────────────────────────────────────
 │  changes a comment's body, and reindexes it
