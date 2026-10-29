@@ -100,6 +100,10 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 	cfg.OpenAPIPath = V1 + "/openapi"
 	cfg.SchemasPath = V1 + "/schemas"
 
+	// Last in the chain, after huma's own schema-link transformer, so it sees the body
+	// as it will be written. See scrubErrorValues.
+	cfg.Transformers = append(cfg.Transformers, scrubErrorValues)
+
 	api := humago.New(mux, cfg)
 
 	// authSvc is nil only from cmd/openapi, which registers operations to emit

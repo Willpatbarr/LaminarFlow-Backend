@@ -16,8 +16,7 @@ Every failure, from every endpoint, in `application/problem+json`:
   "code": "filter_invalid",
   "errors": [
     {"message": "unknown field",
-     "location": "body.filter.groups[0].conditions[2].field",
-     "value": "assignee_name"}
+     "location": "body.filter.groups[0].conditions[2].field"}
   ]
 }
 ```
@@ -28,7 +27,7 @@ Every failure, from every endpoint, in `application/problem+json`:
 | `detail` | a person | **Free to reword at any time** |
 | `code` | code | **Fixed forever once shipped** |
 | `status` | both | The HTTP status, repeated for convenience |
-| `errors[]` | code | Present on validation failures; `location` is the path |
+| `errors[]` | code | Present on validation failures; `location` is the path. `value` is present only for `query` and `path` locations — see [What `errors[].value` holds](#what-errorsvalue-holds) |
 | `type`, `instance` | tooling | RFC 9457 fields, unused so far |
 
 **Never branch on `detail`.** It is prose, it will be reworded, and nothing will fail when
@@ -37,6 +36,45 @@ was added on top of RFC 9457, which has no equivalent.
 
 `code` is always present. A field that is sometimes absent sends a caller back to reading
 prose, so it has no `omitempty` and the OpenAPI document marks it required.
+
+## What `errors[].value` holds
+
+LAM-135. huma echoes the offending input into `errors[].value`, and for a body that is the
+whole of the problem: `POST /auth/login` with one stray field answered 422 with the entire
+request body in `value`, plaintext password included. Anything that records response bodies
+— a proxy, a browser tool, an error reporter — kept it. The rules now apply to every error
+the API writes, from one place (`scrubErrorValues` in `internal/api/errors.go`), so no
+route can forget them:
+
+| Location starts with | `value` |
+| --- | --- |
+| `body` | **Never sent.** Whatever its name or type |
+| `header`, `cookie` | **Never sent** |
+| `query`, `path` | Sent, unless a segment of the location is credential-like, and with credential-like keys inside it replaced by `"[redacted]"` at any depth, in objects and arrays |
+
+Credential-like means the key, lower-cased with `_`, `-` and spaces removed, contains
+`password`, `passwd`, `passphrase`, `secret`, `token`, `apikey`, `accesskey`, `privatekey`,
+`credential`, `authorization`, `cookie`, `bearer` or `session` — so `password`,
+`new_password`, `Current-Password` and `apiKey` all match. `key` alone does not: a setting's
+key is a name.
+
+**Why drop every body value, not just the credential-named ones.** The caller just sent that
+value and holds a copy, so echoing it adds nothing `location` and `message` do not already
+say — `body.email` + `expected string` is a full diagnosis. And a key list cannot find a
+secret that is in the wrong place: a password typed into the email box, a token pasted as a
+label, a password sent as an array. Dropping is the only rule that cannot be out-guessed.
+The shipped frontend never read `value`.
+
+**Never read `value` to branch.** It is a debugging aid for URL parameters and may be absent;
+`code` and `location` are the contract. The OpenAPI document still lists `value` on
+`ErrorDetail` because the schema is huma's, and the field is optional (`omitempty`), so
+the shape did not change — a client that handled its absence already works.
+
+Logs: nothing logs request bodies or error values. The server has no access-log or
+recovery middleware (`main.go` serves the bare mux), `net/http` logs a handler panic with
+its stack and never the request, and huma's `could not write error` line names the
+transformer failure and not the body. A middleware that logs bodies would break this rule,
+so add none without scrubbing first.
 
 ## Codes shipped so far
 
