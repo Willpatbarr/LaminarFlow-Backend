@@ -522,6 +522,7 @@ type eventWire struct {
 	BoardID   string         `json:"board_id"`
 	Board     map[string]any `json:"board"`
 	ColumnID  string         `json:"column_id"`
+	Column    map[string]any `json:"column"`
 
 	EpicID      string         `json:"epic_id"`
 	Epic        map[string]any `json:"epic"`

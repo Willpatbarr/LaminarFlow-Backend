@@ -191,7 +191,7 @@ func TestReorderWritesTheWholeOrderAndRefusesAWrongSet(t *testing.T) {
 	}
 }
 
-func TestDeleteMovesTheTicketsAndTheBoardMapping(t *testing.T) {
+func TestDeleteMovesTheTicketsAndUnmapsTheBoardColumn(t *testing.T) {
 	f := newFeed(t)
 	st := f.team(t).Statuses
 	doomed, keep := st[0].ID, st[1].ID
@@ -238,19 +238,30 @@ func TestDeleteMovesTheTicketsAndTheBoardMapping(t *testing.T) {
 		t.Errorf("%d statuses left, want 2", n)
 	}
 
-	// The board column that showed the deleted status now shows keep; none was lost.
+	// board.column.updated for the one column that showed the deleted status: it no
+	// longer lists it, and is not re-pointed at keep (LAM-134).
+	if ev := readEvent(t, sarah); ev.Type != "board.column.updated" || ev.Column == nil || len(ev.Column["status_ids"].([]any)) != 0 {
+		t.Errorf("column event %+v, want board.column.updated with an empty column", ev)
+	}
+
+	// keep stays in its own column only, so no board shows its tickets twice.
 	var cols int
 	if err := f.pool.QueryRow(testCtx(t),
 		`SELECT count(*) FROM board_column_status WHERE status_id = $1::uuid`, keep).Scan(&cols); err != nil {
 		t.Fatal(err)
 	}
-	if cols != 2 {
-		t.Errorf("%d board mappings for the kept status, want 2 (its own column, and the deleted status's)", cols)
+	if cols != 1 {
+		t.Errorf("%d board mappings for the kept status, want 1 (its own column only)", cols)
 	}
-	var orphans int
+	var orphans, empty int
 	if err := f.pool.QueryRow(testCtx(t),
 		`SELECT count(*) FROM board_column_status WHERE status_id = $1::uuid`, doomed).Scan(&orphans); err != nil || orphans != 0 {
 		t.Errorf("mappings for the deleted status: %d (%v)", orphans, err)
+	}
+	if err := f.pool.QueryRow(testCtx(t),
+		`SELECT count(*) FROM board_column c
+		  WHERE NOT EXISTS (SELECT 1 FROM board_column_status m WHERE m.board_column_id = c.id)`).Scan(&empty); err != nil || empty < 1 {
+		t.Errorf("empty columns: %d (%v), want the doomed status's column kept", empty, err)
 	}
 }
 

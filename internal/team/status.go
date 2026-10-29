@@ -97,6 +97,15 @@ type DeleteResult struct {
 	Status      Status
 	WorkspaceID string
 	Moved       []ticket.Ticket
+
+	// Unmapped is every board column that showed the status, for board.column.updated.
+	Unmapped []ColumnRef
+}
+
+// ColumnRef names a board column without importing the board package.
+type ColumnRef struct {
+	BoardID  string
+	ColumnID string
 }
 
 func validCategory(c string) bool {
@@ -232,11 +241,9 @@ func (s *Service) UpdateStatus(ctx context.Context, accountID, teamID, statusID 
 // is locked for the transaction so a ticket cannot be pointed at it between the count
 // and the delete.
 //
-// board_column_status cascades from status (0026), so a delete would silently unmap the
-// status from its board columns. When tickets move to moveTo, the mappings move with
-// them - a column that showed the status keeps showing those tickets - except where the
-// column already maps moveTo, in which case the old mapping is simply dropped. With no
-// moveTo there are no tickets to follow, and the mappings cascade away.
+// The deleted status is unmapped from every board column that showed it, whether or not
+// tickets move (LAM-134). The mapping is not re-pointed at moveTo: that could put moveTo
+// in two columns of one board. The affected columns are returned for the change feed.
 func (s *Service) DeleteStatus(ctx context.Context, accountID, teamID, statusID string, moveTo *string) (DeleteResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -307,17 +314,32 @@ func (s *Service) DeleteStatus(ctx context.Context, accountID, teamID, statusID 
 		if moved, err = ticket.MoveStatus(ctx, tx, accountID, statusID, *moveTo); err != nil {
 			return DeleteResult{}, err
 		}
+	}
 
-		if _, err := tx.Exec(ctx,
-			`UPDATE board_column_status bcs
-			    SET status_id = $2::uuid, updated_at = now()
-			  WHERE bcs.status_id = $1::uuid
-			    AND NOT EXISTS (SELECT 1 FROM board_column_status kept
-			                     WHERE kept.board_column_id = bcs.board_column_id
-			                       AND kept.status_id = $2::uuid)`,
-			statusID, *moveTo); err != nil {
-			return DeleteResult{}, fmt.Errorf("team: move board mappings: %w", err)
+	// The status leaves every board column that showed it; moveTo is never mapped on its
+	// behalf (LAM-134). moveTo may already sit in another column of the same board, and a
+	// status sits in one column of a board, so re-pointing the mapping put it in two. A
+	// column left with no status is allowed and stays on its board, empty.
+	rows, err := tx.Query(ctx,
+		`DELETE FROM board_column_status bcs
+		  USING board_column c
+		  WHERE bcs.status_id = $1::uuid AND c.id = bcs.board_column_id
+		RETURNING c.board_id::text, c.id::text`, statusID)
+	if err != nil {
+		return DeleteResult{}, fmt.Errorf("team: unmap board columns: %w", err)
+	}
+	var unmapped []ColumnRef
+	for rows.Next() {
+		var ref ColumnRef
+		if err := rows.Scan(&ref.BoardID, &ref.ColumnID); err != nil {
+			rows.Close()
+			return DeleteResult{}, fmt.Errorf("team: unmap scan: %w", err)
 		}
+		unmapped = append(unmapped, ref)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return DeleteResult{}, fmt.Errorf("team: unmap rows: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx, `DELETE FROM status WHERE id = $1::uuid`, statusID); err != nil {
@@ -328,7 +350,7 @@ func (s *Service) DeleteStatus(ctx context.Context, accountID, teamID, statusID 
 		return DeleteResult{}, fmt.Errorf("team: commit: %w", err)
 	}
 
-	return DeleteResult{Status: st, WorkspaceID: ws, Moved: moved}, nil
+	return DeleteResult{Status: st, WorkspaceID: ws, Moved: moved, Unmapped: unmapped}, nil
 }
 
 // ReorderStatuses takes the complete ordered list, for the reasons aspect.Reorder gives,

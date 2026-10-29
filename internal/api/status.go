@@ -18,6 +18,7 @@ import (
 	"net/http"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/board"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/idempotency"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/realtime"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/team"
@@ -133,7 +134,7 @@ func plural(n int, one, many string) string {
 │      →  DELETE /api/v1/teams/{id}/statuses/{status_id}?move_to=…
 */
 
-func registerStatuses(api huma.API, svc *team.Service, feed ticketFeed, idem *idempotency.Store) {
+func registerStatuses(api huma.API, svc *team.Service, boards *board.Service, feed ticketFeed, idem *idempotency.Store) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-status",
@@ -211,7 +212,7 @@ func registerStatuses(api huma.API, svc *team.Service, feed ticketFeed, idem *id
 		Description: "Tickets that use the status need a `move_to` status, or the answer is a 422 `status_in_use` at `query.move_to` " +
 			"naming how many. Deleting a team's last status is allowed only while the team has no tickets. " +
 			"Tickets that move are written like any edit (version + 1) and each is announced as `ticket.updated`. " +
-			"Board columns mapped to the deleted status are mapped to `move_to` instead when tickets move, and unmapped otherwise.",
+			"The status is removed from every board column that showed it (a column may be left with no status); it is never mapped to `move_to` for the column, so a status cannot end up in two columns of a board. Each affected column is announced as `board.column.updated`.",
 		Metadata: needs(auth.TeamWrite),
 	}, func(ctx context.Context, in *deleteStatusInput) (*struct{}, error) {
 		me, _ := auth.FromContext(ctx)
@@ -228,6 +229,15 @@ func registerStatuses(api huma.API, svc *team.Service, feed ticketFeed, idem *id
 
 		feed.publishStatus(res.WorkspaceID, realtime.StatusDeleted, me.AccountID, in.ID, res.Status)
 		feed.publishMoved(res.WorkspaceID, me.AccountID, res.Moved)
+
+		// Columns that showed the status are now without it (LAM-134).
+		if boards != nil {
+			for _, ref := range res.Unmapped {
+				if r, err := boards.ColumnResult(ctx, me.AccountID, ref.BoardID, ref.ColumnID); err == nil {
+					feed.publishColumn(res.WorkspaceID, me.AccountID, r)
+				}
+			}
+		}
 
 		return nil, nil
 	})

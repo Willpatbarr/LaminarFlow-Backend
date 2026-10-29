@@ -9403,7 +9403,7 @@
     },
     "/api/v1/teams/{id}/statuses/{status_id}": {
       "delete": {
-        "description": "Tickets that use the status need a `move_to` status, or the answer is a 422 `status_in_use` at `query.move_to` naming how many. Deleting a team's last status is allowed only while the team has no tickets. Tickets that move are written like any edit (version + 1) and each is announced as `ticket.updated`. Board columns mapped to the deleted status are mapped to `move_to` instead when tickets move, and unmapped otherwise.",
+        "description": "Tickets that use the status need a `move_to` status, or the answer is a 422 `status_in_use` at `query.move_to` naming how many. Deleting a team's last status is allowed only while the team has no tickets. Tickets that move are written like any edit (version + 1) and each is announced as `ticket.updated`. The status is removed from every board column that showed it (a column may be left with no status); it is never mapped to `move_to` for the column, so a status cannot end up in two columns of a board. Each affected column is announced as `board.column.updated`.",
         "operationId": "delete-status",
         "parameters": [
           {
