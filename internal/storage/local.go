@@ -51,6 +51,9 @@ func NewLocal(root string) (*Local, error) {
 	return &Local{root: abs}, nil
 }
 
+// Root is the absolute folder in use, for the startup log.
+func (l *Local) Root() string { return l.root }
+
 func (l *Local) path(key string) (string, error) {
 	if !keyPattern.MatchString(key) {
 		return "", ErrInvalidKey

@@ -68,7 +68,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("attachments: %v", err)
 	}
-	log.Printf("attachments: %s, up to %d bytes each", cfg.AttachmentDir, cfg.MaxAttachmentBytes)
+	log.Printf("attachments: %s, up to %d bytes each", files.Root(), cfg.MaxAttachmentBytes)
 
 	mux := api.NewMux(pool, bundle, hub, api.WithAttachments(files, cfg.MaxAttachmentBytes))
 

@@ -156,6 +156,10 @@ func TestUnknownAPIRouteReturnsJSONNotTheAppShell(t *testing.T) {
 			if strings.Contains(rec.Body.String(), "<div id=root>") {
 				t.Error("an unknown API route returned the app shell")
 			}
+			// The release smoke test greps for this exact member.
+			if !strings.Contains(rec.Body.String(), `"code":"not_found"`) {
+				t.Errorf("body = %q, want the JSON not_found envelope", rec.Body.String())
+			}
 		})
 	}
 }

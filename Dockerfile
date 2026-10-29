@@ -92,6 +92,7 @@ COPY --from=build /out/reindex /reindex
 # by the nonroot user so a named volume or no volume at all works; a bind mount keeps the
 # host folder's ownership and docs/deploy.md says how to set it.
 COPY --from=build --chown=65532:65532 /out/data /data
+ENV ATTACHMENT_DIR=/data/files
 
 # Documentation only - PORT still decides what the server binds. Kept at the
 # same default as internal/config so the two do not disagree.
