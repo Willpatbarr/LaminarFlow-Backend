@@ -69,6 +69,13 @@ func (d *Document) diff(ctx context.Context, tx activity.Tx, actorID string, bef
 		}
 	}
 
+	if !samePtr(before.ProjectID, d.ProjectID) {
+		f := "project"
+		if err := d.note(ctx, tx, actorID, activity.FieldChanged, &f, before.ProjectID, d.ProjectID); err != nil {
+			return err
+		}
+	}
+
 	if before.Type != d.Type || !samePtr(before.AspectTypeID, d.AspectTypeID) {
 		return d.note(ctx, tx, actorID, activity.AspectTypeChanged, nil, before.AspectTypeID, d.AspectTypeID)
 	}
