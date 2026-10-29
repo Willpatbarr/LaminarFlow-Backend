@@ -116,15 +116,15 @@ func threshold(ctx context.Context, tx pgx.Tx, workspaceID string) (int, error) 
 // LAM-136: when c.Conversion is set (a normal document became an aspect), every review request
 // anchored to ContentKey, whatever its status, is first pointed at the field the text moved to
 // (same offsets) or, if the text was not moved as is, at wherever its anchor_text is found in the
-// new fields (new offsets); one that cannot be found is left alone. A re-anchored approval
+// new fields (new offsets); one that cannot be found is left alone. Plain comments have no approval, so they are only re-pointed. A re-anchored approval
 // compares the moved text, so the conversion alone does not make it stale. The returned ids
 // include the re-anchored requests, which the caller announces as review_request.updated.
 func (s *Service) StaleReviews(ctx context.Context, tx pgx.Tx, c document.Change) ([]string, error) {
 	rows, err := tx.Query(ctx,
-		`SELECT id::text, field_id::text, region_start, region_end, review_status, COALESCE(anchor_text, '')
+		`SELECT id::text, field_id::text, region_start, region_end, COALESCE(review_status, ''), COALESCE(anchor_text, '')
 		   FROM comment
-		  WHERE document_id = $1::uuid AND review_status IS NOT NULL
-		    AND ($2 OR review_status = 'approved')
+		  WHERE document_id = $1::uuid
+		    AND (($2 AND region_start IS NOT NULL) OR review_status = 'approved')
 		  ORDER BY created_at, id FOR UPDATE`, c.DocumentID, c.Conversion != nil)
 	if err != nil {
 		return nil, fmt.Errorf("comment: reviews: %w", err)
@@ -171,7 +171,7 @@ func (s *Service) StaleReviews(ctx context.Context, tx pgx.Tx, c document.Change
 
 	// LAM-136: the document became an aspect, so what anchored into ContentKey follows the text
 	// into its field, in this transaction. Open and decided requests alike; the status is not
-	// touched.
+	// touched. Plain comments (review_status null) are re-pointed the same way.
 	if c.Conversion != nil {
 		for i := range reviews {
 			a := &reviews[i]

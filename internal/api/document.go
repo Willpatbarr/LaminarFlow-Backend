@@ -459,6 +459,9 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 		for _, id := range d.StaledReviews {
 			if r, err := comments.ReviewByID(ctx, id); err == nil {
 				feed.publishReviewRequest(realtime.ReviewRequestUpdated, me.AccountID, r)
+			} else if c, err := comments.CommentByID(ctx, id); err == nil {
+				// A plain comment re-anchored by a conversion (LAM-136).
+				feed.publishComment(realtime.CommentUpdated, me.AccountID, c)
 			}
 		}
 

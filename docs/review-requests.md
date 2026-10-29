@@ -121,7 +121,9 @@ text into the type's first field. In the same transaction, every review request 
 whose `field_id` is null and which has a region (open or decided, any status) is pointed at that
 field: `field_id` becomes the first field, `region_start`/`region_end` stay (the text moved
 unchanged), and `review_status` is untouched. The text is not "changed", so an approval is not made
-stale by the conversion itself. Each re-anchored request is announced as `review_request.updated`.
+stale by the conversion itself. Each re-anchored request is announced as `review_request.updated`. Plain comments with a region and a
+null `field_id` (an API client can create them) are re-pointed by the same rule and announced as
+`comment.updated`; having no approval, one whose anchor cannot be found is simply left as it is.
 
 If the text did not move as is (the same request also filled the first field, so the old `content`
 was dropped), each request is re-anchored by searching its stored `anchor_text` in the new fields,

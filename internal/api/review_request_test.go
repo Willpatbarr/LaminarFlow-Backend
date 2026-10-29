@@ -832,3 +832,38 @@ func TestConvertingWithAnEditedFirstFieldFindsTheAnchorTextOrLeavesItAlone(t *te
 		}
 	}
 }
+
+func TestConvertingToAnAspectAlsoMovesAPlainAnchoredComment(t *testing.T) {
+	f := newFeed(t)
+	doc := f.document(t, f.willC, map[string]any{"title": "Notes", "project_id": f.project.ID,
+		"body": map[string]string{"content": "# Meeting\nShip it on Friday."}})
+	rec := call(t, f.mux, http.MethodPost, V1+"/comments", map[string]any{"document_id": doc.ID,
+		"region_start": 21, "region_end": 27, "body": "Friday?"}, f.willC)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("comment: %d %s", rec.Code, rec.Body)
+	}
+	var c struct {
+		ID string `json:"id"`
+	}
+	decode(t, rec, &c)
+	typeID, fields := f.aspectType(t, f.willC, "Summary", "Other")
+	watcher := f.open(t, f.cookie(f.sarahC))
+
+	f.makeAspect(t, doc, typeID, map[string]string{})
+
+	var ev eventWire
+	for {
+		if ev = readEvent(t, watcher); ev.Type == "comment.updated" {
+			break
+		}
+	}
+	if ev.CommentID != c.ID || ev.Comment["field_id"] != fields[0] {
+		t.Errorf("event = %+v", ev)
+	}
+	var field *string
+	var start, end int
+	if err := f.pool.QueryRow(testCtx(t), `SELECT field_id::text, region_start, region_end FROM comment WHERE id = $1::uuid`, c.ID).
+		Scan(&field, &start, &end); err != nil || field == nil || *field != fields[0] || start != 21 || end != 27 {
+		t.Errorf("row = %v %d %d, %v", field, start, end, err)
+	}
+}
