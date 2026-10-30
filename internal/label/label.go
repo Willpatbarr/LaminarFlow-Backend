@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/hue"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
 
 	"github.com/jackc/pgx/v5"
@@ -46,8 +47,8 @@ var (
 	ErrNameTaken = errors.New("label: name already used in this team")
 )
 
-// The longest a label's text may be, in characters. The colour is whatever string the
-// client likes, up to this many: nothing here reads it, as with status.color.
+// The longest a label's text may be, in characters. The colour is a hue name (or a hex that
+// is converted to one, internal/hue), so this is only the cap on what is read.
 const (
 	MaxNameLength  = 100
 	MaxColorLength = 32
@@ -130,6 +131,10 @@ func (s *Service) Create(ctx context.Context, accountID, teamID, name, color str
 	}
 	if err := textlimit.Required("color", color, MaxColorLength); err != nil {
 		return Label{}, err
+	}
+	color, ok := hue.Normalise(color)
+	if !ok {
+		return Label{}, &textlimit.FieldError{Field: "color", Reason: hue.ErrNotAHue}
 	}
 
 	var l Label
@@ -224,6 +229,11 @@ func (s *Service) Update(ctx context.Context, accountID, id string, p Patch) (La
 		if err := textlimit.Required("color", *p.Color, MaxColorLength); err != nil {
 			return Label{}, err
 		}
+		color, ok := hue.Normalise(*p.Color)
+		if !ok {
+			return Label{}, &textlimit.FieldError{Field: "color", Reason: hue.ErrNotAHue}
+		}
+		p.Color = &color // p is a copy; the caller's string is left alone
 	}
 
 	var l Label

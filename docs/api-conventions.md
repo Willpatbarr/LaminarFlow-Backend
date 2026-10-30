@@ -113,6 +113,13 @@ The opposite call is also on the record: `board.group_by` and `status.category` 
 `internal/setting`'s tests assert the registry and `board.group_by`'s CHECK agree, in
 both directions.
 
+A fourth, deliberately the other way: `status.color` and `label.color` (LAM-172) are a closed
+set of eight hue names with no `CHECK`. `internal/hue` is the one door (`hue.Normalise` turns a
+name or a hex into a stored name, or refuses), and the services call it before any SQL. A `CHECK`
+was declined so that rolling back to code that still writes hexes does not fail every status and
+label write. Migration `0051` repeats the hex-to-hue mapping in SQL; `internal/migrate`'s test runs
+it against `hue.Of` so the two cannot drift.
+
 ## 7. Seeding runs inside the creation transaction
 
 `internal/team` and `internal/project` seed what a new team and a new project cannot be

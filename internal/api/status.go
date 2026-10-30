@@ -48,7 +48,7 @@ type createStatusInput struct {
 	ID   string `path:"id" format:"uuid"`
 	Body struct {
 		Name     string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters, and not only whitespace."`
-		Color    string `json:"color" required:"true" minLength:"1" maxLength:"32" doc:"Any string up to 32 characters; nothing reads it but the client."`
+		Color    string `json:"color" required:"true" minLength:"1" maxLength:"32" doc:"A hue name: slate, blue, teal, green, amber, clay, rust or violet. A #rrggbb hex is accepted and stored as the nearest hue name; anything else is a 422 at body.color."`
 		Category string `json:"category" required:"true" enum:"not_started,in_progress,done"`
 		Position *int   `json:"position,omitempty" doc:"An ordering hint; duplicates are legal. Omitted means last."`
 	}
