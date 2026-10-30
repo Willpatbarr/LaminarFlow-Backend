@@ -39,7 +39,7 @@ type labelBody struct {
 	ID        string    `json:"id"`
 	TeamID    string    `json:"team_id"`
 	Name      string    `json:"name" doc:"Unique within the team."`
-	Color     string    `json:"color" doc:"Any string up to 32 characters; nothing reads it but the client."`
+	Color     string    `json:"color" doc:"A hue name: slate, blue, teal, green, amber, clay, rust or violet. A #rrggbb hex is accepted and stored as the nearest hue name; anything else is a 422 at body.color."`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -53,7 +53,7 @@ type createLabelInput struct {
 	Body struct {
 		TeamID string `json:"team_id" required:"true" format:"uuid"`
 		Name   string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace. Unique within the team, or 409 label_name_taken."`
-		Color  string `json:"color" required:"true" minLength:"1" maxLength:"32" doc:"Any string up to 32 characters; nothing reads it but the client."`
+		Color  string `json:"color" required:"true" minLength:"1" maxLength:"32" doc:"A hue name: slate, blue, teal, green, amber, clay, rust or violet. A #rrggbb hex is accepted and stored as the nearest hue name; anything else is a 422 at body.color."`
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/hue"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/ticket"
 
@@ -122,6 +123,9 @@ func checkStatusFields(name, color, category *string) error {
 		if err := textlimit.Required("color", *color, MaxStatusColorLength); err != nil {
 			return err
 		}
+		if _, ok := hue.Normalise(*color); !ok {
+			return &textlimit.FieldError{Field: "color", Reason: hue.ErrNotAHue}
+		}
 	}
 	if category != nil && !validCategory(*category) {
 		return &textlimit.FieldError{Field: "category", Reason: errCategory}
@@ -166,6 +170,7 @@ func (s *Service) CreateStatus(ctx context.Context, accountID, teamID string, p 
 	if err := checkStatusFields(&p.Name, &p.Color, &p.Category); err != nil {
 		return Status{}, "", err
 	}
+	p.Color, _ = hue.Normalise(p.Color) // checked above: a hue name is what is stored (LAM-172)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -200,6 +205,10 @@ func (s *Service) CreateStatus(ctx context.Context, accountID, teamID string, p 
 func (s *Service) UpdateStatus(ctx context.Context, accountID, teamID, statusID string, p StatusPatch) (Status, string, error) {
 	if err := checkStatusFields(p.Name, p.Color, p.Category); err != nil {
 		return Status{}, "", err
+	}
+	if p.Color != nil {
+		c, _ := hue.Normalise(*p.Color) // p is a copy; the caller's string is left alone
+		p.Color = &c
 	}
 
 	tx, err := s.pool.Begin(ctx)

@@ -83,17 +83,17 @@ type Status struct {
 // team that renames "To Do" to "Backlog" keeps a status that still counts as not
 // started - which is the whole reason category exists separately from name.
 //
-// The colours are invented here because nothing has settled a palette and 0010 declines
-// a CHECK for exactly that reason. They are ordinary column values a team can change,
-// not a scheme anything reads.
+// The colours are hue names (internal/hue, LAM-172): slate, blue and green, the design
+// system's own hues for not started, in progress and done. They are ordinary column
+// values a team can change, to any other hue.
 //
 // Positions are 1, 2, 3 and are ordering hints rather than slots: 0010 declines a
 // unique index on (team_id, position), so a team inserting a status between two of
 // these does not have to renumber anything.
 var DefaultStatuses = []Status{
-	{Name: "To Do", Color: "#94a3b8", Position: 1, Category: "not_started"},
-	{Name: "In Progress", Color: "#3b82f6", Position: 2, Category: "in_progress"},
-	{Name: "Done", Color: "#22c55e", Position: 3, Category: "done"},
+	{Name: "To Do", Color: "slate", Position: 1, Category: "not_started"},
+	{Name: "In Progress", Color: "blue", Position: 2, Category: "in_progress"},
+	{Name: "Done", Color: "green", Position: 3, Category: "done"},
 }
 
 // StarterTypes is LAM-21 step 3.

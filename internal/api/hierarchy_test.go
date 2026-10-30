@@ -170,7 +170,7 @@ func TestEachParentHasCreateGetListUpdateAndDelete(t *testing.T) {
 		{"/epics", "project_id", f.project.ID, map[string]any{"name": "Auth"}, map[string]any{"name": "Auth 2", "description": "d"}, "epic_not_found"},
 		{"/milestones", "project_id", f.project.ID, map[string]any{"name": "1.0", "target_date": "2027-01-31"}, map[string]any{"name": "1.1", "target_date": nil}, "milestone_not_found"},
 		{"/sprints", "project_id", f.project.ID, map[string]any{"name": "S1", "start_date": "2027-01-04", "end_date": "2027-01-17"}, map[string]any{"name": "S1b", "end_date": nil}, "sprint_not_found"},
-		{"/labels", "team_id", f.project.TeamID, map[string]any{"name": "bug", "color": "red"}, map[string]any{"name": "defect", "color": "orange"}, "label_not_found"},
+		{"/labels", "team_id", f.project.TeamID, map[string]any{"name": "bug", "color": "rust"}, map[string]any{"name": "defect", "color": "amber"}, "label_not_found"},
 	} {
 		t.Run(c.base, func(t *testing.T) {
 			body := map[string]any{c.scopeKey: c.scopeID}
@@ -283,7 +283,7 @@ func TestLabelNamesAreUniqueWithinATeam(t *testing.T) {
 	f := newFeed(t)
 	f.label(t, "bug")
 
-	rec := call(t, f.mux, http.MethodPost, V1+"/labels", map[string]any{"team_id": f.project.TeamID, "name": "bug", "color": "x"}, f.willC)
+	rec := call(t, f.mux, http.MethodPost, V1+"/labels", map[string]any{"team_id": f.project.TeamID, "name": "bug", "color": "slate"}, f.willC)
 	wantProblem(t, rec.Code, rec.Body.Bytes(), http.StatusConflict, "label_name_taken", "")
 
 	feature := f.label(t, "feature")
@@ -296,7 +296,7 @@ func TestLabelNamesAreUniqueWithinATeam(t *testing.T) {
 		t.Errorf("rename to itself: status %d - %.300s", rec.Code, rec.Body)
 	}
 	other := createTeam(t, f.mux, f.willC, f.will.WorkspaceID, "Other")
-	rec = call(t, f.mux, http.MethodPost, V1+"/labels", map[string]any{"team_id": other.ID, "name": "bug", "color": "x"}, f.willC)
+	rec = call(t, f.mux, http.MethodPost, V1+"/labels", map[string]any{"team_id": other.ID, "name": "bug", "color": "slate"}, f.willC)
 	if rec.Code != http.StatusOK {
 		t.Errorf("the same name in another team: status %d - %.300s", rec.Code, rec.Body)
 	}
@@ -394,7 +394,7 @@ func TestADanglingParentIsA422AtItsField(t *testing.T) {
 	proj2 := createProject(t, f.mux, f.willC, f.project.TeamID, "Second")
 	foreignEpic := f.make(t, "/epics", map[string]any{"project_id": proj2.ID, "name": "theirs"})
 	foreignMile := f.make(t, "/milestones", map[string]any{"project_id": proj2.ID, "name": "theirs"})
-	foreignLabel := f.make(t, "/labels", map[string]any{"team_id": team2.ID, "name": "theirs", "color": "x"})
+	foreignLabel := f.make(t, "/labels", map[string]any{"team_id": team2.ID, "name": "theirs", "color": "slate"})
 	missing := "00000000-0000-0000-0000-0000000000aa"
 
 	for _, c := range []struct {
@@ -632,7 +632,7 @@ func TestHierarchyIsScopedToTheWorkspace(t *testing.T) {
 		{"/milestones/list", map[string]any{"project_id": f.project.ID}, "project_not_found"},
 		{"/sprints", map[string]any{"project_id": f.project.ID, "name": "x"}, "project_not_found"},
 		{"/sprints/list", map[string]any{"project_id": f.project.ID}, "project_not_found"},
-		{"/labels", map[string]any{"team_id": f.project.TeamID, "name": "x", "color": "x"}, "team_not_found"},
+		{"/labels", map[string]any{"team_id": f.project.TeamID, "name": "x", "color": "slate"}, "team_not_found"},
 		{"/labels/list", map[string]any{"team_id": f.project.TeamID}, "team_not_found"},
 	} {
 		rec := call(t, f.mux, http.MethodPost, V1+c.path, c.body, f.carolC)
@@ -734,4 +734,26 @@ func TestTheOpenAPIDocumentCarriesTheHierarchy(t *testing.T) {
 	if strings.Contains(strings.Join(body.Required, ","), "epic") {
 		t.Errorf("required = %v", body.Required)
 	}
+}
+
+// LAM-172. A label colour is stored as a hue name: a hex is converted, anything else is refused.
+func TestLabelColoursAreStoredAsHueNames(t *testing.T) {
+	f := newFeed(t)
+
+	rec := call(t, f.mux, http.MethodPost, V1+"/labels", map[string]any{"team_id": f.project.TeamID, "name": "hexed", "color": "#8b5cf6"}, f.willC)
+	var made struct{ ID, Color string }
+	decode(t, rec, &made)
+	if rec.Code != http.StatusOK || made.Color != "violet" {
+		t.Fatalf("create with #8b5cf6: %d %+v, want violet", rec.Code, made)
+	}
+
+	rec = call(t, f.mux, http.MethodPut, V1+"/labels/"+made.ID, map[string]any{"color": "#22c55e"}, f.willC)
+	var upd struct{ Color string }
+	decode(t, rec, &upd)
+	if rec.Code != http.StatusOK || upd.Color != "green" {
+		t.Errorf("update to #22c55e: %d %+v, want green", rec.Code, upd)
+	}
+
+	refused(t, call(t, f.mux, http.MethodPost, V1+"/labels", map[string]any{"team_id": f.project.TeamID, "name": "bad", "color": "red"}, f.willC), "body.color")
+	refused(t, call(t, f.mux, http.MethodPut, V1+"/labels/"+made.ID, map[string]any{"color": "#12345"}, f.willC), "body.color")
 }

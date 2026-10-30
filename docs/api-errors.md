@@ -197,6 +197,16 @@ They are enforced by the API and the service, not by a database constraint, so a
 before the limit existed stays readable and the limit meets it on its next write: a ticket
 that already has a 5,000-character title cannot be updated until the title is shortened.
 
+### Colours (LAM-172)
+
+`status.color` and `label.color` (create and update) are one of eight hue names: `slate`, `blue`,
+`teal`, `green`, `amber`, `clay`, `rust`, `violet`. A name is accepted in any case. A `#rgb` or
+`#rrggbb` hex is accepted too and stored as the nearest hue name (the response shows the name, not
+what was sent), so an old client that still sends `#3b82f6` gets `blue`. Anything else, such as
+`red` or `#12345`, is a `422` with the derived code `unprocessable_entity` at `body.color`, and
+nothing is written. The shade a hue is drawn in belongs to the client, per theme. Migration `0051`
+converted stored hexes; its mapping and fallback are in the file's header.
+
 ## Status codes
 
 The two boundaries that drift are 400/422 and 409/422. Both have a one-line rule.

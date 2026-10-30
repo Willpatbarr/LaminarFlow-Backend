@@ -91,7 +91,7 @@ func TestAStatusCanBeAddedRenamedAndRecoloured(t *testing.T) {
 	}
 	var renamed statusWire
 	decode(t, rec, &renamed)
-	if renamed.ID != made.ID || renamed.Name != "In Review" || renamed.Color != "#fff" || renamed.Category != "in_progress" {
+	if renamed.ID != made.ID || renamed.Name != "In Review" || renamed.Color != "slate" || renamed.Category != "in_progress" {
 		t.Errorf("renamed %+v from %+v", renamed, made)
 	}
 	if ev := readEvent(t, sarah); ev.Type != "status.updated" || ev.StatusID != made.ID {
@@ -106,7 +106,7 @@ func TestAStatusCanBeAddedRenamedAndRecoloured(t *testing.T) {
 func TestStatusFieldsAreValidated(t *testing.T) {
 	f := newFeed(t)
 	id := f.team(t).Statuses[0].ID
-	ok := map[string]any{"name": "n", "color": "c", "category": "done"}
+	ok := map[string]any{"name": "n", "color": "blue", "category": "done"}
 
 	with := func(k string, v any) map[string]any {
 		b := map[string]any{}
@@ -149,7 +149,7 @@ func TestAnUnknownOrForeignStatusIsA404(t *testing.T) {
 
 	// Carol is in another workspace: the team itself is not hers.
 	rec := call(t, f.mux, http.MethodPost, f.statusPath(""),
-		map[string]any{"name": "x", "color": "c", "category": "done"}, f.carolC)
+		map[string]any{"name": "x", "color": "blue", "category": "done"}, f.carolC)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("outsider create: status %d, want 404", rec.Code)
 	}
@@ -343,10 +343,60 @@ func TestTheLastStatusDeletesFromATeamWithNoTickets(t *testing.T) {
 	}
 
 	// And a team can start over.
-	rec := call(t, f.mux, http.MethodPost, f.statusPath(""), map[string]any{"name": "Only", "color": "c", "category": "not_started"}, f.willC)
+	rec := call(t, f.mux, http.MethodPost, f.statusPath(""), map[string]any{"name": "Only", "color": "blue", "category": "not_started"}, f.willC)
 	var st statusWire
 	decode(t, rec, &st)
 	if rec.Code != http.StatusOK || st.Position != 1 {
 		t.Errorf("recreate: status %d %+v", rec.Code, st)
 	}
+}
+
+// LAM-172. A colour is stored as a hue name: a hex is converted, anything else is refused.
+func TestStatusColoursAreStoredAsHueNames(t *testing.T) {
+	f := newFeed(t)
+
+	for _, d := range f.team(t).Statuses {
+		switch d.Name {
+		case "To Do", "In Progress", "Done":
+		default:
+			continue
+		}
+		if len(d.Color) > 0 && d.Color[0] == '#' {
+			t.Errorf("default status %s stores %q, want a hue name", d.Name, d.Color)
+		}
+	}
+
+	create := func(color string) *statusWire {
+		rec := call(t, f.mux, http.MethodPost, f.statusPath(""),
+			map[string]any{"name": "c", "color": color, "category": "done"}, f.willC)
+		if rec.Code != http.StatusOK {
+			refused(t, rec, "body.color")
+			return nil
+		}
+		var out statusWire
+		decode(t, rec, &out)
+
+		return &out
+	}
+
+	made := create("#3b82f6")
+	if made == nil || made.Color != "blue" {
+		t.Fatalf("created with #3b82f6: %+v, want blue", made)
+	}
+	if made = create(" Teal "); made == nil || made.Color != "teal" {
+		t.Errorf("created with ' Teal ': %+v, want teal", made)
+	}
+	for _, bad := range []string{"red", "#12345", "chartreuse"} {
+		if create(bad) != nil {
+			t.Errorf("colour %q was accepted", bad)
+		}
+	}
+
+	rec := call(t, f.mux, http.MethodPut, f.statusPath("/"+made.ID), map[string]any{"color": "#ef4444"}, f.willC)
+	var upd statusWire
+	decode(t, rec, &upd)
+	if rec.Code != http.StatusOK || upd.Color != "rust" {
+		t.Errorf("update to #ef4444: %d %+v, want rust", rec.Code, upd)
+	}
+	refused(t, call(t, f.mux, http.MethodPut, f.statusPath("/"+made.ID), map[string]any{"color": "red"}, f.willC), "body.color")
 }
