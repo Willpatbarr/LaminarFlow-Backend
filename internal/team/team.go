@@ -326,6 +326,49 @@ func (s *Service) Get(ctx context.Context, accountID, id string) (Team, error) {
 
 /*
 ┌─ team ──────────────────────────────────────────
+│  renames a team the caller may reach
+├─ in ────────────────────────────────────────────
+│      ctx          context.Context
+│      accountID    string
+│      id           string
+│      name         string
+├─ out ───────────────────────────────────────────
+│      Team                      as renamed, with its statuses
+│      error                     ErrNotFound · ErrNameTaken
+│                                *textlimit.FieldError
+*/
+
+// Rename is LAM-149. A team has no version column, so like a milestone it is last write
+// wins, and there is nothing to If-Match against. The name is the same rule as Create's,
+// and UNIQUE (workspace_id, name) is surfaced as ErrNameTaken the same way. Renaming a
+// team to the name it already has is a no-op that succeeds.
+func (s *Service) Rename(ctx context.Context, accountID, id, name string) (Team, error) {
+	if err := textlimit.Required("name", name, MaxNameLength); err != nil {
+		return Team{}, err
+	}
+
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE team tm
+		    SET name = $2, updated_at = now()
+		  WHERE tm.id = $1::uuid
+		    AND EXISTS (SELECT 1 FROM workspace_member wm
+		                 WHERE wm.workspace_id = tm.workspace_id AND wm.account_id = $3::uuid)`,
+		id, name, accountID)
+	if isUniqueViolation(err) {
+		return Team{}, ErrNameTaken
+	}
+	if err != nil {
+		return Team{}, fmt.Errorf("team: rename: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return Team{}, ErrNotFound
+	}
+
+	return s.Get(ctx, accountID, id)
+}
+
+/*
+┌─ team ──────────────────────────────────────────
 │  one team's statuses, in position order
 ├─ in ────────────────────────────────────────────
 │      ctx       context.Context

@@ -84,6 +84,20 @@ type projectBody struct {
 	Columns []projectColumnBody `json:"columns" doc:"One per status the team had. Empty when bare."`
 }
 
+type renameTeamInput struct {
+	ID   string `path:"id" format:"uuid"`
+	Body struct {
+		Name string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace. Unique within the workspace."`
+	}
+}
+
+type renameProjectInput struct {
+	ID   string `path:"id" format:"uuid"`
+	Body struct {
+		Name string `json:"name" required:"true" minLength:"1" maxLength:"100" doc:"1 to 100 characters (not bytes), and not only whitespace."`
+	}
+}
+
 type projectOutput struct {
 	Body projectBody
 }
@@ -182,7 +196,7 @@ func projectError(err error) error {
 │      →  POST /api/v1/teams
 */
 
-func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Service, idem *idempotency.Store) {
+func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Service, feed ticketFeed, idem *idempotency.Store) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "create-team",
@@ -235,6 +249,27 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 	// category and position, so one call fills the store and a second is never needed.
 	// Three statuses a team keeps the payload small; if that stops being true, the
 	// answer is POST /statuses/list beside this, not a heavier team.
+	huma.Register(api, huma.Operation{
+		OperationID: "update-team",
+		Method:      http.MethodPut,
+		Path:        V1 + "/teams/{id}",
+		Summary:     "Rename a team",
+		Description: "Last write wins: a team has no version, so there is no `If-Match`. 409 `team_name_taken` when " +
+			"another team of the workspace has the name. Announced as `team.updated`.",
+		Metadata: needs(auth.TeamWrite),
+	}, func(ctx context.Context, in *renameTeamInput) (*teamOutput, error) {
+		me, _ := auth.FromContext(ctx)
+
+		t, err := teamSvc.Rename(ctx, me.AccountID, in.ID, in.Body.Name)
+		if err != nil {
+			return nil, teamError(err)
+		}
+
+		feed.publishTeam(t.WorkspaceID, me.AccountID, t)
+
+		return &teamOutput{Body: asTeamBody(t)}, nil
+	})
+
 	registerList(api, listSpec[teamBody]{
 		OperationID: "list-teams",
 		Permission:  auth.TeamRead,
@@ -304,6 +339,29 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 		p, err := projSvc.Get(ctx, me.AccountID, in.ID)
 		if err != nil {
 			return nil, projectError(err)
+		}
+
+		return &projectOutput{Body: asProjectBody(p)}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "update-project",
+		Method:      http.MethodPut,
+		Path:        V1 + "/projects/{id}",
+		Summary:     "Rename a project",
+		Description: "Last write wins: a project has no version, so there is no `If-Match`. Project names are not " +
+			"unique. Announced as `project.updated`.",
+		Metadata: needs(auth.ProjectWrite),
+	}, func(ctx context.Context, in *renameProjectInput) (*projectOutput, error) {
+		me, _ := auth.FromContext(ctx)
+
+		p, err := projSvc.Rename(ctx, me.AccountID, in.ID, in.Body.Name)
+		if err != nil {
+			return nil, projectError(err)
+		}
+
+		if ws, err := projSvc.WorkspaceID(ctx, p.ID); err == nil {
+			feed.publishProject(ws, me.AccountID, p)
 		}
 
 		return &projectOutput{Body: asProjectBody(p)}, nil

@@ -54,7 +54,8 @@ all (the `hello` is always sent). The mapping is one table, `eventPermission` in
 | Needs | Events |
 | --- | --- |
 | `ticket:read` | `ticket.*` (including `ticket.document_linked` / `_unlinked`), `document.*`, `comment.*`, `review_request.*`, `activity.created`, `board.*`, `epic.*`, `sprint.*`, `milestone.*`, `label.*` |
-| `team:read` | `status.*` |
+| `team:read` | `status.*`, `team.updated` |
+| `project:read` | `project.updated` |
 
 There is no `document:*` or `board:*` scope: those resources use `ticket:read` over REST
 too ([api-parity.md](api-parity.md) finding 6). A new event type must be given its read
@@ -148,6 +149,14 @@ was). They have **no** `ticket_id`, `version` or `ticket`. A reorder sends `stat
 each status whose position changed. A delete that moves tickets also sends one `ticket.updated`
 per moved ticket (archived ones included) at their new version. It also sends one `board.column.updated` for every board column that showed the status (LAM-134): the status is gone from its `status_ids`, and the column may now be empty. The column is not re-pointed at `move_to`. Apply `status.*` by upsert or
 remove on `status_id`; there is no version, so re-list on doubt.
+
+## Team and project rename events (LAM-149)
+
+`team.updated` (from `PUT /teams/{id}`) carries `type`, `actor_id`, `at`, `team_id` and `team` (the whole
+`TeamBody`). `project.updated` (from `PUT /projects/{id}`) carries `type`, `actor_id`, `at`, `team_id`,
+`project_id` and `project` (the whole `ProjectBody`; `board_id` is null and `columns` empty, as on
+`GET /projects/{id}`, so keep the board you already have). Neither has a version: replace the name you hold
+and re-list on doubt. Needs `team:read` / `project:read`.
 
 ## Board events (LAM-85)
 
