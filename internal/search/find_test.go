@@ -169,7 +169,7 @@ func TestFindIsAnIndexedQuery(t *testing.T) {
 		t.Fatalf("set: %v", err)
 	}
 
-	rows, err := tx.Query(ctx, `EXPLAIN `+search.FindSQL, who, "login", "", 20, "", "", "")
+	rows, err := tx.Query(ctx, `EXPLAIN `+search.FindSQL, who, "login", "", 20, "", "", "", "", "login")
 	if err != nil {
 		t.Fatalf("explain: %v", err)
 	}

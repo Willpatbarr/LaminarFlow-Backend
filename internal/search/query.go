@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"html"
 	"strings"
+	"unicode"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/textlimit"
 )
@@ -92,13 +93,34 @@ const (
 //
 // websearch_to_tsquery rather than to_tsquery: it accepts any text a person types
 // (quotes, "or", a leading minus) and never raises a syntax error.
+//
+// Prefix matching (LAM-157). The english vectors store stems ("phrasing" is "phras"), so
+// a half-typed word matches nothing there. $8 is the words before the last one and $9
+// the last, both already reduced to letters and digits by prefixTerms, and they are
+// matched against the unstemmed `simple` vectors: every earlier word whole, the last as
+// a prefix (`:*`). The prefix query is built with to_tsquery from that one sanitised
+// token, never from the raw text, so no tsquery operator can reach it. $9 is empty when
+// the text uses web-search syntax (quotes, "or", a minus), which keeps its meaning and
+// gets no prefix matching.
+//
+// Ranking is in tiers: a whole-word (stemmed) match scores 2 or more, a prefix-only
+// match scores under 2, and within each tier a title match is above a body match.
 const findSQL = `
-WITH q AS (SELECT websearch_to_tsquery('english', $2::text) AS tsq),
+WITH q AS (
+	SELECT websearch_to_tsquery('english', $2::text) AS tsq,
+	       CASE WHEN $9::text = '' THEN NULL
+	            ELSE plainto_tsquery('simple', $8::text) && to_tsquery('simple', $9::text || ':*')
+	       END AS pq
+),
 hits AS (
 	SELECT DISTINCT ON (src.kind, src.source_id)
 	       src.kind, src.source_id, si.id AS row_id, si.field_id,
-	       ts_rank(si.search, q.tsq)::float8
-	         + CASE WHEN si.title_search @@ q.tsq THEN 1 ELSE 0 END AS score
+	       CASE WHEN si.search @@ q.tsq OR si.title_search @@ q.tsq
+	            THEN 2 + ts_rank(si.search, q.tsq)::float8
+	                   + CASE WHEN si.title_search @@ q.tsq THEN 1 ELSE 0 END
+	            ELSE COALESCE(ts_rank(si.search_simple, q.pq)::float8, 0)
+	                   + CASE WHEN si.title_search_simple @@ q.pq THEN 1 ELSE 0 END
+	       END AS score
 	  FROM search_index si
 	  CROSS JOIN q
 	  JOIN workspace_member wm
@@ -110,7 +132,8 @@ hits AS (
 	                   ELSE 'project' END AS kind,
 	              COALESCE(si.ticket_id, si.document_id, si.comment_id, si.project_source_id) AS source_id
 	  ) src
-	 WHERE (si.search @@ q.tsq OR si.title_search @@ q.tsq)
+	 WHERE (si.search @@ q.tsq OR si.title_search @@ q.tsq
+	        OR si.search_simple @@ q.pq OR si.title_search_simple @@ q.pq)
 	   AND ($3::text = '' OR src.kind = $3::text)
 	 ORDER BY src.kind, src.source_id, score DESC, si.field_id
 ),
@@ -119,8 +142,12 @@ top AS (
 )
 SELECT t.kind, t.source_id::text,
        CASE WHEN t.kind = 'comment' THEN left(si.title_or_preview, 120) ELSE si.title_or_preview END,
-       ts_headline('english', translate(si.content, $5::text, ''), q.tsq,
-                   'MaxFragments=1, MinWords=10, MaxWords=30, ShortWord=2, StartSel=' || $6::text || ', StopSel=' || $7::text),
+       CASE WHEN si.search @@ q.tsq OR si.title_search @@ q.tsq
+            THEN ts_headline('english', translate(si.content, $5::text, ''), q.tsq,
+                   'MaxFragments=1, MinWords=10, MaxWords=30, ShortWord=2, StartSel=' || $6::text || ', StopSel=' || $7::text)
+            ELSE ts_headline('simple', translate(si.content, $5::text, ''), q.pq,
+                   'MaxFragments=1, MinWords=10, MaxWords=30, ShortWord=2, StartSel=' || $6::text || ', StopSel=' || $7::text)
+       END,
        f.label,
        CASE WHEN c.ticket_id IS NOT NULL THEN 'ticket' WHEN c.document_id IS NOT NULL THEN 'document' END,
        COALESCE(c.ticket_id, c.document_id)::text,
@@ -131,6 +158,26 @@ SELECT t.kind, t.source_id::text,
   LEFT JOIN comment c ON c.id = si.comment_id
   LEFT JOIN aspect_type_field f ON f.id::text = si.field_id
  ORDER BY t.score DESC, t.source_id`
+
+// prefixTerms splits q for prefix matching: the whole words before the last, and the
+// last word, each reduced to letters and digits (anything else separates words). Both
+// are empty when q uses web-search syntax, so quotes, "or" and -minus keep their
+// meaning rather than being half-applied. Only these two strings reach the prefix
+// query, which is what keeps tsquery operators (& | ! ( ) : * ') out of it.
+func prefixTerms(q string) (head, last string) {
+	for _, w := range strings.Fields(q) {
+		if strings.EqualFold(w, "or") || strings.HasPrefix(w, "-") || strings.Contains(w, `"`) {
+			return "", ""
+		}
+	}
+
+	words := strings.FieldsFunc(q, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	if len(words) == 0 {
+		return "", ""
+	}
+
+	return strings.Join(words[:len(words)-1], " "), words[len(words)-1]
+}
 
 /*
 ┌─ search ────────────────────────────────────────
@@ -163,8 +210,9 @@ func (s *Service) Find(ctx context.Context, accountID string, p FindParams) ([]H
 		limit = MaxLimit
 	}
 
+	head, last := prefixTerms(q)
 	rows, err := s.pool.Query(ctx, findSQL,
-		accountID, q, p.Type, limit, markOpen+markClose, markOpen, markClose)
+		accountID, q, p.Type, limit, markOpen+markClose, markOpen, markClose, head, last)
 	if err != nil {
 		return nil, fmt.Errorf("search: find: %w", err)
 	}

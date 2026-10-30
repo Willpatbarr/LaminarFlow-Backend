@@ -44,7 +44,7 @@ type searchOutput struct {
 
 type searchInput struct {
 	Body struct {
-		Q     string `json:"q" required:"true" minLength:"1" maxLength:"200" doc:"What to look for: 1 to 200 characters (not bytes), and not only whitespace. Words are stemmed and all must match; \"quoted phrases\", or, and -minus work as in a web search."`
+		Q     string `json:"q" required:"true" minLength:"1" maxLength:"200" doc:"What to look for: 1 to 200 characters (not bytes), and not only whitespace. Words are stemmed and all must match, and the last word also matches as a prefix (\"phrasin\" finds \"phrasing\"); whole-word matches rank above prefix-only ones. \"quoted phrases\", or, and -minus work as in a web search, without prefix matching."`
 		Type  string `json:"type,omitempty" enum:"ticket,document,comment,project" doc:"Only results of this kind. Omit for all."`
 		Limit int    `json:"limit,omitempty" minimum:"1" maximum:"50" doc:"How many results. Omitted means 20. Over the maximum is rejected, not clamped."`
 	}
