@@ -338,3 +338,129 @@ func TestSearchCommentHitsNameTheirParent(t *testing.T) {
 		}
 	}
 }
+
+// LAM-157. The last word typed matches as a prefix on every kind, and a whole-word match
+// ranks above a prefix-only one.
+func TestSearchMatchesThePrefixOfTheLastWordOnEveryKind(t *testing.T) {
+	f := newFeed(t)
+
+	tkTitle := f.ticketWith(t, "Ticketing overhaul", "")
+	tkBody := f.ticketWith(t, "Unrelated one", "needs better phrasing in the footer")
+	doc := f.document(t, f.willC, map[string]any{
+		"title": "Style guide", "type": "normal", "body": map[string]any{"content": "Consistent phrasing matters"},
+	})
+	typeID, fields := f.aspectType(t, f.willC, "Summary", "Owner")
+	aspect := f.document(t, f.willC, map[string]any{
+		"title": "Billing service", "type": "aspect", "aspect_type_id": typeID,
+		"body": map[string]any{fields[1]: "Marguerite Okonkwo"},
+	})
+	if _, err := f.pool.Exec(testCtx(t),
+		`INSERT INTO comment (ticket_id, body) VALUES ($1::uuid, 'reworded the wombatology section')`, tkBody.ID); err != nil {
+		t.Fatalf("comment: %v", err)
+	}
+	if _, err := search.NewService(f.pool).Rebuild(testCtx(t)); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name, q, wantType, wantID string
+	}{
+		{"ticket title, stemmed word typed short", "tick", "ticket", tkTitle.ID},
+		{"ticket title, most of the word", "ticketin", "ticket", tkTitle.ID},
+		{"ticket description", "phrasin", "ticket", tkBody.ID},
+		{"document field", "phrasin", "document", doc.ID},
+		{"document title", "styl", "document", doc.ID},
+		{"aspect field", "marguer", "document", aspect.ID},
+		{"comment", "wombatol", "comment", ""},
+		{"multi-word, last is a prefix", "better phrasin", "ticket", tkBody.ID},
+		{"capitals", "PHRASIN", "ticket", tkBody.ID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := f.search(t, f.willC, map[string]any{"q": tc.q})
+			found := false
+			for _, h := range hits {
+				if h.Type == tc.wantType && (tc.wantID == "" || h.ID == tc.wantID) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("q=%q = %v, want a %s hit %s", tc.q, ids(hits), tc.wantType, tc.wantID)
+			}
+		})
+	}
+
+	// The snippet highlights what the prefix matched.
+	hits := f.search(t, f.willC, map[string]any{"q": "phrasin", "type": "document"})
+	if len(hits) != 1 || !strings.Contains(hits[0].Snippet, "<mark>phrasing</mark>") {
+		t.Errorf("snippet = %+v, want <mark>phrasing</mark>", hits)
+	}
+
+	// An earlier word is not a prefix: it must match whole.
+	if got := f.search(t, f.willC, map[string]any{"q": "bett phrasing"}); len(got) != 0 {
+		t.Errorf("a non-last prefix matched: %v", ids(got))
+	}
+}
+
+func TestSearchRanksWholeWordsAbovePrefixOnlyMatches(t *testing.T) {
+	f := newFeed(t)
+
+	prefixTitle := f.ticketWith(t, "Zebrafish census", "")
+	wholeBody := f.ticketWith(t, "Unrelated", "a lone zebra wandered in")
+	wholeTitle := f.ticketWith(t, "Zebra crossing", "")
+
+	hits := f.search(t, f.willC, map[string]any{"q": "zebra"})
+	want := []string{wholeTitle.ID, wholeBody.ID, prefixTitle.ID}
+	if len(hits) != 3 {
+		t.Fatalf("hits = %v, want 3", ids(hits))
+	}
+	for i, id := range want {
+		if hits[i].ID != id {
+			t.Fatalf("order = %v, want whole title, whole body, prefix-only title (%v)", ids(hits), want)
+		}
+	}
+	if hits[1].Score <= hits[2].Score {
+		t.Errorf("whole-word body score %v not above prefix-only title score %v", hits[1].Score, hits[2].Score)
+	}
+}
+
+func TestSearchTreatsOperatorCharactersAsText(t *testing.T) {
+	f := newFeed(t)
+
+	tk := f.ticketWith(t, "Quokka sighting", "")
+	f.ticketWith(t, "Other", "nothing here")
+
+	for _, q := range []string{
+		"quokka&", "quokka|x", "!quokka", "(quokka)", "quokka:*", "quokka'", "quok:*", "'quok'", "&|!():*'",
+		"quokka & | ! ( ) : * '", "x') | ('", "quokka <-> sighting", "\\", "quo\\kka", "\"quokka", "-", "or",
+	} {
+		rec := call(t, f.mux, http.MethodPost, V1+"/search/list", map[string]any{"q": q}, f.willC)
+		if rec.Code != http.StatusOK {
+			t.Errorf("q=%q: status %d %.200s", q, rec.Code, rec.Body)
+		}
+	}
+
+	// The operators are separators, not syntax: they neither widen nor break the match.
+	for _, q := range []string{"quokka:*", "!quok", "(quok)", "'quokka'", "quokka & sighting"} {
+		hits := f.search(t, f.willC, map[string]any{"q": q})
+		if len(hits) != 1 || hits[0].ID != tk.ID {
+			t.Errorf("q=%q = %v, want only %s", q, ids(hits), tk.ID)
+		}
+	}
+	if got := f.search(t, f.willC, map[string]any{"q": "quokka | nothing"}); len(got) != 0 {
+		t.Errorf(`"quokka | nothing" = %v: | must not act as OR`, ids(got))
+	}
+}
+
+// Web-search syntax keeps its meaning and gets no prefix matching.
+func TestSearchWebSyntaxIsNotPrefixMatched(t *testing.T) {
+	f := newFeed(t)
+
+	f.ticketWith(t, "Pelican alpha", "")
+
+	if got := f.search(t, f.willC, map[string]any{"q": `"pelic"`}); len(got) != 0 {
+		t.Errorf("a quoted fragment matched as a prefix: %v", ids(got))
+	}
+	if got := f.search(t, f.willC, map[string]any{"q": "pelican -alpha"}); len(got) != 0 {
+		t.Errorf("-minus ignored: %v", ids(got))
+	}
+}
