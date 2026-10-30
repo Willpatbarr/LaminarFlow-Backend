@@ -56,6 +56,10 @@ const (
 	StatusUpdated = "status.updated"
 	StatusDeleted = "status.deleted"
 
+	// LAM-149. team.updated carries the team in `team`, project.updated the project in `project`.
+	TeamUpdated    = "team.updated"
+	ProjectUpdated = "project.updated"
+
 	// LAM-85. A board event carries the board in `board`; board.column.updated carries
 	// the column in `column` as well. See Event.
 	BoardCreated       = "board.created"
@@ -150,6 +154,11 @@ type Event struct {
 	TeamID   string `json:"team_id,omitempty"`
 	StatusID string `json:"status_id,omitempty"`
 	Status   any    `json:"status,omitempty"`
+
+	// LAM-149. team.updated carries TeamID (above) and Team, the REST teamBody whole;
+	// project.updated carries ProjectID (below) and Project, the REST projectBody whole.
+	Team    any `json:"team,omitempty"`
+	Project any `json:"project,omitempty"`
 
 	// ProjectID, BoardID and Board are set on board.* events; ColumnID and Column only on
 	// board.column.updated. Board is the REST BoardBody, whole and with every column; on

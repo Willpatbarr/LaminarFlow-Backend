@@ -28,9 +28,9 @@ Scope column: the permission a token needs. `T` = `ticket:`, `A` = `aspect:`, `P
 | Sign up / sign in / out | `features/auth` | `POST /auth/register`, `/auth/login`, `/auth/logout` | none (public / session) |
 | Who am I, what may I do | `features/auth/session.ts` | `GET /auth/me` | any credential |
 | Create / list / revoke API token | `features/tokens`, `routes/tokens` | `POST /auth/tokens`, `POST /auth/tokens/list`, `DELETE /auth/tokens/{id}` | **session only** |
-| Create team | `sync/store.ts` | `POST /teams` | M write |
+| Create / rename team | `sync/store.ts`, `routes/team-settings` | `POST /teams`, `PUT /teams/{id}` | M write |
 | List teams | `sync/remote.ts` | `POST /teams/list`, `GET /teams/{id}` | M read |
-| Create project | `sync/store.ts` | `POST /projects` | P write |
+| Create / rename project | `sync/store.ts`, `routes/project` | `POST /projects`, `PUT /projects/{id}` | P write |
 | List projects | `sync/entities/*` | `POST /projects/list`, `GET /projects/{id}` | P read |
 | Add / rename / recolour / delete / reorder statuses | `sync/entities/status.ts` | `POST /teams/{id}/statuses`, `PUT` and `DELETE .../{status_id}`, `POST .../reorder` | M write |
 | List members (assignee picker) | `features/members` | `POST /members/list` | M read |

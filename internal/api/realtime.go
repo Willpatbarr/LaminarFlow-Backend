@@ -73,6 +73,10 @@ var eventPermission = map[string]auth.Permission{
 	realtime.StatusUpdated: auth.TeamRead,
 	realtime.StatusDeleted: auth.TeamRead,
 
+	// LAM-149. A team or project rename is read with the GET that returns it.
+	realtime.TeamUpdated:    auth.TeamRead,
+	realtime.ProjectUpdated: auth.ProjectRead,
+
 	realtime.BoardCreated:       auth.TicketRead,
 	realtime.BoardUpdated:       auth.TicketRead,
 	realtime.BoardDeleted:       auth.TicketRead,
@@ -372,6 +376,37 @@ func (f ticketFeed) publishStatus(workspaceID, kind, actorID, teamID string, st 
 		TeamID:   teamID,
 		StatusID: st.ID,
 		Status:   asStatusBody(st),
+	})
+}
+
+// publishTeam and publishProject announce a rename as the REST body (LAM-149). After the
+// commit, best-effort, as above.
+func (f ticketFeed) publishTeam(workspaceID, actorID string, t team.Team) {
+	if f.hub == nil {
+		return
+	}
+
+	f.hub.Publish(workspaceID, realtime.Event{
+		Type:    realtime.TeamUpdated,
+		ActorID: actorID,
+		At:      time.Now().UTC(),
+		TeamID:  t.ID,
+		Team:    asTeamBody(t),
+	})
+}
+
+func (f ticketFeed) publishProject(workspaceID, actorID string, p project.Project) {
+	if f.hub == nil {
+		return
+	}
+
+	f.hub.Publish(workspaceID, realtime.Event{
+		Type:      realtime.ProjectUpdated,
+		ActorID:   actorID,
+		At:        time.Now().UTC(),
+		TeamID:    p.TeamID,
+		ProjectID: p.ID,
+		Project:   asProjectBody(p),
 	})
 }
 

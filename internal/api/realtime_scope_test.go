@@ -62,8 +62,8 @@ func TestEveryEventTypeHasAReadPermission(t *testing.T) {
 			t.Errorf("event type %q has no row in eventPermission (internal/api/realtime.go): add the read permission its resource needs", typ)
 			continue
 		}
-		if p != auth.TicketRead && p != auth.TeamRead {
-			t.Errorf("event type %q maps to %s; canWatch and docs/realtime.md assume ticket:read or team:read", typ, p)
+		if p != auth.TicketRead && p != auth.TeamRead && p != auth.ProjectRead {
+			t.Errorf("event type %q maps to %s; canWatch and docs/realtime.md assume ticket:read, team:read or project:read", typ, p)
 		}
 	}
 

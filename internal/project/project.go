@@ -236,6 +236,45 @@ func (s *Service) Get(ctx context.Context, accountID, id string) (Project, error
 	return pr, nil
 }
 
+/*
+┌─ project ───────────────────────────────────────
+│  renames a project the caller may reach
+├─ in ────────────────────────────────────────────
+│      ctx          context.Context
+│      accountID    string
+│      id           string
+│      name         string
+├─ out ───────────────────────────────────────────
+│      Project                   as renamed, without its board
+│      error                     ErrNotFound · *textlimit.FieldError
+*/
+
+// Rename is LAM-149. Project names are not unique (0006), so there is no collision
+// error. No version column: last write wins, like a milestone.
+func (s *Service) Rename(ctx context.Context, accountID, id, name string) (Project, error) {
+	if err := textlimit.Required("name", name, MaxNameLength); err != nil {
+		return Project{}, err
+	}
+
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE project p
+		    SET name = $2, updated_at = now()
+		  WHERE p.id = $1::uuid
+		    AND EXISTS (SELECT 1 FROM team tm
+		                  JOIN workspace_member wm
+		                    ON wm.workspace_id = tm.workspace_id AND wm.account_id = $3::uuid
+		                 WHERE tm.id = p.team_id)`,
+		id, name, accountID)
+	if err != nil {
+		return Project{}, fmt.Errorf("project: rename: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return Project{}, ErrNotFound
+	}
+
+	return s.Get(ctx, accountID, id)
+}
+
 // seedBoard writes the board, one column per team status, and the mapping between them.
 //
 // The order is forced by the schema rather than chosen: board_column_status references
