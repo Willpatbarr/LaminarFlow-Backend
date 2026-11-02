@@ -158,6 +158,15 @@ type teamIDArgs struct {
 	TeamID string `json:"team_id" jsonschema:"the team, from list_teams"`
 }
 
+type createTeamArgs struct {
+	Name string `json:"name" jsonschema:"1 to 100 characters; unique within the workspace"`
+}
+
+type createProjectArgs struct {
+	TeamID string `json:"team_id" jsonschema:"the team the project belongs to, from list_teams"`
+	Name   string `json:"name" jsonschema:"1 to 100 characters"`
+}
+
 type projectIDArgs struct {
 	ProjectID string `json:"project_id" jsonschema:"the project, from list_projects"`
 }
@@ -624,6 +633,47 @@ func registerMCPWrites(s *mcp.Server, perms map[string]auth.Permission, d *mcpDe
 			publishStaledReviews(ctx, d.comments, d.feed, me.AccountID, doc)
 
 			return asDocumentBody(doc), nil
+		})
+
+	addMCPTool(s, perms, "create_team",
+		"Creates a team in your workspace and returns it: {id, name, statuses}. Only name is required. The team comes with the "+
+			"same starter statuses and aspect types as one made in the app. Fails with team_name_taken when the workspace already "+
+			"has a team of that name. Open browsers show the new team live.",
+		auth.TeamWrite, true, func(ctx context.Context, me auth.Identity, in createTeamArgs) (any, error) {
+			// The caller's workspace, resolved as the change feed resolves it, so the id is not
+			// an argument an agent could get wrong.
+			profile, err := d.accounts.Profile(ctx, me.AccountID)
+			if err != nil {
+				return nil, err
+			}
+			if profile.WorkspaceID == "" {
+				return nil, NewError(http.StatusForbidden, CodeNoWorkspace, "this account is not in a workspace")
+			}
+
+			t, err := d.teams.Create(ctx, me.AccountID, team.CreateParams{WorkspaceID: profile.WorkspaceID, Name: in.Name})
+			if err != nil {
+				return nil, teamError(err)
+			}
+
+			d.feed.publishTeam(t.WorkspaceID, me.AccountID, t)
+
+			return asTeamBody(t), nil
+		})
+
+	addMCPTool(s, perms, "create_project",
+		"Creates a project in a team and returns it: {id, team_id, name, board_id, columns}. Needs team_id (from list_teams) and name. "+
+			"The project comes with a board that has a column per status the team has. Open browsers show the new project live.",
+		auth.ProjectWrite, true, func(ctx context.Context, me auth.Identity, in createProjectArgs) (any, error) {
+			p, err := d.projects.Create(ctx, me.AccountID, project.CreateParams{TeamID: in.TeamID, Name: in.Name})
+			if err != nil {
+				return nil, projectError(err)
+			}
+
+			if ws, err := d.projects.WorkspaceID(ctx, p.ID); err == nil {
+				d.feed.publishProject(ws, me.AccountID, p)
+			}
+
+			return asProjectBody(p), nil
 		})
 }
 

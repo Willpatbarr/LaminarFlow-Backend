@@ -208,6 +208,12 @@ func TestMCPListsOnlyTheToolsATokenMayCall(t *testing.T) {
 		t.Errorf("team:read + project:read sees %v", got)
 	}
 
+	// Creating a team or a project is team:write / project:write, not ticket:write.
+	got = toolNames(t, f.agent(t, "team:write", "project:write"))
+	if strings.Join(got, ",") != "create_project,create_team" {
+		t.Errorf("team:write + project:write sees %v", got)
+	}
+
 	if got = toolNames(t, f.agent(t, "setting:read")); len(got) != 0 {
 		t.Errorf("a token with no scope any tool needs sees %v, want none", got)
 	}
@@ -219,11 +225,13 @@ func TestMCPAWriteToolCalledWithAReadOnlyTokenIsInsufficientScope(t *testing.T) 
 	cs := f.agent(t, "ticket:read")
 
 	for name, args := range map[string]map[string]any{
-		"add_comment":   {"ticket_id": tk.ID, "body": "nope"},
-		"update_ticket": {"id": tk.ID, "title": "Changed"},
-		"move_ticket":   {"id": tk.ID, "status": "Done"},
-		"create_ticket": {"project_id": f.project.ID, "title": "Nope"},
-		"list_teams":    {},
+		"add_comment":    {"ticket_id": tk.ID, "body": "nope"},
+		"update_ticket":  {"id": tk.ID, "title": "Changed"},
+		"move_ticket":    {"id": tk.ID, "status": "Done"},
+		"create_ticket":  {"project_id": f.project.ID, "title": "Nope"},
+		"create_team":    {"name": "Nope"},
+		"create_project": {"team_id": f.project.TeamID, "name": "Nope"},
+		"list_teams":     {},
 	} {
 		text, isErr := mcpCall(t, cs, name, args)
 		if !isErr || errorCode(t, text) != CodeInsufficientScope {
@@ -368,5 +376,80 @@ func TestMCPAStaleWriteIsAConflictTheAgentCanRead(t *testing.T) {
 	mcpOK(t, cs, "get_document", map[string]any{"id": doc.ID}, &got)
 	if got.Body["content"] != "v2" {
 		t.Errorf("the refused save changed the document: %+v", got)
+	}
+}
+
+// LAM-199. A second team and a project in it, made over MCP: the REST service call, the new rows
+// in the REST reads, and the change feed.
+func TestMCPCreatesATeamAndAProject(t *testing.T) {
+	f := newFeed(t)
+	cs := f.agent(t, "team:read", "team:write", "project:read", "project:write")
+	watcher := f.open(t, f.cookie(f.sarahC))
+
+	var tm teamBody
+	mcpOK(t, cs, "create_team", map[string]any{"name": "Growth"}, &tm)
+	if tm.Name != "Growth" || len(tm.Statuses) != 3 {
+		t.Fatalf("create_team = %+v, want the name and the three seeded statuses", tm)
+	}
+	if ev := readEvent(t, watcher); ev.Type != "team.updated" || ev.TeamID != tm.ID || ev.ActorID != f.will.AccountID {
+		t.Errorf("after create_team the feed said %+v", ev)
+	}
+
+	var got teamWire
+	decode(t, call(t, f.mux, http.MethodGet, V1+"/teams/"+tm.ID, nil, f.willC), &got)
+	if got.Name != "Growth" || got.WorkspaceID != f.team(t).WorkspaceID {
+		t.Errorf("REST sees the team as %+v, want it in the caller's workspace", got)
+	}
+
+	if text, isErr := mcpCall(t, cs, "create_team", map[string]any{"name": "Growth"}); !isErr || errorCode(t, text) != CodeTeamNameTaken {
+		t.Errorf("a second Growth: %s (isError %v), want %s", text, isErr, CodeTeamNameTaken)
+	}
+
+	var pr projectBody
+	mcpOK(t, cs, "create_project", map[string]any{"team_id": tm.ID, "name": "Runtime"}, &pr)
+	if pr.TeamID != tm.ID || pr.Name != "Runtime" || pr.BoardID == nil || len(pr.Columns) != 3 {
+		t.Fatalf("create_project = %+v, want it in the new team with a board of three columns", pr)
+	}
+	if ev := readEvent(t, watcher); ev.Type != "project.updated" || ev.ProjectID != pr.ID || ev.TeamID != tm.ID {
+		t.Errorf("after create_project the feed said %+v", ev)
+	}
+
+	var projects page[projectBody]
+	mcpOK(t, cs, "list_projects", map[string]any{}, &projects)
+	found := false
+	for _, p := range projects.Items {
+		found = found || p.ID == pr.ID
+	}
+	if !found {
+		t.Errorf("list_projects = %+v, want the new project", projects.Items)
+	}
+
+	if text, isErr := mcpCall(t, cs, "create_project", map[string]any{"team_id": "00000000-0000-4000-8000-000000000000", "name": "Lost"}); !isErr || errorCode(t, text) != CodeProjectNotFound {
+		t.Errorf("a project in no team: %s (isError %v), want %s", text, isErr, CodeProjectNotFound)
+	}
+}
+
+func TestMCPCreateTeamAndProjectNeedTheirScopes(t *testing.T) {
+	f := newFeed(t)
+
+	// ticket:write is not enough, and team:write is not project:write.
+	for scope, calls := range map[auth.Scope]map[string]map[string]any{
+		"ticket:write":  {"create_team": {"name": "Nope"}, "create_project": {"team_id": f.project.TeamID, "name": "Nope"}},
+		"team:write":    {"create_project": {"team_id": f.project.TeamID, "name": "Nope"}},
+		"project:write": {"create_team": {"name": "Nope"}},
+	} {
+		cs := f.agent(t, scope)
+		for name, args := range calls {
+			text, isErr := mcpCall(t, cs, name, args)
+			if !isErr || errorCode(t, text) != CodeInsufficientScope {
+				t.Errorf("%s with %s: isError %v, %s - want %s", name, scope, isErr, text, CodeInsufficientScope)
+			}
+		}
+	}
+
+	var teams page[teamBody]
+	mcpOK(t, f.agent(t, "team:read"), "list_teams", map[string]any{}, &teams)
+	if len(teams.Items) != 1 {
+		t.Errorf("a refused create_team left %d teams, want 1", len(teams.Items))
 	}
 }

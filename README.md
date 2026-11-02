@@ -47,6 +47,8 @@ the way it uses Linear. It authenticates with the same `lam_...` tokens as the A
 | `create_ticket`, `update_ticket`, `move_ticket`, `add_comment`, `save_document` | `ticket:write` | Write. Same path as the REST endpoints, so each change is in the activity list and live in open browsers. |
 | `list_teams`, `list_statuses`, `list_members` | `team:read` | The ids the other tools take. |
 | `list_projects` | `project:read` | |
+| `create_team` | `team:write` | Creates a team in your workspace (`name` only), seeded like one made in the app. |
+| `create_project` | `project:write` | Creates a project in a team (`team_id`, `name`), with its board. |
 
 Ids are UUIDs. `move_ticket` also takes a status by name (`"In Progress"`). Why it is built this
 way: [docs/adr/0008-mcp-endpoint.md](docs/adr/0008-mcp-endpoint.md).
