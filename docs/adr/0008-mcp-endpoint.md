@@ -60,8 +60,10 @@ not a silent overwrite.
 
 ### 6. A curated set of tools, not one per endpoint
 
-Sixteen tools. Offering every endpoint (~80) makes agents choose badly. Resources and prompts
-are not offered. Admin operations (tokens, settings, aspect types, deletes) are not offered.
+Eighteen tools. Offering every endpoint (~80) makes agents choose badly. Resources and prompts
+are not offered. `create_team` (`name`; the workspace is the caller's, resolved with `account.Profile` as the change
+feed does) and `create_project` (`team_id`, `name`) were added by LAM-199; they need `team:write` and
+`project:write`, and announce `team.updated` / `project.updated` after the commit. Admin operations (tokens, settings, aspect types, deletes) are not offered.
 
 ## Consequences
 
