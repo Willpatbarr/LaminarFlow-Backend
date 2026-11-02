@@ -150,13 +150,13 @@ each status whose position changed. A delete that moves tickets also sends one `
 per moved ticket (archived ones included) at their new version. It also sends one `board.column.updated` for every board column that showed the status (LAM-134): the status is gone from its `status_ids`, and the column may now be empty. The column is not re-pointed at `move_to`. Apply `status.*` by upsert or
 remove on `status_id`; there is no version, so re-list on doubt.
 
-## Team and project rename events (LAM-149)
+## Team and project events (LAM-149, LAM-199)
 
-`team.updated` (from `PUT /teams/{id}`) carries `type`, `actor_id`, `at`, `team_id` and `team` (the whole
-`TeamBody`). `project.updated` (from `PUT /projects/{id}`) carries `type`, `actor_id`, `at`, `team_id`,
-`project_id` and `project` (the whole `ProjectBody`; `board_id` is null and `columns` empty, as on
-`GET /projects/{id}`, so keep the board you already have). Neither has a version: replace the name you hold
-and re-list on doubt. Needs `team:read` / `project:read`.
+`team.updated` (from `PUT /teams/{id}`, and since LAM-199 also from `POST /teams`, so a new team reaches other open clients; an idempotent replay announces nothing) carries `type`, `actor_id`, `at`, `team_id` and `team` (the whole
+`TeamBody`). `project.updated` (from `PUT /projects/{id}` and `POST /projects`, likewise) carries `type`, `actor_id`, `at`, `team_id`,
+`project_id` and `project` (the whole `ProjectBody`; on a rename `board_id` is null and `columns` empty, as on
+`GET /projects/{id}`, so keep the board you already have; on a create it is the body the POST returned). Neither has a
+version: upsert on the id and re-list on doubt. The MCP tools `create_team` and `create_project` announce the same frames. Needs `team:read` / `project:read`.
 
 ## Board events (LAM-85)
 

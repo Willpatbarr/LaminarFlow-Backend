@@ -225,6 +225,11 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 			return nil, teamError(err)
 		}
 
+		// A replay wrote nothing, so there is nothing to announce.
+		if !replayed {
+			feed.publishTeam(t.WorkspaceID, me.AccountID, t)
+		}
+
 		return created(in.key(), replayed, asTeamBody(t)), nil
 	})
 
@@ -322,6 +327,12 @@ func registerBootstrap(api huma.API, teamSvc *team.Service, projSvc *project.Ser
 			})
 		if err != nil {
 			return nil, projectError(err)
+		}
+
+		if !replayed {
+			if ws, err := projSvc.WorkspaceID(ctx, p.ID); err == nil {
+				feed.publishProject(ws, me.AccountID, p)
+			}
 		}
 
 		return created(in.key(), replayed, asProjectBody(p)), nil

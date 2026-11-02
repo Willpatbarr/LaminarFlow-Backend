@@ -706,6 +706,12 @@ func TestHierarchyWritesAreAnnounced(t *testing.T) {
 	// her own epic.
 	team := createTeam(t, f.mux, f.carolC, f.carol.WorkspaceID, "Elsewhere")
 	hers := createProject(t, f.mux, f.carolC, team.ID, "Other")
+	// Her own team and project creates are announced to her (LAM-199), and nothing of Sarah's is.
+	for _, typ := range []string{"team.updated", "project.updated"} {
+		if ev := readEvent(t, carol); ev.Type != typ {
+			t.Fatalf("carol's event %+v, want her own %s", ev, typ)
+		}
+	}
 	rec := call(t, f.mux, http.MethodPost, V1+"/epics", map[string]any{"project_id": hers.ID, "name": "hers"}, f.carolC)
 	var herEpic hParent
 	decode(t, rec, &herEpic)

@@ -453,3 +453,30 @@ func TestMCPCreateTeamAndProjectNeedTheirScopes(t *testing.T) {
 		t.Errorf("a refused create_team left %d teams, want 1", len(teams.Items))
 	}
 }
+
+// LAM-199. The REST creates announce on the same feed, through the same publishers as the
+// tools, so an open browser learns of a team or project made anywhere; a keyed replay does not.
+func TestRESTTeamAndProjectCreatesAreAnnounced(t *testing.T) {
+	f := newFeed(t)
+	watcher := f.open(t, f.cookie(f.sarahC))
+
+	rec := call(t, f.mux, http.MethodPost, V1+"/teams", map[string]any{"workspace_id": f.team(t).WorkspaceID, "name": "Support"}, f.willC)
+	if rec.Code/100 != 2 {
+		t.Fatalf("create team: %d %.300s", rec.Code, rec.Body)
+	}
+	var tm teamBody
+	decode(t, rec, &tm)
+	if ev := readEvent(t, watcher); ev.Type != "team.updated" || ev.TeamID != tm.ID || ev.ActorID != f.will.AccountID {
+		t.Errorf("after POST /teams the feed said %+v", ev)
+	}
+
+	rec = call(t, f.mux, http.MethodPost, V1+"/projects", map[string]any{"team_id": tm.ID, "name": "Inbox"}, f.willC)
+	if rec.Code/100 != 2 {
+		t.Fatalf("create project: %d %.300s", rec.Code, rec.Body)
+	}
+	var pr projectBody
+	decode(t, rec, &pr)
+	if ev := readEvent(t, watcher); ev.Type != "project.updated" || ev.ProjectID != pr.ID || ev.TeamID != tm.ID {
+		t.Errorf("after POST /projects the feed said %+v", ev)
+	}
+}
