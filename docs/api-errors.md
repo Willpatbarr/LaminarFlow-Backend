@@ -130,12 +130,23 @@ so add none without scrubbing first.
 | `saved_view_not_owner` | 403 | Updating or deleting a shared view you can see and do not own. A view with no owner (`owner_account_id` null: the team's seeded default, or a shared view whose owner's account was deleted) may be changed by any member who can reach its team |
 | `origin_not_allowed` | 403 | `GET /api/v1/ws` from a page whose `Origin` is not this host. Raised before the credential is looked at. See [docs/realtime.md](realtime.md) |
 | `no_workspace` | 403 | `GET /api/v1/ws` by a valid credential whose account belongs to no workspace, so there is nothing to watch |
-| `insufficient_scope` | 403 | A valid API token on an operation it may not call (LAM-91): the token lacks the permission the operation declares (`detail` names it, e.g. `ticket:write`), or `GET /api/v1/ws` was opened by a token holding neither `ticket:read` nor `team:read` (LAM-129), or the operation is session-only - `POST /auth/tokens`, `POST /auth/tokens/list`, `DELETE /auth/tokens/{id}`. A session never gets it |
+| `insufficient_scope` | 403 | A valid API token on an operation it may not call (LAM-91): the token lacks the permission the operation declares (`detail` names it, e.g. `ticket:write`), or `GET /api/v1/ws` was opened by a token holding neither `ticket:read` nor `team:read` (LAM-129), or an MCP tool the token's scopes do not cover (LAM-197, below), or the operation is session-only - `POST /auth/tokens`, `POST /auth/tokens/list`, `DELETE /auth/tokens/{id}`. A session never gets it |
 | `unknown_scope` | 422 | `POST /auth/tokens` with a scope that is not a permission name. `errors[0].location` is `body.scopes[<index>]`. Nothing was created |
 | `token_not_found` | 404 | `DELETE /auth/tokens/{id}` for a token that is absent, another account's, or already revoked - indistinguishable on purpose |
 | `account_not_found` | 404 | An account deletion that found nothing. A retried delete is the ordinary way to see it |
 | `unprocessable_entity` (derived) | 422 | Includes the length and blank rules on `title`, `description` and team and project `name` — see [Length limits](#length-limits) — a malformed `Idempotency-Key` (`header.Idempotency-Key`), a comment (LAM-99) that names no target or two (`body`), anchors `field_id` to a ticket or to a field outside the document's aspect type (`body.field_id`), sends half a region or one that is negative or backwards (`body.region_start`, `body.region_end`), or has a blank or over-long `body` (`body.body`) - a comment create also refuses `review_status`, which belongs to review requests (LAM-113), a review request create (LAM-113) that omits `field_id` on an aspect document, or sends one that is not a field of the document's aspect type or on a normal document (`body.field_id`), or reuses an `Idempotency-Key` of one of the caller's plain comments (`header.Idempotency-Key`), a range past the end of the field's text (`body.region_end`), no reviewers or more than 50 (`body.reviewer_ids`), a reviewer listed twice or who is not a member of the document's workspace (`body.reviewer_ids[<index>]`), or a `PUT` with a `review_status` that is null or not one of `pending`, `approved`, `changes_requested` (`body.review_status`), an attachment upload (LAM-90) that names no owner or two (`body.ticket_id`, `body.document_id`), an owner field that is not a uuid or arrives after the file (`body.ticket_id`), or an empty file (`body.file`), and a search (LAM-100) whose `q` is empty, only whitespace or over 200 characters, or whose `limit` is over 50 (`body.q`, `body.limit`). Search adds no code of its own |
 | *derived* | any | Everything huma raises on its own behalf — `defaultCode` turns the status text into a code |
+
+## Errors from the MCP endpoint (LAM-197)
+
+`/mcp` is not a REST route, so an error there takes one of two forms. A request with no valid
+credential is a 401 in the envelope above, before any MCP traffic. A tool that fails is not an
+HTTP error: the tool result has `isError: true` and its one text block is a JSON object holding
+the same `code`, `detail` and `status`, and for a 409 the `current` copy, as the REST error
+would. Located `errors` entries keep `message` and `location` but never `value`. The codes are
+this table's; a tool the token's scopes do not cover is `insufficient_scope`, and `detail`
+names the scope. Locations that start `arguments.` name a tool argument rather than a body
+member. See [ADR 0008](adr/0008-mcp-endpoint.md).
 
 ## Conflicts carry the other side
 

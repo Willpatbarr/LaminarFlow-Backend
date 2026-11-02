@@ -365,6 +365,20 @@ func bodyValues(in map[string]string) map[string]any {
 	return out
 }
 
+// publishStaledReviews announces the approvals a document write made stale (LAM-122), after
+// the commit like the rest. Shared by the update-document handler and the MCP save_document
+// tool, so the two writes cannot announce differently.
+func publishStaledReviews(ctx context.Context, comments *comment.Service, feed ticketFeed, accountID string, d document.Document) {
+	for _, id := range d.StaledReviews {
+		if r, err := comments.ReviewByID(ctx, id); err == nil {
+			feed.publishReviewRequest(realtime.ReviewRequestUpdated, accountID, r)
+		} else if c, err := comments.CommentByID(ctx, id); err == nil {
+			// A plain comment re-anchored by a conversion (LAM-136).
+			feed.publishComment(realtime.CommentUpdated, accountID, c)
+		}
+	}
+}
+
 /*
 ┌─ api ───────────────────────────────────────────
 │  registers the document operations
@@ -487,15 +501,7 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 
 		feed.publishDocument(realtime.DocumentUpdated, me.AccountID, d)
 
-		// Approvals this write made stale (LAM-122), announced after the commit like the rest.
-		for _, id := range d.StaledReviews {
-			if r, err := comments.ReviewByID(ctx, id); err == nil {
-				feed.publishReviewRequest(realtime.ReviewRequestUpdated, me.AccountID, r)
-			} else if c, err := comments.CommentByID(ctx, id); err == nil {
-				// A plain comment re-anchored by a conversion (LAM-136).
-				feed.publishComment(realtime.CommentUpdated, me.AccountID, c)
-			}
-		}
+		publishStaledReviews(ctx, comments, feed, me.AccountID, d)
 
 		return asDocumentOutput(d), nil
 	})

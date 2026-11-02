@@ -39,5 +39,6 @@ like this?" and the answer is not in the code:
 | [5](0005-in-process-change-feed.md) | The change feed: one in-process hub, best-effort delivery, re-list on reconnect, no broker | Accepted |
 | [6](0006-document-body-markdown.md) | Documents are edited in TipTap and stored as Markdown strings; internal links are `lf://` URLs | Accepted |
 | [7](0007-file-storage-behind-an-interface.md) | File storage: bytes behind an interface, on a local folder first | Accepted |
+| [8](0008-mcp-endpoint.md) | An MCP endpoint in the backend: stateless Streamable HTTP, bearer tokens, tools filtered by scope, writes through the REST write path | Accepted |
 
 [nygard]: https://github.com/joelparkerhenderson/architecture-decision-record/blob/main/locales/en/templates/decision-record-template-by-michael-nygard/index.md
