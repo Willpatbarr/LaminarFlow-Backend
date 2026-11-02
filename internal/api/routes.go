@@ -60,17 +60,28 @@ func NewMux(pool *pgxpool.Pool, bundle fs.FS, hub *realtime.Hub, opts ...MuxOpti
 	mux.HandleFunc("GET /healthz/db", ready(pool))
 	authSvc, accountSvc, aspectSvc := auth.NewService(pool), account.NewService(pool), aspect.NewService(pool)
 	documentSvc := document.NewService(pool)
-	NewHumaAPI(mux, authSvc, ticket.NewService(pool), aspectSvc, setting.NewService(pool),
-		team.NewService(pool), project.NewService(pool), accountSvc, board.NewService(pool),
-		epic.NewService(pool), sprint.NewService(pool), milestone.NewService(pool), label.NewService(pool), documentSvc,
-		savedview.NewService(pool), search.NewService(pool), comment.NewService(pool, aspectSvc), activity.NewService(pool), attachmentService(pool, mc), hub,
+	ticketSvc, teamSvc, projectSvc := ticket.NewService(pool), team.NewService(pool), project.NewService(pool)
+	sprintSvc, labelSvc := sprint.NewService(pool), label.NewService(pool)
+	commentSvc, searchSvc := comment.NewService(pool, aspectSvc), search.NewService(pool)
+	NewHumaAPI(mux, authSvc, ticketSvc, aspectSvc, setting.NewService(pool),
+		teamSvc, projectSvc, accountSvc, board.NewService(pool),
+		epic.NewService(pool), sprintSvc, milestone.NewService(pool), labelSvc, documentSvc,
+		savedview.NewService(pool), searchSvc, commentSvc, activity.NewService(pool), attachmentService(pool, mc), hub,
 		WithExport(export.NewService(pool, documentSvc, aspectSvc)),
 		WithIdempotency(idempotency.NewStore(pool)))
+
+	// The MCP tools call the same service instances, and publish through the same feed, as the
+	// handlers above (LAM-197).
+	mcpTools := &mcpDeps{
+		tickets: ticketSvc, accounts: accountSvc, teams: teamSvc, projects: projectSvc, sprints: sprintSvc,
+		labels: labelSvc, documents: documentSvc, comments: commentSvc, search: searchSvc,
+		feed: ticketFeed{hub: hub, projects: projectSvc},
+	}
 
 	// Handlers huma cannot describe. Registered before the /api/ catch-all below for
 	// readability only: the mux picks the most specific pattern whatever the order, so
 	// GET /api/v1/ws beats /api/ and the frontend's "/" alike.
-	for _, rt := range rawRoutes(authSvc, accountSvc, hub) {
+	for _, rt := range rawRoutes(authSvc, accountSvc, hub, mcpTools) {
 		mux.Handle(rt.Method+" "+rt.Path, rt.Handler)
 	}
 

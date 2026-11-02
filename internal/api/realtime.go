@@ -8,7 +8,7 @@
 ║      rawRoute              struct
 ║      ticketFeed            struct
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
-║      NewMux         →  rawRoutes · GET /api/v1/ws
+║      NewMux         →  rawRoutes · GET /api/v1/ws · POST /mcp
 ║      registerTickets  →  ticketFeed.publish after each committed write
 ╚═══════════════════════════════════════════════════════════════════════════════════════
 */
@@ -168,9 +168,17 @@ type rawRoute struct {
 	Handler http.Handler
 }
 
-func rawRoutes(authSvc *auth.Service, accounts *account.Service, hub *realtime.Hub) []rawRoute {
+func rawRoutes(authSvc *auth.Service, accounts *account.Service, hub *realtime.Hub, mcpTools *mcpDeps) []rawRoute {
+	// The MCP endpoint is one handler on three methods: POST carries the protocol, and GET and
+	// DELETE are registered so the mux answers them (405, in stateless mode) instead of handing
+	// the path to the frontend's catch-all, which would answer 200 with the app shell.
+	mcpH := mcpHandler(authSvc, mcpTools)
+
 	return []rawRoute{
 		{Method: http.MethodGet, Path: WSPath, Handler: feedHandler(authSvc, accounts, hub)},
+		{Method: http.MethodPost, Path: MCPPath, Handler: mcpH},
+		{Method: http.MethodGet, Path: MCPPath, Handler: mcpH},
+		{Method: http.MethodDelete, Path: MCPPath, Handler: mcpH},
 	}
 }
 

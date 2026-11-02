@@ -23,14 +23,16 @@ import (
 // a real HTTP server, a real WebSocket, the session cookie in the handshake.
 
 func TestRawRoutesCarryTheVersionPrefix(t *testing.T) {
-	routes := rawRoutes(nil, nil, nil)
+	routes := rawRoutes(nil, nil, nil, nil)
 	if len(routes) == 0 {
 		t.Fatal("no raw routes, so this guard proves nothing")
 	}
 
 	found := false
 	for _, rt := range routes {
-		if !strings.HasPrefix(rt.Path, V1+"/") {
+		// The MCP endpoint is the one raw route outside V1: its URL is the one typed into
+		// `claude mcp add`, and the protocol versions itself (docs/adr/0008-mcp-endpoint.md).
+		if rt.Path != MCPPath && !strings.HasPrefix(rt.Path, V1+"/") {
 			t.Errorf("raw route %s %q does not start with %q - compose it with the V1 const", rt.Method, rt.Path, V1)
 		}
 		found = found || rt.Path == WSPath
@@ -49,7 +51,7 @@ func TestEveryRawRouteRefusesAnUnauthenticatedCaller(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	for _, rt := range rawRoutes(nil, nil, nil) {
+	for _, rt := range rawRoutes(nil, nil, nil, nil) {
 		for name, header := range map[string]http.Header{
 			"no credential":     {},
 			"a bogus cookie":    {"Cookie": {auth.SessionCookieName + "=not-a-session"}},

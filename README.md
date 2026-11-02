@@ -21,13 +21,43 @@ is the documentation — after changing one, regenerate the spec and commit it:
 CI regenerates it and fails if the committed copy differs. The frontend pulls
 that file, so a change here is not real until it is committed.
 
+## Using LaminarFlow from Claude Code
+
+The server speaks the [Model Context Protocol](https://modelcontextprotocol.io) at `/mcp`, so a
+Claude Code session can find tickets, read them, move them, comment and edit their documents
+the way it uses Linear. It authenticates with the same `lam_...` tokens as the API.
+
+1. **Make a token** for the agent (see the API quickstart above), with only the scopes it needs.
+   One token per agent, so you can revoke one without touching the rest.
+2. **Add the server:**
+
+       claude mcp add --transport http laminarflow https://<host>/mcp --header "Authorization: Bearer lam_xxx"
+
+   Add `--scope project` to write a `.mcp.json` into the repo so every session there gets it
+   (keep the token out of git: the header value can read `Bearer ${LAMINARFLOW_TOKEN}`). Run
+   `/mcp` inside Claude Code to see the tools. Against a local server the URL is
+   `http://localhost:8080/mcp`.
+3. **Scopes decide which tools you see.** A tool needs the scope its REST endpoint needs, and a
+   token is only offered the tools it may call; calling another anyway is a tool error with
+   code `insufficient_scope`. A missing or bad token is a plain 401.
+
+| Tool | Scope | Does |
+| --- | --- | --- |
+| `search`, `list_tickets`, `get_ticket`, `list_comments`, `get_document`, `list_sprints`, `list_labels` | `ticket:read` | Find and read. Bodies come back as Markdown. |
+| `create_ticket`, `update_ticket`, `move_ticket`, `add_comment`, `save_document` | `ticket:write` | Write. Same path as the REST endpoints, so each change is in the activity list and live in open browsers. |
+| `list_teams`, `list_statuses`, `list_members` | `team:read` | The ids the other tools take. |
+| `list_projects` | `project:read` | |
+
+Ids are UUIDs. `move_ticket` also takes a status by name (`"In Progress"`). Why it is built this
+way: [docs/adr/0008-mcp-endpoint.md](docs/adr/0008-mcp-endpoint.md).
+
 ## Where the code lives
 
 | Path | What belongs there |
 | --- | --- |
 | `main.go` | Startup only: config, pool, schema check, listen. |
 | `cmd/` | Operator binaries — `migrate`, `reindex`, `export`. One folder each. |
-| `internal/api/` | HTTP handlers, one per endpoint, grouped by resource. Thin. |
+| `internal/api/` | HTTP handlers, one per endpoint, grouped by resource. Thin. The MCP endpoint and its tools (`mcp*.go`) live here too, for the same reason. |
 | `internal/document/` | Rules and SQL for the document write path. |
 | `internal/db/` | The Postgres pool. The only package holding a driver. |
 | `internal/config/` | Environment settings, parsed and validated once. |
