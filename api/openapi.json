@@ -203,6 +203,11 @@
             "readOnly": true,
             "type": "string"
           },
+          "archived_count": {
+            "description": "How many of document_count are archived.",
+            "format": "int64",
+            "type": "integer"
+          },
           "code": {
             "description": "Documents still use the aspect type, so it was not deleted.",
             "enum": [
@@ -270,7 +275,8 @@
         },
         "required": [
           "code",
-          "document_count"
+          "document_count",
+          "archived_count"
         ],
         "type": "object"
       },
@@ -4772,6 +4778,11 @@
             "readOnly": true,
             "type": "string"
           },
+          "archived_count": {
+            "description": "How many of document_count are archived, so they do not appear in the documents list.",
+            "format": "int64",
+            "type": "integer"
+          },
           "document_count": {
             "description": "Documents of this type, archived ones included. Zero means the type can be deleted.",
             "format": "int64",
@@ -4779,7 +4790,8 @@
           }
         },
         "required": [
-          "document_count"
+          "document_count",
+          "archived_count"
         ],
         "type": "object"
       },
@@ -5457,7 +5469,7 @@
                 }
               }
             },
-            "description": "Conflict. Documents (archived ones included) still use the type: code is aspect_type_in_use and document_count says how many. Nothing was deleted."
+            "description": "Conflict. Documents (archived ones included) still use the type: code is aspect_type_in_use and document_count says how many and archived_count how many of those are archived. Nothing was deleted."
           },
           "default": {
             "content": {

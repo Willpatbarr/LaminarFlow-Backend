@@ -338,41 +338,43 @@ func TestAnAspectTypeInUseCannotBeDeleted(t *testing.T) {
 	typeID, _ := f.aspectType(t, f.willC, "Used", "Notes")
 	d := f.document(t, f.willC, map[string]any{"type": "aspect", "aspect_type_id": typeID, "body": map[string]string{}})
 
-	usage := func() int {
+	usage := func() (int, int) {
 		rec := call(t, f.mux, http.MethodGet, V1+"/aspect-types/"+typeID+"/usage", nil, f.sarahC)
 		var out struct {
 			DocumentCount int `json:"document_count"`
+			ArchivedCount int `json:"archived_count"`
 		}
 		decode(t, rec, &out)
 
-		return out.DocumentCount
+		return out.DocumentCount, out.ArchivedCount
 	}
-	inUse := func(want int) {
+	inUse := func(want, wantArchived int) {
 		t.Helper()
 		rec := call(t, f.mux, http.MethodDelete, V1+"/aspect-types/"+typeID, nil, f.sarahC)
 		var out struct {
 			Code          string `json:"code"`
 			DocumentCount int    `json:"document_count"`
+			ArchivedCount int    `json:"archived_count"`
 		}
 		decode(t, rec, &out)
-		if rec.Code != http.StatusConflict || out.Code != CodeAspectTypeInUse || out.DocumentCount != want {
-			t.Errorf("delete: %d %s, want 409 %s with %d", rec.Code, rec.Body, CodeAspectTypeInUse, want)
+		if rec.Code != http.StatusConflict || out.Code != CodeAspectTypeInUse || out.DocumentCount != want || out.ArchivedCount != wantArchived {
+			t.Errorf("delete: %d %s, want 409 %s with %d (%d archived)", rec.Code, rec.Body, CodeAspectTypeInUse, want, wantArchived)
 		}
 	}
 
-	if n := usage(); n != 1 {
-		t.Errorf("usage = %d, want 1", n)
+	if n, a := usage(); n != 1 || a != 0 {
+		t.Errorf("usage = %d (%d archived), want 1 (0)", n, a)
 	}
-	inUse(1)
+	inUse(1, 0)
 
 	// Archived still counts.
 	if rec := call(t, f.mux, http.MethodDelete, V1+"/documents/"+d.ID, nil, f.willC); rec.Code != http.StatusNoContent {
 		t.Fatalf("archive: %d %s", rec.Code, rec.Body)
 	}
-	if n := usage(); n != 1 {
-		t.Errorf("usage with the document archived = %d, want 1", n)
+	if n, a := usage(); n != 1 || a != 1 {
+		t.Errorf("usage with the document archived = %d (%d archived), want 1 (1)", n, a)
 	}
-	inUse(1)
+	inUse(1, 1)
 
 	// An outsider gets the type's 404, and nothing is removed.
 	assertCode(t, call(t, f.mux, http.MethodDelete, V1+"/aspect-types/"+typeID, nil, f.carolC), http.StatusNotFound, CodeAspectNotFound)

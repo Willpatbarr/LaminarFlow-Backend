@@ -166,6 +166,7 @@ type fieldUsageOutput struct {
 type typeUsageOutput struct {
 	Body struct {
 		DocumentCount int `json:"document_count" doc:"Documents of this type, archived ones included. Zero means the type can be deleted."`
+		ArchivedCount int `json:"archived_count" doc:"How many of document_count are archived, so they do not appear in the documents list."`
 	}
 }
 
@@ -175,6 +176,7 @@ type aspectTypeInUse struct {
 	huma.ErrorModel
 	Code          string `json:"code" enum:"aspect_type_in_use" doc:"Documents still use the aspect type, so it was not deleted." example:"aspect_type_in_use"`
 	DocumentCount int    `json:"document_count" doc:"How many documents of this type exist, archived ones included."`
+	ArchivedCount int    `json:"archived_count" doc:"How many of document_count are archived."`
 }
 
 type reorderInput struct {
@@ -220,7 +222,7 @@ func aspectError(err error) error {
 	return err
 }
 
-func inUseError(n int) *aspectTypeInUse {
+func inUseError(n, archived int) *aspectTypeInUse {
 	return &aspectTypeInUse{
 		ErrorModel: huma.ErrorModel{
 			Status: http.StatusConflict,
@@ -229,6 +231,7 @@ func inUseError(n int) *aspectTypeInUse {
 		},
 		Code:          CodeAspectTypeInUse,
 		DocumentCount: n,
+		ArchivedCount: archived,
 	}
 }
 
@@ -242,7 +245,7 @@ func aspectInUseResponses(api huma.API) map[string]*huma.Response {
 
 	return map[string]*huma.Response{
 		"409": {
-			Description: "Conflict. Documents (archived ones included) still use the type: code is aspect_type_in_use and document_count says how many. Nothing was deleted.",
+			Description: "Conflict. Documents (archived ones included) still use the type: code is aspect_type_in_use and document_count says how many and archived_count how many of those are archived. Nothing was deleted.",
 			Content:     problem(registry.Schema(reflect.TypeOf(aspectTypeInUse{}), true, "AspectTypeInUse")),
 		},
 		"default": {
@@ -378,13 +381,14 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 			return nil, aspectError(err)
 		}
 
-		n, err := docs.CountTypeUsage(ctx, me.AccountID, t.ID)
+		n, arch, err := docs.CountTypeUsage(ctx, me.AccountID, t.ID)
 		if err != nil {
 			return nil, err
 		}
 
 		out := &typeUsageOutput{}
 		out.Body.DocumentCount = n
+		out.Body.ArchivedCount = arch
 
 		return out, nil
 	})
@@ -408,23 +412,23 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 			return nil, aspectError(err)
 		}
 
-		n, err := docs.CountTypeUsage(ctx, me.AccountID, t.ID)
+		n, arch, err := docs.CountTypeUsage(ctx, me.AccountID, t.ID)
 		if err != nil {
 			return nil, err
 		}
 		if n > 0 {
-			return nil, inUseError(n)
+			return nil, inUseError(n, arch)
 		}
 
 		err = svc.DeleteType(ctx, me.AccountID, t.ID)
 		if errors.Is(err, aspect.ErrInUse) {
 			// A document was created between the count and the delete.
-			n, cerr := docs.CountTypeUsage(ctx, me.AccountID, t.ID)
+			n, arch, cerr := docs.CountTypeUsage(ctx, me.AccountID, t.ID)
 			if cerr != nil {
 				return nil, cerr
 			}
 
-			return nil, inUseError(max(n, 1))
+			return nil, inUseError(max(n, 1), arch)
 		}
 		if err != nil {
 			return nil, aspectError(err)
