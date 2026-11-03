@@ -10,7 +10,7 @@
 ║      Fields         filter.Schema
 ║      Clip           func
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
-║      internal/ticket    →  Create · Update · Move · Archive · Unarchive · MoveStatus
+║      internal/ticket    →  Create · Update · Move · Archive · Unarchive · MoveStatus · AddToSprint · RemoveFromSprint
 ║      internal/document  →  Write · Archive · Unarchive
 ║      internal/api       →  POST /api/v1/activity/list
 ╚═══════════════════════════════════════════════════════════════════════════════════════
@@ -43,7 +43,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The closed set of kinds, repeated as a CHECK in 0043.
+// The closed set of kinds, repeated as a CHECK in 0043 (sprint_* added in 0052).
 const (
 	Created           = "created"
 	StatusChanged     = "status_changed"
@@ -55,6 +55,8 @@ const (
 	Unarchived        = "unarchived"
 	AspectTypeChanged = "aspect_type_changed"
 	FieldChanged      = "field_changed"
+	SprintAdded       = "sprint_added"
+	SprintRemoved     = "sprint_removed"
 )
 
 // The two entity types the API names.
@@ -77,7 +79,7 @@ const maxSummaryChars = 200
 ┃      Kind             string     one of the constants above
 ┃      Field            *string    field_changed only
 ┃      Before, After    *string    summary_before / summary_after
-┃      BeforeName,      *string    status_changed only: the status names at the time
+┃      BeforeName,      *string    status_changed, sprint_added, sprint_removed: the name at the time
 ┃      AfterName
 ┣━ created by ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ┃      the writers; Record fills ID and CreatedAt

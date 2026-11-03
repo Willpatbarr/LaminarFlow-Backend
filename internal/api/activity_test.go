@@ -406,3 +406,67 @@ func TestStatusEntriesKeepTheirNamesThroughRenameAndDelete(t *testing.T) {
 		t.Errorf("created entry = %+v, want no names", c)
 	}
 }
+
+// LAM-204. Joining and leaving a sprint go through ticket_sprint, not the ticket's PUT, and
+// each is a history entry of its own with the sprint's id and the name it had at the time.
+func TestJoiningAndLeavingASprintIsRecordedWithItsNameAndAnnounced(t *testing.T) {
+	f := newFeed(t)
+	tk := f.ticketWith(t, "Sprint me", "")
+	sp := f.sprint(t, "Sprint 1")
+
+	c := f.open(t, f.cookie(f.willC))
+	defer c.CloseNow()
+
+	join := func() int {
+		return call(t, f.mux, http.MethodPost, V1+"/sprints/"+sp.ID+"/tickets", map[string]any{"ticket_id": tk.ID}, f.sarahC).Code
+	}
+	leave := func() int {
+		return call(t, f.mux, http.MethodDelete, V1+"/sprints/"+sp.ID+"/tickets/"+tk.ID, nil, f.sarahC).Code
+	}
+
+	if code := join(); code != http.StatusNoContent {
+		t.Fatalf("join: %d", code)
+	}
+	// Already a member: nothing changes, so nothing is recorded.
+	if code := join(); code != http.StatusNoContent {
+		t.Fatalf("join again: %d", code)
+	}
+	want(t, f.history(t, f.willC, "ticket", tk.ID), "created", "sprint_added")
+
+	// A rename later does not rewrite the entry.
+	if rec := call(t, f.mux, http.MethodPut, V1+"/sprints/"+sp.ID, map[string]any{"name": "Renamed"}, f.willC); rec.Code != http.StatusOK {
+		t.Fatalf("rename sprint: %d %s", rec.Code, rec.Body)
+	}
+	if code := leave(); code != http.StatusNoContent {
+		t.Fatalf("leave: %d", code)
+	}
+	// Not a member any more: still nothing.
+	if code := leave(); code != http.StatusNoContent {
+		t.Fatalf("leave again: %d", code)
+	}
+
+	got := f.history(t, f.willC, "ticket", tk.ID)
+	want(t, got, "created", "sprint_added", "sprint_removed")
+
+	removed, added := got[0], got[1]
+	if added.SummaryBefore != nil || added.SummaryAfter == nil || *added.SummaryAfter != sp.ID ||
+		added.NameBefore != nil || added.NameAfter == nil || *added.NameAfter != "Sprint 1" ||
+		added.ActorID == nil || *added.ActorID != f.sarah.AccountID || added.Field != nil {
+		t.Errorf("sprint_added = %+v, want null -> %s named Sprint 1, by sarah", added, sp.ID)
+	}
+	if removed.SummaryAfter != nil || removed.SummaryBefore == nil || *removed.SummaryBefore != sp.ID ||
+		removed.NameAfter != nil || removed.NameBefore == nil || *removed.NameBefore != "Renamed" {
+		t.Errorf("sprint_removed = %+v, want %s -> null named Renamed", removed, sp.ID)
+	}
+
+	// Announced as activity.created, one per change.
+	for _, kind := range []string{"sprint_added", "sprint_removed"} {
+		var ev eventWire
+		for ev.Type != "activity.created" {
+			ev = readEventAny(t, c)
+		}
+		if got, _ := ev.Activity["kind"].(string); got != kind || ev.TicketID != tk.ID {
+			t.Errorf("activity.created = %v on %s, want %s on %s", ev.Activity["kind"], ev.TicketID, kind, tk.ID)
+		}
+	}
+}

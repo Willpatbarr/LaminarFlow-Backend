@@ -33,10 +33,11 @@ may read what happened to it. There is no write operation; entries exist only as
   `aspect_type_changed` and the `milestone` field they are the **ids** before and after (null for none), so an entry
   stays true after a rename; resolve names from what you already hold. For `title` and `description` they are the text,
   cut to 200 characters with an ellipsis.
-* `name_before` / `name_after` (LAM-137) are set only on `status_changed`: the names of the statuses in
-  `summary_before` / `summary_after` **as they were when the change happened**. It is a snapshot: renaming a status
+* `name_before` / `name_after` (LAM-137) are set on `status_changed` and, since LAM-204, on `sprint_added` /
+  `sprint_removed`: the names of the statuses (or the sprint) in `summary_before` / `summary_after` **as they were
+  when the change happened**. It is a snapshot: renaming a status
   later does not rewrite old entries, and deleting one does not erase its name from history. Null for every other
-  kind, for "no status", and for entries written before names were stored whose status had already been deleted
+  kind (`sprint_*` always have their name), for "no status", and for entries written before names were stored whose status had already been deleted
   (migration 0048 backfilled the rest). Show `name_*` first and fall back to the live name, then to "a deleted status".
 * `created_at` is the transaction's time, so the entries of one write share it; among those the order is arbitrary
   but stable (by `id`).
@@ -48,6 +49,7 @@ may read what happened to it. There is no write operation; entries exist only as
 | ticket | `created` | `POST /tickets` (not a replay of an `Idempotency-Key`) |
 | ticket | `status_changed` | `PUT /tickets/{id}`, `POST /tickets/{id}/move` into another status, deleting a status the ticket was moved off |
 | ticket | `assignee_changed`, `parent_changed` | `PUT /tickets/{id}` changed `assignee_id` / `epic_id` |
+| ticket | `sprint_added`, `sprint_removed` | `POST /sprints/{id}/tickets`, `DELETE /sprints/{id}/tickets/{ticket_id}` (LAM-204): the sprint id in `summary_after` / `summary_before`, its name in `name_after` / `name_before`. A ticket already in (or not in) the sprint writes nothing. Taking an archived ticket out records nothing: its history is hidden until it is restored |
 | ticket | `label_added`, `label_removed` | `PUT /tickets/{id}` changed `label_ids`: one entry per label |
 | ticket | `field_changed` | `field` is `title`, `description` or `milestone` |
 | ticket | `archived`, `unarchived` | `DELETE /tickets/{id}`, `POST /tickets/{id}/unarchive` |
@@ -57,7 +59,8 @@ may read what happened to it. There is no write operation; entries exist only as
 | document | `archived`, `unarchived` | `DELETE /documents/{id}`, `POST /documents/{id}/unarchive` |
 
 Only a change records: a `PUT` that resends the state it replaces writes nothing. **Not recorded:** a document body
-save (the text of the body or of a field), a ticket's position within a column, sprint membership, document links,
+save (the text of the body or of a field), a ticket's position within a column, a sprint being deleted (its
+memberships go with it), document links,
 comments and review requests (they have their own lists and events).
 
 ## Live updates

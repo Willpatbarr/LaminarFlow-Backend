@@ -63,6 +63,9 @@ func TestActivityConstraints(t *testing.T) {
 		"both entities":                    {u(ticketID), u(docID), "created", nil, false},
 		"an unknown kind":                  {u(ticketID), nil, "renamed", nil, false},
 		"a ticket-only kind on a document": {nil, u(docID), "status_changed", nil, false},
+		"a sprint join":                    {u(ticketID), nil, "sprint_added", nil, true},
+		"a sprint leave":                   {u(ticketID), nil, "sprint_removed", nil, true},
+		"a sprint join on a document":      {nil, u(docID), "sprint_added", nil, false},
 		"a document type change":           {nil, u(docID), "aspect_type_changed", nil, true},
 	} {
 		if err := insert(c.ticket, c.doc, c.kind, c.field); (err == nil) != c.ok {
@@ -87,8 +90,8 @@ func TestActivityConstraints(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM activity WHERE actor_id IS NOT NULL`).Scan(&withActor); err != nil || withActor != 0 {
 		t.Errorf("after the account went: %d rows still name it (%v), want 0", withActor, err)
 	}
-	if n := count("ticket_id", ticketID); n != 2 {
-		t.Errorf("ticket rows after the account went = %d, want 2", n)
+	if n := count("ticket_id", ticketID); n != 4 {
+		t.Errorf("ticket rows after the account went = %d, want 4", n)
 	}
 
 	// Deleting the entity takes its history with it.

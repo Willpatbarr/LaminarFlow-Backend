@@ -6,8 +6,9 @@
 ║      lockSnapshot    func
 ║      Ticket.diff     method
 ║      Ticket.note     method
+║      Ticket.noteSprint  method
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
-║      Create · Update · Move · setArchived · MoveStatus  →  inside their transactions
+║      Create · Update · Move · setArchived · MoveStatus · AddToSprint · RemoveFromSprint  →  inside their transactions
 ╚═══════════════════════════════════════════════════════════════════════════════════════
 */
 
@@ -89,6 +90,23 @@ func statusName(ctx context.Context, tx activity.Tx, id *string) (*string, error
 	}
 
 	return &name, nil
+}
+
+// noteSprint records that the ticket joined (activity.SprintAdded) or left
+// (activity.SprintRemoved) a sprint, with the sprint's id and its name as it is now
+// (LAM-204), so the entry still reads right after a rename or after the sprint is deleted.
+// Membership is written through ticket_sprint, not the ticket's PUT, so diff never sees it.
+func (t *Ticket) noteSprint(ctx context.Context, tx pgx.Tx, actorID, kind, sprintID string) error {
+	var name string
+	if err := tx.QueryRow(ctx, `SELECT name FROM sprint WHERE id = $1::uuid`, sprintID).Scan(&name); err != nil {
+		return fmt.Errorf("ticket: sprint name: %w", err)
+	}
+
+	if kind == activity.SprintAdded {
+		return t.noteNamed(ctx, tx, actorID, kind, nil, nil, &sprintID, nil, &name)
+	}
+
+	return t.noteNamed(ctx, tx, actorID, kind, nil, &sprintID, nil, &name, nil)
 }
 
 func (t *Ticket) noteNamed(ctx context.Context, tx activity.Tx, actorID, kind string, field, before, after, beforeName, afterName *string) error {
