@@ -141,18 +141,20 @@ func registerStatuses(api huma.API, svc *team.Service, boards *board.Service, fe
 		Method:      http.MethodPost,
 		Path:        V1 + "/teams/{id}/statuses",
 		Summary:     "Add a status to a team",
-		Description: "No status is sacred, so there is no special case and no 409: name and position are not unique.",
-		Metadata:    needs(auth.TeamWrite),
+		Description: "No status is sacred, so there is no special case and no 409: name and position are not unique. " +
+			"On every board of the team the new status joins the first column that holds a status of the same category, or, when none does, a new column appended to the board and named after the status; stored column names are never changed. Each column written is announced as `board.column.updated`.",
+		Metadata: needs(auth.TeamWrite),
 	}, func(ctx context.Context, in *createStatusInput) (*createdOutput[statusBody], error) {
 		me, _ := auth.FromContext(ctx)
 
 		var ws string
+		var joined []team.ColumnRef
 		st, replayed, err := keyed(ctx, idem, me.AccountID, in.key(), "create-status", team.ErrStatusNotFound,
 			func(ctx context.Context) (team.Status, string, error) {
-				st, w, err := svc.CreateStatus(ctx, me.AccountID, in.ID, team.StatusParams{
+				st, w, cols, err := svc.CreateStatus(ctx, me.AccountID, in.ID, team.StatusParams{
 					Name: in.Body.Name, Color: in.Body.Color, Category: in.Body.Category, Position: in.Body.Position,
 				})
-				ws = w
+				ws, joined = w, cols
 				return st, st.ID, err
 			},
 			func(ctx context.Context, id string) (team.Status, error) {
@@ -177,6 +179,15 @@ func registerStatuses(api huma.API, svc *team.Service, boards *board.Service, fe
 
 		if !replayed {
 			feed.publishStatus(ws, realtime.StatusCreated, me.AccountID, in.ID, st)
+
+			// The new status joined a column on every board of the team (LAM-202).
+			if boards != nil {
+				for _, ref := range joined {
+					if r, err := boards.ColumnResult(ctx, me.AccountID, ref.BoardID, ref.ColumnID); err == nil {
+						feed.publishColumn(ws, me.AccountID, r)
+					}
+				}
+			}
 		}
 
 		return created(in.key(), replayed, asStatusBody(st)), nil

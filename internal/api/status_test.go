@@ -73,6 +73,10 @@ func TestAStatusCanBeAddedRenamedAndRecoloured(t *testing.T) {
 	if ev := readEvent(t, sarah); ev.Type != "status.created" || ev.StatusID != made.ID || ev.TeamID != f.project.TeamID {
 		t.Errorf("event %+v, want status.created for %s", ev, made.ID)
 	}
+	// Then the column it joined on the project's board (LAM-202).
+	if ev := readEvent(t, sarah); ev.Type != "board.column.updated" || ev.Column == nil {
+		t.Errorf("event %+v, want board.column.updated", ev)
+	}
 
 	// An explicit position is stored as given, even a duplicate.
 	rec = call(t, f.mux, http.MethodPost, f.statusPath(""),
@@ -82,7 +86,8 @@ func TestAStatusCanBeAddedRenamedAndRecoloured(t *testing.T) {
 	if triage.Position != 1 {
 		t.Errorf("position %d, want 1", triage.Position)
 	}
-	readEvent(t, sarah)
+	readEvent(t, sarah) // status.created
+	readEvent(t, sarah) // board.column.updated
 
 	// Rename only: the other members are untouched, and the id is stable.
 	rec = call(t, f.mux, http.MethodPut, f.statusPath("/"+made.ID), map[string]any{"name": "In Review"}, f.willC)
@@ -399,4 +404,99 @@ func TestStatusColoursAreStoredAsHueNames(t *testing.T) {
 		t.Errorf("update to #ef4444: %d %+v, want rust", rec.Code, upd)
 	}
 	refused(t, call(t, f.mux, http.MethodPut, f.statusPath("/"+made.ID), map[string]any{"color": "red"}, f.willC), "body.color")
+}
+
+// LAM-202. A new status joins the column that holds its category on every board of the
+// team, or gets a column of its own when none does; no column is renamed.
+func TestANewStatusJoinsTheColumnOfItsCategoryOnEveryBoard(t *testing.T) {
+	f := newFeed(t)
+	ctx := testCtx(t)
+
+	// A second board, which the user has trimmed: the in_progress column is gone, and the
+	// done column is renamed.
+	rec := call(t, f.mux, http.MethodPost, V1+"/projects/"+f.project.ID+"/boards", map[string]any{"name": "Second"}, f.willC)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create board: status %d - %.300s", rec.Code, rec.Body)
+	}
+	var second struct {
+		ID string `json:"id"`
+	}
+	decode(t, rec, &second)
+	if _, err := f.pool.Exec(ctx,
+		`DELETE FROM board_column c USING board_column_status m, status s
+		  WHERE c.board_id = $1::uuid AND m.board_column_id = c.id AND s.id = m.status_id AND s.category = 'in_progress'`,
+		second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(ctx,
+		`UPDATE board_column SET name = 'Shipped'
+		  WHERE board_id = $1::uuid AND name = (SELECT name FROM status WHERE team_id = $2::uuid AND category = 'done')`,
+		second.ID, f.project.TeamID); err != nil {
+		t.Fatal(err)
+	}
+
+	sarah := f.open(t, f.cookie(f.sarahC))
+
+	rec = call(t, f.mux, http.MethodPost, f.statusPath(""),
+		map[string]any{"name": "In Review", "color": "amber", "category": "in_progress"}, f.willC)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create: status %d - %.300s", rec.Code, rec.Body)
+	}
+	var review statusWire
+	decode(t, rec, &review)
+
+	rec = call(t, f.mux, http.MethodPost, f.statusPath(""),
+		map[string]any{"name": "Released", "color": "green", "category": "done"}, f.willC)
+	var released statusWire
+	decode(t, rec, &released)
+
+	// Per board: where each new status is, and the name of that column.
+	where := func(board, status string) (string, int) {
+		var name string
+		var n int
+		rows, err := f.pool.Query(ctx,
+			`SELECT c.name FROM board_column c JOIN board_column_status m ON m.board_column_id = c.id
+			  WHERE c.board_id = $1::uuid AND m.status_id = $2::uuid`, board, status)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			n++
+			_ = rows.Scan(&name)
+		}
+		return name, n
+	}
+
+	var first string
+	if err := f.pool.QueryRow(ctx, `SELECT id::text FROM board WHERE project_id = $1::uuid ORDER BY created_at LIMIT 1`, f.project.ID).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seeded board: in_progress status "In Progress" has its column; "In Review" shares it.
+	if name, n := where(first, review.ID); n != 1 || name != "In Progress" {
+		t.Errorf("first board: In Review in %d column(s), %q; want the In Progress column only", n, name)
+	}
+	if name, n := where(first, released.ID); n != 1 || name != "Done" {
+		t.Errorf("first board: Released in %d column(s), %q; want the Done column only", n, name)
+	}
+	// Trimmed board: no column held in_progress, so In Review gets one named after it; the
+	// renamed done column keeps its stored title and takes Released.
+	if name, n := where(second.ID, review.ID); n != 1 || name != "In Review" {
+		t.Errorf("second board: In Review in %d column(s), %q; want a new In Review column", n, name)
+	}
+	if name, n := where(second.ID, released.ID); n != 1 || name != "Shipped" {
+		t.Errorf("second board: Released in %d column(s), %q; want the Shipped column", n, name)
+	}
+
+	// Two creates x two boards = four board.column.updated, each after its status.created.
+	cols := 0
+	for i := 0; i < 6; i++ {
+		if ev := readEvent(t, sarah); ev.Type == "board.column.updated" && ev.Column != nil {
+			cols++
+		}
+	}
+	if cols != 4 {
+		t.Errorf("%d board.column.updated events, want 4", cols)
+	}
 }

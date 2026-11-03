@@ -170,6 +170,7 @@ its `status_ids`; on `deleted`, the board as it was). `board.column.updated` als
 | create-board | `board.created` |
 | rename-board, reorder-columns, delete-column | `board.updated` (the delete's `board` no longer has the column) |
 | add-column, update-column, set-column-statuses | `board.column.updated` |
+| create-status (per board of the team: the column it joined, or the new column appended for it; LAM-202) | `board.column.updated` |
 | delete-status (per column that showed it) | `board.column.updated` |
 | delete-board | `board.deleted` |
 

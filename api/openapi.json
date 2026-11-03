@@ -9445,7 +9445,7 @@
     },
     "/api/v1/teams/{id}/statuses": {
       "post": {
-        "description": "No status is sacred, so there is no special case and no 409: name and position are not unique.",
+        "description": "No status is sacred, so there is no special case and no 409: name and position are not unique. On every board of the team the new status joins the first column that holds a status of the same category, or, when none does, a new column appended to the board and named after the status; stored column names are never changed. Each column written is announced as `board.column.updated`.",
         "operationId": "create-status",
         "parameters": [
           {
