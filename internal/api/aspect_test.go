@@ -13,7 +13,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
-// Eleven operations (the ninth is the field usage count, LAM-87; LAM-110 added export and import), and one of them being public would be a silent hole. Marked
+// Thirteen operations (the ninth is the field usage count, LAM-87; LAM-110 added export and import; LAM-206 the type usage count and delete), and one of them being public would be a silent hole. Marked
 // individually rather than wrapped, so this checks the marking rather than trusting it.
 func TestEveryAspectOperationRequiresACaller(t *testing.T) {
 	doc := NewHumaAPI(http.NewServeMux(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).OpenAPI()
@@ -38,8 +38,8 @@ func TestEveryAspectOperationRequiresACaller(t *testing.T) {
 		}
 	}
 
-	if found != 11 {
-		t.Errorf("found %d aspect operations, want 11", found)
+	if found != 13 {
+		t.Errorf("found %d aspect operations, want 13", found)
 	}
 }
 

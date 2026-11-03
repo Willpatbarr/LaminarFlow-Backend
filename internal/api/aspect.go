@@ -4,9 +4,10 @@
 ╠═ declares ════════════════════════════════════════════════════════════════════════════
 ║      CodeAspectNotFound      const
 ║      CodeFieldSetWrong       const
+║      CodeAspectTypeInUse     const
 ║      CodeAspectFormatUnsupported   const
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
-║      NewHumaAPI  →  eleven operations under /aspect-types
+║      NewHumaAPI  →  thirteen operations under /aspect-types
 ╚═══════════════════════════════════════════════════════════════════════════════════════
 */
 
@@ -16,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/aspect"
 	"github.com/Willpatbarr/LaminarFlow-Backend/internal/auth"
@@ -28,6 +30,10 @@ import (
 // One 404 for a type and for a field alike: both collapse absent and out-of-scope, and
 // a code that distinguished them would undo the collapse.
 const CodeAspectNotFound = "aspect_type_not_found"
+
+// Deleting a type that documents still use. 409, not 422: the request is well formed and
+// becomes right once the documents are moved or deleted. The body carries document_count.
+const CodeAspectTypeInUse = "aspect_type_in_use"
 
 // A reorder that names the wrong set is its own failure. It is not a validation error
 // the schema could have caught - the set is only wrong relative to the rows that exist
@@ -157,6 +163,22 @@ type fieldUsageOutput struct {
 	}
 }
 
+type typeUsageOutput struct {
+	Body struct {
+		DocumentCount int `json:"document_count" doc:"Documents of this type, archived ones included. Zero means the type can be deleted."`
+		ArchivedCount int `json:"archived_count" doc:"How many of document_count are archived, so they do not appear in the documents list."`
+	}
+}
+
+// aspectTypeInUse is the 409 for a delete the type's documents forbid: the usual envelope
+// plus the count, so the page can say how many without a second request.
+type aspectTypeInUse struct {
+	huma.ErrorModel
+	Code          string `json:"code" enum:"aspect_type_in_use" doc:"Documents still use the aspect type, so it was not deleted." example:"aspect_type_in_use"`
+	DocumentCount int    `json:"document_count" doc:"How many documents of this type exist, archived ones included."`
+	ArchivedCount int    `json:"archived_count" doc:"How many of document_count are archived."`
+}
+
 type reorderInput struct {
 	ID   string `path:"id" format:"uuid"`
 	Body struct {
@@ -198,6 +220,39 @@ func aspectError(err error) error {
 	}
 
 	return err
+}
+
+func inUseError(n, archived int) *aspectTypeInUse {
+	return &aspectTypeInUse{
+		ErrorModel: huma.ErrorModel{
+			Status: http.StatusConflict,
+			Title:  http.StatusText(http.StatusConflict),
+			Detail: "documents still use this aspect type, so it was not deleted",
+		},
+		Code:          CodeAspectTypeInUse,
+		DocumentCount: n,
+		ArchivedCount: archived,
+	}
+}
+
+// aspectInUseResponses documents the 409 with its document_count, for the reason
+// documentConflictResponses does: huma derives its error schema from the plain Error.
+func aspectInUseResponses(api huma.API) map[string]*huma.Response {
+	registry := api.OpenAPI().Components.Schemas
+	problem := func(schema *huma.Schema) map[string]*huma.MediaType {
+		return map[string]*huma.MediaType{"application/problem+json": {Schema: schema}}
+	}
+
+	return map[string]*huma.Response{
+		"409": {
+			Description: "Conflict. Documents (archived ones included) still use the type: code is aspect_type_in_use and document_count says how many and archived_count how many of those are archived. Nothing was deleted.",
+			Content:     problem(registry.Schema(reflect.TypeOf(aspectTypeInUse{}), true, "AspectTypeInUse")),
+		},
+		"default": {
+			Description: "Error",
+			Content:     problem(registry.Schema(reflect.TypeOf(Error{}), true, "Error")),
+		},
+	}
 }
 
 // importError maps a refused file onto a 422 whose errors[0].location is the field.
@@ -308,6 +363,78 @@ func registerAspectTypes(api huma.API, svc *aspect.Service, docs *document.Servi
 		}
 
 		return &aspectTypeOutput{Body: asAspectTypeBody(t)}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-aspect-type-usage",
+		Method:      http.MethodGet,
+		Path:        V1 + "/aspect-types/{id}/usage",
+		Summary:     "Count the documents of an aspect type",
+		Description: "For the confirmation before a type is deleted. Archived documents count: they keep their type and return with it when unarchived. " +
+			"Needs `aspect:read`.",
+		Metadata: needs(auth.AspectRead),
+	}, func(ctx context.Context, in *aspectTypeInput) (*typeUsageOutput, error) {
+		me, _ := auth.FromContext(ctx)
+
+		t, err := svc.Get(ctx, me.AccountID, in.ID)
+		if err != nil {
+			return nil, aspectError(err)
+		}
+
+		n, arch, err := docs.CountTypeUsage(ctx, me.AccountID, t.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		out := &typeUsageOutput{}
+		out.Body.DocumentCount = n
+		out.Body.ArchivedCount = arch
+
+		return out, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "delete-aspect-type",
+		Method:      http.MethodDelete,
+		Path:        V1 + "/aspect-types/{id}",
+		Summary:     "Delete an aspect type",
+		Description: "Deletes the type and its fields. Refused with 409 `aspect_type_in_use` (and `document_count`) while any document uses the type, " +
+			"archived ones included, because an archived document comes back with its type when unarchived. Nothing is changed on a refusal; " +
+			"delete or move the documents first. Needs `aspect:write`.",
+		Metadata:      needs(auth.AspectWrite),
+		DefaultStatus: http.StatusNoContent,
+		Responses:     aspectInUseResponses(api),
+	}, func(ctx context.Context, in *aspectTypeInput) (*struct{}, error) {
+		me, _ := auth.FromContext(ctx)
+
+		t, err := svc.Get(ctx, me.AccountID, in.ID)
+		if err != nil {
+			return nil, aspectError(err)
+		}
+
+		n, arch, err := docs.CountTypeUsage(ctx, me.AccountID, t.ID)
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			return nil, inUseError(n, arch)
+		}
+
+		err = svc.DeleteType(ctx, me.AccountID, t.ID)
+		if errors.Is(err, aspect.ErrInUse) {
+			// A document was created between the count and the delete.
+			n, arch, cerr := docs.CountTypeUsage(ctx, me.AccountID, t.ID)
+			if cerr != nil {
+				return nil, cerr
+			}
+
+			return nil, inUseError(max(n, 1), arch)
+		}
+		if err != nil {
+			return nil, aspectError(err)
+		}
+
+		return nil, nil
 	})
 
 	huma.Register(api, huma.Operation{

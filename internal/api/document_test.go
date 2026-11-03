@@ -331,6 +331,63 @@ func TestTheUsageEndpointCountsDocumentsHoldingTheField(t *testing.T) {
 	}
 }
 
+// LAM-206. A type in use cannot be deleted - archived documents count, because they come
+// back with their type - and a free one can, with its fields.
+func TestAnAspectTypeInUseCannotBeDeleted(t *testing.T) {
+	f := newFeed(t)
+	typeID, _ := f.aspectType(t, f.willC, "Used", "Notes")
+	d := f.document(t, f.willC, map[string]any{"type": "aspect", "aspect_type_id": typeID, "body": map[string]string{}})
+
+	usage := func() (int, int) {
+		rec := call(t, f.mux, http.MethodGet, V1+"/aspect-types/"+typeID+"/usage", nil, f.sarahC)
+		var out struct {
+			DocumentCount int `json:"document_count"`
+			ArchivedCount int `json:"archived_count"`
+		}
+		decode(t, rec, &out)
+
+		return out.DocumentCount, out.ArchivedCount
+	}
+	inUse := func(want, wantArchived int) {
+		t.Helper()
+		rec := call(t, f.mux, http.MethodDelete, V1+"/aspect-types/"+typeID, nil, f.sarahC)
+		var out struct {
+			Code          string `json:"code"`
+			DocumentCount int    `json:"document_count"`
+			ArchivedCount int    `json:"archived_count"`
+		}
+		decode(t, rec, &out)
+		if rec.Code != http.StatusConflict || out.Code != CodeAspectTypeInUse || out.DocumentCount != want || out.ArchivedCount != wantArchived {
+			t.Errorf("delete: %d %s, want 409 %s with %d (%d archived)", rec.Code, rec.Body, CodeAspectTypeInUse, want, wantArchived)
+		}
+	}
+
+	if n, a := usage(); n != 1 || a != 0 {
+		t.Errorf("usage = %d (%d archived), want 1 (0)", n, a)
+	}
+	inUse(1, 0)
+
+	// Archived still counts.
+	if rec := call(t, f.mux, http.MethodDelete, V1+"/documents/"+d.ID, nil, f.willC); rec.Code != http.StatusNoContent {
+		t.Fatalf("archive: %d %s", rec.Code, rec.Body)
+	}
+	if n, a := usage(); n != 1 || a != 1 {
+		t.Errorf("usage with the document archived = %d (%d archived), want 1 (1)", n, a)
+	}
+	inUse(1, 1)
+
+	// An outsider gets the type's 404, and nothing is removed.
+	assertCode(t, call(t, f.mux, http.MethodDelete, V1+"/aspect-types/"+typeID, nil, f.carolC), http.StatusNotFound, CodeAspectNotFound)
+
+	// An unused type goes, and then it is gone.
+	free, _ := f.aspectType(t, f.willC, "Free", "A")
+	if rec := call(t, f.mux, http.MethodDelete, V1+"/aspect-types/"+free, nil, f.sarahC); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete unused: %d %s", rec.Code, rec.Body)
+	}
+	assertCode(t, call(t, f.mux, http.MethodGet, V1+"/aspect-types/"+free, nil, f.sarahC), http.StatusNotFound, CodeAspectNotFound)
+	assertCode(t, call(t, f.mux, http.MethodDelete, V1+"/aspect-types/"+free, nil, f.sarahC), http.StatusNotFound, CodeAspectNotFound)
+}
+
 func TestEachDocumentWriteReachesAColleagueOnTheFeed(t *testing.T) {
 	f := newFeed(t)
 	conn := f.open(t, f.cookie(f.sarahC))

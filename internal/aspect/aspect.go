@@ -7,6 +7,7 @@
 ║      Field              struct
 ║      ErrNotFound        error
 ║      ErrFieldSetWrong   error
+║      ErrInUse           error
 ╠═ reached from ════════════════════════════════════════════════════════════════════════
 ║      internal/api  →  the aspect type editor's eight operations
 ╚═══════════════════════════════════════════════════════════════════════════════════════
@@ -36,6 +37,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -43,6 +45,11 @@ import (
 // internal/document make: a 403 would confirm the row exists, which a caller outside
 // the workspace has not earned.
 var ErrNotFound = errors.New("aspect: not found")
+
+// ErrInUse means a document still points at the type. The API checks the count first, to
+// say how many; this is the foreign key (document.aspect_type_id, ON DELETE RESTRICT)
+// catching a document created between that count and the delete.
+var ErrInUse = errors.New("aspect: documents still use this type")
 
 // ErrFieldSetWrong means a reorder named a set of fields that is not exactly the
 // type's. See Reorder - a partial order is the one input here that can silently
@@ -295,6 +302,46 @@ func (s *Service) RenameType(ctx context.Context, accountID, typeID, name string
 	}
 
 	return t, nil
+}
+
+/*
+┌─ aspect ────────────────────────────────────────
+│  deletes an aspect type and its fields
+├─ in ────────────────────────────────────────────
+│      ctx          context.Context
+│      accountID    string
+│      typeID       string
+├─ out ───────────────────────────────────────────
+│      error        ErrNotFound · ErrInUse
+*/
+
+// DeleteType removes the type row; its fields go with it (aspect_type_field cascades).
+// It never looks at a document - sqlguard forbids that here - so "is it in use" is the
+// foreign key's answer: a document of any kind, archived or not, makes the DELETE fail
+// with 23503 and nothing is removed. The API asks internal/document for the count first
+// so it can tell the person how many.
+func (s *Service) DeleteType(ctx context.Context, accountID, typeID string) error {
+	var gone string
+
+	err := s.pool.QueryRow(ctx,
+		expand(`DELETE FROM aspect_type at
+		         WHERE at.id = $1::uuid AND `+callerCanReach+`
+		     RETURNING at.id::text`, "$2"),
+		typeID, accountID,
+	).Scan(&gone)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		return ErrInUse
+	}
+	if err != nil {
+		return fmt.Errorf("aspect: delete type: %w", err)
+	}
+
+	return nil
 }
 
 /*
