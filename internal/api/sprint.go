@@ -245,8 +245,9 @@ func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service,
 		Summary:     "Put a ticket in a sprint",
 		Description: "The ticket must be a live ticket of the sprint's project, or a 422 `ticket_not_found` at `body.ticket_id`. " +
 			"A ticket can be in a sprint and an epic at once, and in several sprints. Joining is a change to the ticket: its `version` " +
-			"rises by one and it is announced as `ticket.updated`. A ticket that is already in the sprint is a success that writes and " +
-			"announces nothing.",
+			"rises by one and it is announced as `ticket.updated`, followed by an `activity.created` for a `sprint_added` entry in the " +
+			"ticket's history (the sprint's id and its name at the time). A ticket that is already in the sprint is a success that writes " +
+			"and announces nothing.",
 		DefaultStatus: http.StatusNoContent,
 		Metadata:      needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *sprintTicketInput) (*struct{}, error) {
@@ -269,7 +270,8 @@ func registerSprints(api huma.API, svc *sprint.Service, tickets *ticket.Service,
 		Path:        V1 + "/sprints/{id}/tickets/{ticket_id}",
 		Summary:     "Take a ticket out of a sprint",
 		Description: "A ticket that is not in the sprint is a success that writes and announces nothing. Leaving is a change to the " +
-			"ticket: its `version` rises by one and it is announced as `ticket.updated` (an archived ticket is taken out without either).",
+			"ticket: its `version` rises by one and it is announced as `ticket.updated`, followed by `activity.created` for a " +
+			"`sprint_removed` history entry (an archived ticket is taken out without any of these).",
 		DefaultStatus: http.StatusNoContent,
 		Metadata:      needs(auth.TicketWrite),
 	}, func(ctx context.Context, in *sprintTicketPathInput) (*struct{}, error) {

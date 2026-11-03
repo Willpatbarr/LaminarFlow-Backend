@@ -18,6 +18,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Willpatbarr/LaminarFlow-Backend/internal/activity"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -107,6 +109,9 @@ func (s *Service) AddToSprint(ctx context.Context, accountID, sprintID, ticketID
 	if err != nil {
 		return Ticket{}, false, err
 	}
+	if err := t.noteSprint(ctx, tx, accountID, activity.SprintAdded, sprintID); err != nil {
+		return Ticket{}, false, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Ticket{}, false, fmt.Errorf("ticket: commit: %w", err)
@@ -131,7 +136,8 @@ func (s *Service) AddToSprint(ctx context.Context, accountID, sprintID, ticketID
 
 // Not being a member is not an error: the request asked for a state and it already
 // holds, so it succeeds and writes nothing. An archived ticket is taken out too, but its
-// row is not touched - an archived ticket's version belongs to its restore.
+// row is not touched - an archived ticket's version belongs to its restore - and nothing
+// is recorded in its history, which is hidden while it is archived (LAM-204).
 func (s *Service) RemoveFromSprint(ctx context.Context, accountID, sprintID, ticketID string) (Ticket, bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -168,6 +174,9 @@ func (s *Service) RemoveFromSprint(ctx context.Context, accountID, sprintID, tic
 		return Ticket{}, false, nil
 	}
 	if err != nil {
+		return Ticket{}, false, err
+	}
+	if err := t.noteSprint(ctx, tx, accountID, activity.SprintRemoved, sprintID); err != nil {
 		return Ticket{}, false, err
 	}
 

@@ -33,12 +33,12 @@ type activityBody struct {
 	EntityType    string    `json:"entity_type" enum:"ticket,document"`
 	EntityID      string    `json:"entity_id" format:"uuid"`
 	ActorID       *string   `json:"actor_id" nullable:"true" doc:"The account that made the change; a token acts as its owner. Null when the account has been deleted or the write had none: render \"someone\"."`
-	Kind          string    `json:"kind" enum:"created,status_changed,assignee_changed,parent_changed,label_added,label_removed,archived,unarchived,aspect_type_changed,field_changed" doc:"What happened. Document entries are only created, archived, unarchived, aspect_type_changed and field_changed."`
+	Kind          string    `json:"kind" enum:"created,status_changed,assignee_changed,parent_changed,label_added,label_removed,archived,unarchived,aspect_type_changed,field_changed,sprint_added,sprint_removed" doc:"What happened. sprint_added and sprint_removed (LAM-204) are ticket-only. Document entries are only created, archived, unarchived, aspect_type_changed and field_changed."`
 	Field         *string   `json:"field" nullable:"true" doc:"Only for field_changed: ticket - title, description or milestone; document - title or fields."`
-	SummaryBefore *string   `json:"summary_before" nullable:"true" doc:"The value before the change; null for none. status_changed, assignee_changed, parent_changed (the epic), label_removed, aspect_type_changed and milestone carry the id of the thing, so they stay true after a rename. title and description carry the text, cut to 200 characters. A document's fields carry the sorted ids of the fields that had a value."`
-	SummaryAfter  *string   `json:"summary_after" nullable:"true" doc:"The value after the change, in the same form. label_added carries the label id here."`
-	NameBefore    *string   `json:"name_before" nullable:"true" doc:"Only for status_changed: the name of the status in summary_before as it was when the change happened (a later rename does not change it). Null for other kinds, for no status, and for old entries whose status was already deleted before names were stored."`
-	NameAfter     *string   `json:"name_after" nullable:"true" doc:"Only for status_changed: the name of the status in summary_after, in the same form."`
+	SummaryBefore *string   `json:"summary_before" nullable:"true" doc:"The value before the change; null for none. status_changed, assignee_changed, parent_changed (the epic), label_removed, aspect_type_changed and milestone carry the id of the thing, so they stay true after a rename. sprint_removed carries the sprint id here. title and description carry the text, cut to 200 characters. A document's fields carry the sorted ids of the fields that had a value."`
+	SummaryAfter  *string   `json:"summary_after" nullable:"true" doc:"The value after the change, in the same form. label_added carries the label id here, sprint_added the sprint id."`
+	NameBefore    *string   `json:"name_before" nullable:"true" doc:"For status_changed the name of the status in summary_before, for sprint_removed the name of the sprint, as it was when the change happened (a later rename does not change it). Null for other kinds, for no status, and for old entries whose status was already deleted before names were stored."`
+	NameAfter     *string   `json:"name_after" nullable:"true" doc:"For status_changed the name of the status in summary_after, for sprint_added the name of the sprint, in the same form."`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
