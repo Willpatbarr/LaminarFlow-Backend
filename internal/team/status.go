@@ -166,21 +166,27 @@ func scanStatus(row pgx.Row) (Status, error) {
 // CreateStatus adds a status. With no position it goes last: one past the highest, which
 // is 1 for a team with none. Positions are hints and duplicates are legal (0010), so an
 // explicit position is stored as given.
-func (s *Service) CreateStatus(ctx context.Context, accountID, teamID string, p StatusParams) (Status, string, error) {
+//
+// LAM-202. The new status also joins every board of the team, so its tickets do not
+// vanish from them: on each board it goes into the first column (by position) that holds
+// a status of the same category, or, when no column does, into a new column appended to
+// the board and named after the status. The columns written are returned, for
+// board.column.updated. Existing column names are never touched.
+func (s *Service) CreateStatus(ctx context.Context, accountID, teamID string, p StatusParams) (Status, string, []ColumnRef, error) {
 	if err := checkStatusFields(&p.Name, &p.Color, &p.Category); err != nil {
-		return Status{}, "", err
+		return Status{}, "", nil, err
 	}
 	p.Color, _ = hue.Normalise(p.Color) // checked above: a hue name is what is stored (LAM-172)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return Status{}, "", fmt.Errorf("team: begin: %w", err)
+		return Status{}, "", nil, fmt.Errorf("team: begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
 	ws, err := reach(ctx, tx, accountID, teamID)
 	if err != nil {
-		return Status{}, "", err
+		return Status{}, "", nil, err
 	}
 
 	st, err := scanStatus(tx.QueryRow(ctx,
@@ -191,14 +197,76 @@ func (s *Service) CreateStatus(ctx context.Context, accountID, teamID string, p 
 		 RETURNING `+statusColumns,
 		teamID, p.Name, p.Color, p.Position, p.Category))
 	if err != nil {
-		return Status{}, "", fmt.Errorf("team: create status: %w", err)
+		return Status{}, "", nil, fmt.Errorf("team: create status: %w", err)
+	}
+
+	touched, err := joinBoards(ctx, tx, teamID, st)
+	if err != nil {
+		return Status{}, "", nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return Status{}, "", fmt.Errorf("team: commit: %w", err)
+		return Status{}, "", nil, fmt.Errorf("team: commit: %w", err)
 	}
 
-	return st, ws, nil
+	return st, ws, touched, nil
+}
+
+// joinBoards maps a new status on every board of the team (LAM-202); see CreateStatus.
+// Each board is locked while it is written, in id order, so two concurrent creates
+// cannot both append a column at the same position.
+func joinBoards(ctx context.Context, tx pgx.Tx, teamID string, st Status) ([]ColumnRef, error) {
+	rows, err := tx.Query(ctx,
+		`SELECT id::text FROM board WHERE team_id = $1::uuid ORDER BY id FOR UPDATE`, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("team: lock boards: %w", err)
+	}
+	var boards []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("team: boards scan: %w", err)
+		}
+		boards = append(boards, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("team: boards rows: %w", err)
+	}
+
+	var touched []ColumnRef
+	for _, boardID := range boards {
+		var colID string
+		err := tx.QueryRow(ctx,
+			`SELECT c.id::text
+			   FROM board_column c
+			   JOIN board_column_status m ON m.board_column_id = c.id
+			   JOIN status s ON s.id = m.status_id
+			  WHERE c.board_id = $1::uuid AND s.category = $2 AND s.id <> $3::uuid
+			  ORDER BY c.position, c.id
+			  LIMIT 1`, boardID, st.Category, st.ID).Scan(&colID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = tx.QueryRow(ctx,
+				`INSERT INTO board_column (board_id, team_id, name, position)
+				 SELECT $1::uuid, $2::uuid, $3,
+				        coalesce((SELECT max(c.position) FROM board_column c WHERE c.board_id = $1::uuid), 0) + 1
+				 RETURNING id::text`, boardID, teamID, st.Name).Scan(&colID)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("team: find board column: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO board_column_status (board_column_id, status_id, team_id)
+			 VALUES ($1::uuid, $2::uuid, $3::uuid)
+			 ON CONFLICT (board_column_id, status_id) DO NOTHING`, colID, st.ID, teamID); err != nil {
+			return nil, fmt.Errorf("team: map new status: %w", err)
+		}
+		touched = append(touched, ColumnRef{BoardID: boardID, ColumnID: colID})
+	}
+
+	return touched, nil
 }
 
 // UpdateStatus changes the fields given. Returns the workspace for the change feed.
