@@ -229,6 +229,25 @@ func (s *Service) List(ctx context.Context, accountID string, p ListParams) (Pag
 	return page, nil
 }
 
+// CountTypeUsage is how many documents are of an aspect type, archived ones included.
+// An archived document keeps its aspect_type_id and comes back, type and all, when it is
+// unarchived, so deleting the type under it would break a document nobody can see - and
+// the foreign key (ON DELETE RESTRICT, 0016) refuses that anyway. The caller has already
+// proved the type is the caller's; this only scopes the count to the caller's workspaces.
+func (s *Service) CountTypeUsage(ctx context.Context, accountID, aspectTypeID string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM document d
+		  WHERE d.aspect_type_id = $1::uuid AND `+fmt.Sprintf(memberOf, "$2"),
+		aspectTypeID, accountID,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("document: count type usage: %w", err)
+	}
+
+	return n, nil
+}
+
 // CountFieldUsage is how many documents of an aspect type hold a value under a field's id,
 // archived ones included: an archived document comes back with its values, so a warning
 // about removing the field has to count it. The caller has already proved the type and the

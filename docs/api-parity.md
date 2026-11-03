@@ -47,7 +47,7 @@ Scope column: the permission a token needs. `T` = `ticket:`, `A` = `aspect:`, `P
 | Add / delete a board column | none (API only) | `POST /boards/{id}/columns`, `DELETE .../columns/{column_id}` | T write |
 | Saved views: create, list, edit, delete | `features/tickets/savedViews` | `POST /saved-views`, `POST /saved-views/list`, `GET`, `PUT`, `DELETE /saved-views/{id}` | T write / read |
 | Create / edit / archive / restore document | `sync/entities/document.ts`, `features/documents` | `POST /documents` (idem), `PUT /documents/{id}` (v), `DELETE /documents/{id}`, `POST /documents/{id}/unarchive`, `GET /documents/{id}`, `POST /documents/list` | T write / read |
-| Aspect types: create, rename, import, export, fields add/rename/remove/reorder, field usage | `features/aspects/api.ts` | `/aspect-types` (all 10 operations) | A write / read |
+| Aspect types: create, rename, import, export, fields add/rename/remove/reorder, field usage, type usage, delete type | `features/aspects/api.ts` | `/aspect-types` (all 13 operations) | A write / read |
 | Link / unlink a document and a ticket | `features/links/api.ts` | `POST /tickets/{id}/documents`, `DELETE /tickets/{id}/documents/{document_id}` | T write |
 | Read the links from either side | `features/links/api.ts` | `GET /tickets/{id}` (`documents`), `GET /documents/{id}` (`tickets`) | T read |
 | Comments: add, edit, delete, list | `features/comments` | `POST /comments` (idem), `PUT`, `DELETE /comments/{id}`, `POST /comments/list` | T write / read |

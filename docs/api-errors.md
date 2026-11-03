@@ -122,6 +122,7 @@ so add none without scrubbing first.
 | `document_field_unknown` | 422 | An aspect document's `body` has a key that is not a field id of its aspect type. `errors[0].location` is `body.body.<that key>`. Nothing was written. Fields are added with `POST /aspect-types/{id}/fields` first |
 | `aspect_format_unsupported` | 422 | `POST /aspect-types/import` (LAM-110) with a `format_version` this server does not read. `errors[0].location` is `body.format_version`. Nothing was created. Every other refusal of an import file is the derived `unprocessable_entity` with `errors[0].location` naming the field (`body.name`, `body.fields[2].label`, an unknown key). See [aspect-type-format.md](aspect-type-format.md) |
 | `aspect_type_has_no_fields` | 422 | A normal document turned into an aspect one whose type has no fields, so its text has nowhere to go. `errors[0].location` is `body.aspect_type_id`. Add a field to the type, or choose another |
+| `aspect_type_in_use` | 409 | `DELETE /aspect-types/{id}` (LAM-206) while any document uses the type, archived ones included (an archived document comes back with its type when unarchived). Carries `document_count`, a top-level extension member beside `code`, the same number `GET /aspect-types/{id}/usage` gives. Nothing was deleted. Delete or move the documents first |
 | `comment_not_found` | 404 | `PUT` or `DELETE /comments/{id}` (LAM-99): absent, or on a ticket or document the caller cannot see (archived, another workspace) - indistinguishable on purpose. Creating a comment on a target the caller cannot see is the derived `not_found`, not this code |
 | `comment_not_author` | 403 | Editing or deleting a comment you can see and did not write. A comment whose author's account was deleted (`author_id` null) is nobody's to change. Nothing was changed |
 | `review_request_not_found` | 404 | `PUT /review-requests/{id}` (LAM-113): absent, not a review request (a plain comment's id), or on a document the caller cannot see (archived, another workspace) - indistinguishable on purpose. Creating one on a document the caller cannot see is the derived `not_found`, not this code |
@@ -150,7 +151,7 @@ member. See [ADR 0008](adr/0008-mcp-endpoint.md).
 
 ## Conflicts carry the other side
 
-`ticket_conflict`, `ticket_archived` and `document_conflict` are the only failures with members beyond the table above. They are RFC 9457 *extension members*, so they sit at the top level beside `code`:
+`ticket_conflict`, `ticket_archived` and `document_conflict` are the only failures with the members described here, and `aspect_type_in_use` adds one (`document_count`, an integer) of its own. They are RFC 9457 *extension members*, so they sit at the top level beside `code`:
 
 ```json
 {
