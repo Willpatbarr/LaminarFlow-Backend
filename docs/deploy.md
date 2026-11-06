@@ -256,7 +256,8 @@ checks). **The production URL is the Tailscale HTTPS one,
 `https://williams-thinkcentre-m70s-gen-3.taild87743.ts.net`.** Browser login
 needs HTTPS because the session cookie is `__Host-` prefixed and `Secure`, so
 signing in over plain `http://192.168.4.46:8080` does not work; that address is
-for `curl` and health only. `sudo tailscale serve --bg --yes 8080` was run once
+for `curl` and health only. **On the home network without Tailscale, use
+`https://192.168.4.46`** (Caddy, see "LAN access" below). `sudo tailscale serve --bg --yes 8080` was run once
 on the PC; the setting persists across reboots, so it needs no repeating. It restarts on boot through `restart: unless-stopped` and the
 systemd-enabled Docker service. Each deploy tags the image `laminarflow:<sha>`
 and records it as `APP_IMAGE`, so rolling back the image is editing that line
@@ -267,6 +268,33 @@ with a rewritten copy of the Dockerfile (generated on the PC, not committed).
 
 **Cockpit** handles host-level administration - updates, disks, systemd - and
 stays private to the tailnet. It is not involved in running the app.
+
+### LAN access (Caddy)
+
+For a device on the home network that is not on the tailnet, the deploy also runs
+Caddy (`deploy/Caddyfile`, the `lan-https` compose profile) at
+`https://192.168.4.46`. Plain HTTP on the LAN cannot work: sign-in needs the
+`Secure` cookie, and the app itself needs a secure context (`crypto.randomUUID`).
+
+* `deploy-remote.sh` turns it on whenever the host is given as an IPv4 address,
+  by adding `COMPOSE_PROFILES=lan-https`, `LAN_HOST` and `CADDY_DATA_HOST` to the
+  `.env`. `LAN_HOST=` on the command line skips that; to turn it off on a host
+  that has it, delete those lines from the `.env` and run `docker compose rm -sf caddy`.
+* Caddy publishes 443 on `LAN_HOST` only. `tailscale serve` holds 443 on the
+  tailnet interface, so the two do not clash, and the Tailscale URL is unchanged.
+  If the PC's LAN address changes, redeploy with the new address (or give it a
+  DHCP reservation on the router).
+* The certificate comes from Caddy's own CA, kept in `~/laminarflow/caddy-data`
+  (back it up or keep it; a new CA means trusting it again everywhere). A browser
+  warns until the device trusts the root. Either click through the warning, or
+  install the root once per device. To get it:
+
+      ssh willbarr@192.168.4.46 'cd ~/laminarflow && docker compose exec -T caddy cat /data/caddy/pki/authorities/local/root.crt' > laminarflow-lan-root.crt
+
+  then open the file on the device (macOS: add to Keychain, set to Always Trust;
+  iOS: install the profile, then enable it under Settings > General > About >
+  Certificate Trust Settings; Android: Settings > Security > Install a
+  certificate > CA certificate).
 
 ## Both hosts: Tailscale
 

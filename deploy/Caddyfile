@@ -1,0 +1,23 @@
+# HTTPS on the local network (the lan-https profile in docker-compose.yml).
+#
+# The browser needs HTTPS to sign in (the session cookie is __Host-/Secure) and
+# to run the app at all (crypto.randomUUID is HTTPS-only off localhost), so plain
+# http://<LAN_HOST>:8080 cannot serve a browser. Caddy serves https://<LAN_HOST>
+# with a certificate from its own local CA and proxies to the app.
+#
+# The CA lives in /data (CADDY_DATA_HOST on the host), so it survives restarts and
+# a device that trusts its root once keeps trusting it. Tailscale is untouched.
+{
+	admin off
+	auto_https disable_redirects
+	skip_install_trust
+	# Browsers send no SNI for an IP address; answer with this host's certificate.
+	default_sni {$LAN_HOST}
+}
+
+https://{$LAN_HOST} {
+	tls internal
+	# Host is passed through unchanged, so the app's Origin checks (realtime, MCP)
+	# still compare against the address the browser used. WebSockets proxy as is.
+	reverse_proxy app:{$APP_PORT}
+}

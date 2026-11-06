@@ -17,6 +17,9 @@
 #      (it runs a Minecraft server) - the build must not starve it.
 #   3. `docker compose up -d`; the app applies migrations on start.
 #   4. Waits for the app to be healthy and checks /healthz and /healthz/db.
+#   5. With LAN_HOST set, also serves https://LAN_HOST through Caddy (the
+#      lan-https profile) and checks /healthz there. LAN_HOST defaults to the
+#      host's address when that is an IPv4 address; LAN_HOST= turns it off.
 #
 # Hosts without the buildx plugin cannot run the Dockerfile as written (BuildKit
 # only), so the script falls back to the classic builder using a rewritten copy
@@ -35,6 +38,11 @@ APP_PORT="${APP_PORT:-8080}"
 BUILD_CPUS="${BUILD_CPUS:-4}"
 BUILD_MEM="${BUILD_MEM:-3g}"
 MIN_AVAIL_MB="${MIN_AVAIL_MB:-1500}"
+ADDR="${HOST#*@}"
+if [ -z "${LAN_HOST+set}" ] && echo "$ADDR" | grep -Eq '^[0-9]+(\.[0-9]+){3}$'; then
+    LAN_HOST="$ADDR"
+fi
+LAN_HOST="${LAN_HOST:-}"
 
 [ -f "$FRONTEND_REPO/package.json" ] || { echo "no frontend checkout at $FRONTEND_REPO" >&2; exit 1; }
 NODE_VERSION=$(git -C "$FRONTEND_REPO" show "$FRONTEND_REF:.nvmrc" | tr -d ' \t\nv')
@@ -48,6 +56,7 @@ git archive "$BACKEND_REF" | ssh "$HOST" "cd ~/$REMOTE_DIR/build && tar -x"
 git -C "$FRONTEND_REPO" archive "$FRONTEND_REF" | ssh "$HOST" "cd ~/$REMOTE_DIR/build/frontend && tar -x"
 
 ssh "$HOST" "cat > ~/$REMOTE_DIR/docker-compose.yml" < deploy/docker-compose.yml
+ssh "$HOST" "cat > ~/$REMOTE_DIR/Caddyfile" < deploy/Caddyfile
 # Backup tooling lives beside the compose file (docs/deploy.md); the nightly cron entry is the operator's.
 for f in backup.sh restore.sh; do
     ssh "$HOST" "cat > ~/$REMOTE_DIR/$f && chmod 700 ~/$REMOTE_DIR/$f" < "scripts/$f"
@@ -55,9 +64,9 @@ done
 
 # The remote half runs as one script so every step shares a shell.
 ssh "$HOST" sh -s -- "$REMOTE_DIR" "$TAG" "$NODE_VERSION" "$GO_VERSION" \
-    "$APP_BIND" "$APP_PORT" "$BUILD_CPUS" "$BUILD_MEM" "$MIN_AVAIL_MB" <<'REMOTE'
+    "$APP_BIND" "$APP_PORT" "$BUILD_CPUS" "$BUILD_MEM" "$MIN_AVAIL_MB" "$LAN_HOST" <<'REMOTE'
 set -eu
-DIR="$HOME/$1"; TAG="$2"; NODE="$3"; GO="$4"; BIND="$5"; PORT="$6"; CPUS="$7"; MEM="$8"; MINMB="$9"
+DIR="$HOME/$1"; TAG="$2"; NODE="$3"; GO="$4"; BIND="$5"; PORT="$6"; CPUS="$7"; MEM="$8"; MINMB="$9"; LAN="${10}"
 cd "$DIR"
 
 # --- .env (created once; never overwritten except the image tag) ------------
@@ -79,6 +88,20 @@ if [ ! -f .env ]; then
 fi
 chmod 600 .env
 sed -i "s|^APP_IMAGE=.*|APP_IMAGE=$TAG|" .env
+
+# --- LAN HTTPS (Caddy) ------------------------------------------------------
+# Added to an existing .env as well, since it predates this. LAN_HOST is
+# rewritten each run so a changed address follows the deploy.
+if [ -n "$LAN" ]; then
+    grep -q '^COMPOSE_PROFILES=' .env || echo "COMPOSE_PROFILES=lan-https" >> .env
+    if grep -q '^LAN_HOST=' .env; then
+        sed -i "s|^LAN_HOST=.*|LAN_HOST=$LAN|" .env
+    else
+        echo "LAN_HOST=$LAN" >> .env
+    fi
+    grep -q '^CADDY_DATA_HOST=' .env || echo "CADDY_DATA_HOST=$DIR/caddy-data" >> .env
+    mkdir -p caddy-data
+fi
 
 # --- data folders ------------------------------------------------------------
 mkdir -p pgdata files
@@ -144,4 +167,9 @@ PORT_URL="http://${HOST#*@}:${APP_PORT}"
 echo "==> verifying $PORT_URL"
 curl -fsS "$PORT_URL/healthz" && echo
 curl -fsS "$PORT_URL/healthz/db" && echo
+if [ -n "$LAN_HOST" ]; then
+    # -k: the certificate is from Caddy's own CA, which this machine may not trust.
+    echo "==> verifying https://$LAN_HOST (LAN, Caddy)"
+    curl -kfsS --retry 5 --retry-delay 2 --retry-all-errors "https://$LAN_HOST/healthz" && echo
+fi
 echo "OK  redeploy with: ./scripts/deploy-remote.sh $HOST"
