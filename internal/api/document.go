@@ -57,6 +57,7 @@ type documentBody struct {
 	AspectTypeID *string        `json:"aspect_type_id" doc:"Set exactly when type is aspect; null otherwise."`
 	TeamID       *string        `json:"team_id" doc:"The team the document is filed under. Null for a project's or a workspace-level document."`
 	ProjectID    *string        `json:"project_id" doc:"The project the document is filed under. Null for a team's or a workspace-level document."`
+	FolderID     *string        `json:"folder_id" doc:"The folder of its project the document is filed in. Null at the project's top level, and always for a document with no project."`
 	Body         map[string]any `json:"body" doc:"Keyed by aspect type field id; each value is a Markdown string (docs/adr/0006). A normal document keeps its text under the key content. A field with no value is an absent key."`
 	Version      int            `json:"version" minimum:"1" doc:"Starts at 1 and rises by exactly 1 on every update, archive and unarchive. Send it back as If-Match to make a write conditional; also in the ETag header."`
 	CreatedAt    time.Time      `json:"created_at"`
@@ -116,6 +117,7 @@ func asDocumentBody(d document.Document) documentBody {
 		AspectTypeID: d.AspectTypeID,
 		TeamID:       d.TeamID,
 		ProjectID:    d.ProjectID,
+		FolderID:     d.FolderID,
 		Body:         d.Body,
 		Version:      d.Version,
 		CreatedAt:    d.CreatedAt.UTC(),
@@ -145,6 +147,7 @@ type createDocumentInput struct {
 		AspectTypeID *string           `json:"aspect_type_id,omitempty" format:"uuid" nullable:"true" doc:"Required when type is aspect, forbidden otherwise (422 at body.aspect_type_id). An aspect type that is absent or another workspace's is a 404 aspect_type_not_found."`
 		TeamID       *string           `json:"team_id,omitempty" format:"uuid" nullable:"true" doc:"File the document under a team. At most one of team_id and project_id; neither is a workspace-level document. Fixed at creation. Not the caller's: 422 team_not_found at body.team_id."`
 		ProjectID    *string           `json:"project_id,omitempty" format:"uuid" nullable:"true" doc:"File the document under a project. Not the caller's: 422 project_not_found at body.project_id."`
+		FolderID     *string           `json:"folder_id,omitempty" format:"uuid" nullable:"true" doc:"File the document in a folder of its project. Needs project_id; without one it is a 422 folder_needs_project at body.folder_id. A folder that is not one of the project's: 422 folder_not_found at body.folder_id."`
 		Body         map[string]string `json:"body,omitempty" doc:"Field id to Markdown string. For an aspect document every key must be a field id of its type, or the answer is a 422 document_field_unknown at body.<key>. A normal document keeps its text under content."`
 	}
 }
@@ -177,6 +180,32 @@ type getDocumentInput struct {
 type writeDocumentInput struct {
 	ID string `path:"id" format:"uuid"`
 	DocumentPreconditioned
+}
+
+// moveFolder is update's folder_id, three states as moveProject: absent leaves the document in
+// its folder (unless it moves project), null takes it to its project's top level, a uuid files
+// it in that folder.
+type moveFolder struct {
+	Sent bool
+	ID   string
+}
+
+func (m *moveFolder) UnmarshalJSON(b []byte) error {
+	m.Sent = true
+	if string(b) == "null" {
+		m.ID = ""
+
+		return nil
+	}
+
+	return json.Unmarshal(b, &m.ID)
+}
+
+func (moveFolder) Schema(huma.Registry) *huma.Schema {
+	return &huma.Schema{
+		Type: "string", Format: "uuid", Nullable: true,
+		Description: "File the document in this folder of its project, or send null for the project's top level. Omit to leave it where it is; a move to another project without folder_id takes it out of its folder. The folder must be one of the project the document ends up in: 422 folder_not_found at body.folder_id; a document with no project: 422 folder_needs_project.",
+	}
 }
 
 // moveProject is update's project_id: three states a pointer cannot tell apart. Absent leaves
@@ -214,6 +243,7 @@ type updateDocumentInput struct {
 		Title        string            `json:"title" maxLength:"200" doc:"Up to 200 characters (not bytes)."`
 		Type         string            `json:"type,omitempty" enum:"normal,aspect" default:"normal"`
 		ProjectID    moveProject       `json:"project_id,omitzero"`
+		FolderID     moveFolder        `json:"folder_id,omitzero"`
 		AspectTypeID *string           `json:"aspect_type_id,omitempty" format:"uuid" nullable:"true" doc:"As on create. Turning a normal document into an aspect one sets both type and this."`
 		Body         map[string]string `json:"body,omitempty" doc:"The complete body: it replaces the stored one. When a normal document becomes an aspect one, its text (content, from here if sent, else the stored body) moves into the type's first field - by position, then label - unless this body fills that field itself; a type with no fields is a 422 aspect_type_has_no_fields at body.aspect_type_id."`
 	}
@@ -302,6 +332,15 @@ func documentError(err error) error {
 			return newFieldError(defaultCode(http.StatusUnprocessableEntity),
 				"aspect_type_id must be set exactly when type is aspect",
 				"body.aspect_type_id", "required when type is aspect, and forbidden otherwise")
+		case errors.Is(fe.Kind, document.ErrFolderNotFound):
+			return newFieldError(CodeFolderNotFound, "the folder is not one of the document's project",
+				"body."+fe.Field, "no such folder in this project")
+		case errors.Is(fe.Kind, document.ErrFolderNeedsProject):
+			return newFieldError(CodeFolderNeedsProject, "only a project's documents can be filed in a folder",
+				"body."+fe.Field, "file the document under a project first")
+		case errors.Is(fe.Kind, document.ErrFolderCycle):
+			return newFieldError(CodeFolderCycle, "a folder cannot be moved into itself or one of its own sub-folders",
+				"body."+fe.Field, "this folder is inside the one being moved")
 		case errors.Is(fe.Kind, document.ErrScopeNotFound) && fe.Field == "team_id":
 			return newFieldError(CodeTeamNotFound, "the team is not one the caller can file a document under",
 				"body.team_id", "no such team in this workspace")
@@ -418,6 +457,7 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 			AspectTypeID:   strOrEmpty(in.Body.AspectTypeID),
 			TeamID:         strOrEmpty(in.Body.TeamID),
 			ProjectID:      strOrEmpty(in.Body.ProjectID),
+			FolderID:       strOrEmpty(in.Body.FolderID),
 			Body:           bodyValues(in.Body.Body),
 		})
 		if err != nil {
@@ -473,6 +513,7 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 		Summary:     "Replace a document's title, type and body",
 		Description: "PUT replaces wholesale, so send the complete body. Last write wins unless `If-Match` is sent; with it the write happens only if the document is still at that version, otherwise it is a 409 `document_conflict` carrying the current copy. " +
 			"Without it, a write to an archived document is `document_not_found`. A document's team is fixed at creation; its project can be changed with `project_id` (a uuid, or null for a team-wide document with no project), and is left alone when `project_id` is omitted. " +
+			"Its folder is changed the same way with `folder_id`; moving it to another project without one takes it out of its folder. " +
 			"Sending `type: aspect` with an `aspect_type_id` on a normal document turns it into an aspect document: see `body`.",
 		Metadata:  needs(auth.TicketWrite),
 		Responses: documentConflictResponses(api, documentIfMatchConflict),
@@ -493,6 +534,8 @@ func registerDocuments(api huma.API, svc *document.Service, tickets *ticket.Serv
 			Body:         bodyValues(in.Body.Body),
 			MoveProject:  in.Body.ProjectID.Sent,
 			ProjectID:    in.Body.ProjectID.ID,
+			MoveFolder:   in.Body.FolderID.Sent,
+			FolderID:     in.Body.FolderID.ID,
 			IfVersion:    ifVersion,
 		})
 		if err != nil {

@@ -95,6 +95,10 @@ var eventPermission = map[string]auth.Permission{
 	realtime.LabelUpdated:     auth.TicketRead,
 	realtime.LabelDeleted:     auth.TicketRead,
 
+	realtime.DocumentFolderCreated: auth.TicketRead,
+	realtime.DocumentFolderUpdated: auth.TicketRead,
+	realtime.DocumentFolderDeleted: auth.TicketRead,
+
 	realtime.DocumentCreated:    auth.TicketRead,
 	realtime.DocumentUpdated:    auth.TicketRead,
 	realtime.DocumentArchived:   auth.TicketRead,
@@ -515,6 +519,23 @@ func (f ticketFeed) publishLabel(workspaceID, kind, actorID string, l label.Labe
 		TeamID:  l.TeamID,
 		LabelID: l.ID,
 		Label:   asLabelBody(l),
+	})
+}
+
+// publishFolder announces a document folder write: document_folder.created, .updated or
+// .deleted, with the folder as the REST body. After the commit, best-effort, as above.
+func (f ticketFeed) publishFolder(kind, actorID string, folder document.Folder) {
+	if f.hub == nil {
+		return
+	}
+
+	f.hub.Publish(folder.WorkspaceID, realtime.Event{
+		Type:      kind,
+		ActorID:   actorID,
+		At:        folder.UpdatedAt.UTC(),
+		ProjectID: folder.ProjectID,
+		FolderID:  folder.ID,
+		Folder:    asFolderBody(folder),
 	})
 }
 

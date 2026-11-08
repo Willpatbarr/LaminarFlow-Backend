@@ -19,6 +19,7 @@ type documentWire struct {
 	AspectTypeID *string        `json:"aspect_type_id"`
 	TeamID       *string        `json:"team_id"`
 	ProjectID    *string        `json:"project_id"`
+	FolderID     *string        `json:"folder_id"`
 	Body         map[string]any `json:"body"`
 	Version      int            `json:"version"`
 	CreatedAt    time.Time      `json:"created_at"`
