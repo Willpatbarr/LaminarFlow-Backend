@@ -537,6 +537,8 @@ type eventWire struct {
 	SprintID    string         `json:"sprint_id"`
 	MilestoneID string         `json:"milestone_id"`
 	LabelID     string         `json:"label_id"`
+	FolderID    string         `json:"folder_id"`
+	Folder      map[string]any `json:"document_folder"`
 
 	ActivityID string         `json:"activity_id"`
 	Activity   map[string]any `json:"activity"`

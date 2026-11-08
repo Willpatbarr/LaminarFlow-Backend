@@ -154,7 +154,10 @@ type Document struct {
 	AspectTypeID *string
 	TeamID       *string
 	ProjectID    *string
-	Body         map[string]any
+	// FolderID is the folder of the document's project it is filed in; null is the
+	// project's top level, and always for a document with no project (0053).
+	FolderID *string
+	Body     map[string]any
 
 	// Version starts at 1 and rises by exactly 1 on every update, archive and unarchive,
 	// in the statement that writes. See 0035.
@@ -175,12 +178,12 @@ type Document struct {
 
 // columns and dest are written once because the row is scanned from four statements.
 const columns = `d.id::text, d.workspace_id::text, d.title, d.type, d.aspect_type_id::text,
-	d.team_id::text, d.project_id::text, d.body::text, d.version, d.created_at, d.updated_at, d.archived_at`
+	d.team_id::text, d.project_id::text, d.folder_id::text, d.body::text, d.version, d.created_at, d.updated_at, d.archived_at`
 
 func (d *Document) scan(row pgx.Row) error {
 	var raw string
 	if err := row.Scan(&d.ID, &d.WorkspaceID, &d.Title, &d.Type, &d.AspectTypeID,
-		&d.TeamID, &d.ProjectID, &raw, &d.Version, &d.CreatedAt, &d.UpdatedAt, &d.ArchivedAt); err != nil {
+		&d.TeamID, &d.ProjectID, &d.FolderID, &raw, &d.Version, &d.CreatedAt, &d.UpdatedAt, &d.ArchivedAt); err != nil {
 		return err
 	}
 
@@ -234,6 +237,13 @@ type SaveParams struct {
 	// project leaves team_id as it was. A project the caller cannot reach is
 	// ErrScopeNotFound at project_id. Ignored on an insert.
 	MoveProject bool
+	// FolderID files the document in a folder of its project; empty is the project's top
+	// level. On an insert it is read as given and needs ProjectID. On an update it is read
+	// only when MoveFolder is set; without it, a move to another project takes the document
+	// out of its folder, which belongs to the project it left. A folder that is not one of
+	// the document's (new) project is ErrFolderNotFound at folder_id.
+	FolderID   string
+	MoveFolder bool
 	// Body is the field map. Keys are aspect_type_field IDs; for an aspect document each
 	// one must be a field of AspectTypeID (ErrUnknownField). A normal document's body is
 	// not checked, and by convention holds ContentKey.
@@ -262,6 +272,14 @@ func (p SaveParams) normalize() SaveParams {
 // it is unset, since an empty string is not a valid uuid.
 func (p SaveParams) aspectType() *string {
 	return nilIfEmpty(p.AspectTypeID)
+}
+
+func strOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+
+	return *s
 }
 
 func nilIfEmpty(s string) *string {
@@ -502,6 +520,15 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 		return Document{}, false, err
 	}
 
+	if p.FolderID != "" {
+		if p.ProjectID == "" {
+			return Document{}, false, &FieldError{Kind: ErrFolderNeedsProject, Field: "folder_id"}
+		}
+		if err := checkFolder(ctx, tx, p.ProjectID, p.FolderID, "folder_id"); err != nil {
+			return Document{}, false, err
+		}
+	}
+
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return Document{}, false, fmt.Errorf("marshal body: %w", err)
@@ -511,14 +538,15 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 	err = d.scan(tx.QueryRow(ctx,
 		`WITH d AS (
 		     INSERT INTO document (workspace_id, body, title, type, aspect_type_id, project_id, team_id,
-		                           created_by, idempotency_key)
-		     VALUES ($1::uuid, $2::jsonb, $3, $4, $5::uuid, $6::uuid, $7::uuid, $8::uuid, $9::text)
+		                           created_by, idempotency_key, folder_id)
+		     VALUES ($1::uuid, $2::jsonb, $3, $4, $5::uuid, $6::uuid, $7::uuid, $8::uuid, $9::text, $10::uuid)
 		     ON CONFLICT (created_by, idempotency_key) WHERE idempotency_key IS NOT NULL
 		     DO NOTHING
 		     RETURNING *)
 		 SELECT `+columns+` FROM d`,
 		workspaceID, string(raw), p.Title, p.Type, p.aspectType(),
 		nilIfEmpty(p.ProjectID), nilIfEmpty(p.TeamID), nilIfEmpty(p.AccountID), p.IdempotencyKey,
+		nilIfEmpty(p.FolderID),
 	))
 	if errors.Is(err, pgx.ErrNoRows) && p.IdempotencyKey != nil {
 		// Lost the race to a concurrent create with the same key: its row is committed
@@ -662,6 +690,20 @@ func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 		}
 	}
 
+	if p.MoveFolder && p.FolderID != "" {
+		// The folder must be one of the project the document ends up in.
+		project := strOrEmpty(cur.ProjectID)
+		if p.MoveProject {
+			project = p.ProjectID
+		}
+		if project == "" {
+			return Document{}, nil, nil, &FieldError{Kind: ErrFolderNeedsProject, Field: "folder_id"}
+		}
+		if err := checkFolder(ctx, tx, project, p.FolderID, "folder_id"); err != nil {
+			return Document{}, nil, nil, err
+		}
+	}
+
 	converting := cur.Type == TypeNormal && p.Type == TypeAspect
 	body, conv, err := s.checkBody(ctx, cur.WorkspaceID, p, body, cur.Body, converting)
 	if err != nil {
@@ -682,11 +724,15 @@ func (s *Service) update(ctx context.Context, tx pgx.Tx, p SaveParams, body map[
 		            team_id = CASE WHEN NOT $6::boolean THEN team_id
 		                           WHEN $7::uuid IS NOT NULL THEN NULL
 		                           ELSE COALESCE((SELECT pr.team_id FROM project pr WHERE pr.id = document.project_id), team_id) END,
+		            folder_id = CASE WHEN $8::boolean THEN $9::uuid
+		                             WHEN $6::boolean AND $7::uuid IS DISTINCT FROM project_id THEN NULL
+		                             ELSE folder_id END,
 		            updated_at = now(), version = version + 1
 		      WHERE id = $5::uuid
 		  RETURNING *)
 		 SELECT `+columns+` FROM d`,
 		string(raw), p.Title, p.Type, p.aspectType(), p.ID, p.MoveProject, nilIfEmpty(p.ProjectID),
+		p.MoveFolder, nilIfEmpty(p.FolderID),
 	))
 	if err != nil {
 		return Document{}, nil, nil, fmt.Errorf("write body: %w", err)

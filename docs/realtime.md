@@ -53,7 +53,7 @@ all (the `hello` is always sent). The mapping is one table, `eventPermission` in
 
 | Needs | Events |
 | --- | --- |
-| `ticket:read` | `ticket.*` (including `ticket.document_linked` / `_unlinked`), `document.*`, `comment.*`, `review_request.*`, `activity.created`, `board.*`, `epic.*`, `sprint.*`, `milestone.*`, `label.*` |
+| `ticket:read` | `ticket.*` (including `ticket.document_linked` / `_unlinked`), `document.*`, `document_folder.*`, `comment.*`, `review_request.*`, `activity.created`, `board.*`, `epic.*`, `sprint.*`, `milestone.*`, `label.*` |
 | `team:read` | `status.*`, `team.updated` |
 | `project:read` | `project.updated` |
 
@@ -217,6 +217,23 @@ Apply them as ticket events are applied: upsert `document` if `version` is newer
 copy's, remove it on `archived`. `document` is complete on `archived` — the archived document
 (`archived_at` set) is otherwise unreadable. Only successful writes publish.
 
+## Document folder events
+
+`document_folder.created`, `document_folder.updated` and `document_folder.deleted` carry `type`,
+`folder_id`, `project_id`, `actor_id`, `at` (the folder's `updated_at`, UTC) and `document_folder`
+— the folder in the shape of `FolderBody` (`GET /document-folders/{id}`); on `deleted`, the folder
+as it was. There is no `version`: a folder has none, so apply them as label events are applied,
+upsert on `created` / `updated` and remove on `deleted`.
+
+Deleting a folder deletes nothing it held. Its documents and sub-folders move into its parent, and
+each is announced before the folder's own `document_folder.deleted`: every live document moved as
+`document.updated` (its `version` rises, its `folder_id` is the parent's), every sub-folder moved as
+`document_folder.updated`. A client that applies those has nothing left to fix when the delete
+arrives; one that missed them re-lists.
+
+A document's own folder change is part of the document: a `PUT` that sets `folder_id`, or moves the
+document to another project (which takes it out of its folder), arrives as `document.updated`.
+
 ## Ticket-document link events (LAM-111)
 
 `ticket.document_linked` and `ticket.document_unlinked` carry `type`, `ticket_id`, `document_id`,
@@ -282,5 +299,5 @@ column, each publish theirs too. On doubt, re-list.
 
 ## Not here yet
 
-No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones, labels, documents, comments, review requests and activity,
+No per-connection filtering (a project, a status), no events for resources other than tickets, statuses, boards, epics, sprints, milestones, labels, documents, document folders, comments, review requests and activity,
 no client-to-server messages, no resume. Each is additive.

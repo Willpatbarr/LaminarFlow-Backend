@@ -132,6 +132,7 @@ func NewHumaAPI(mux *http.ServeMux, authSvc *auth.Service, ticketSvc *ticket.Ser
 		documentSvc.OnWrite(commentSvc.StaleReviews)
 	}
 	registerDocuments(api, documentSvc, ticketSvc, commentSvc, ticketFeed{hub: hub, projects: projSvc})
+	registerDocumentFolders(api, documentSvc, ticketFeed{hub: hub, projects: projSvc}, ao.idem)
 	registerComments(api, commentSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerReviewRequests(api, commentSvc, ticketFeed{hub: hub, projects: projSvc})
 	registerActivity(api, activitySvc, ticketSvc, documentSvc)

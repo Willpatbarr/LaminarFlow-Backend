@@ -87,6 +87,11 @@ const (
 	DocumentArchived   = "document.archived"
 	DocumentUnarchived = "document.unarchived"
 
+	// A document folder event carries the folder in `document_folder`; see Event.
+	DocumentFolderCreated = "document_folder.created"
+	DocumentFolderUpdated = "document_folder.updated"
+	DocumentFolderDeleted = "document_folder.deleted"
+
 	// LAM-111. A link between a ticket and a document; carries both ids, see Event.
 	TicketDocumentLinked   = "ticket.document_linked"
 	TicketDocumentUnlinked = "ticket.document_unlinked"
@@ -191,6 +196,12 @@ type Event struct {
 	// Version and no body.
 	DocumentID string `json:"document_id,omitempty"`
 	Document   any    `json:"document,omitempty"`
+
+	// document_folder.* carries ProjectID (above), FolderID and Folder, the REST body whole;
+	// on document_folder.deleted it is the folder as it was. No Version: a folder has none,
+	// so a client applies these by upsert and remove, as it does labels.
+	FolderID string `json:"folder_id,omitempty"`
+	Folder   any    `json:"document_folder,omitempty"`
 
 	// LAM-99. comment.* carries CommentID and Comment, the REST CommentBody whole (the comment
 	// as it was, on comment.deleted), and the comment's parent in TicketID or DocumentID

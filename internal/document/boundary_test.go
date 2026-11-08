@@ -15,7 +15,7 @@ import (
 func TestNoSQLOutsideThisPackage(t *testing.T) {
 	sqlguard.Assert(t, sqlguard.Rule{
 		Owner:  "document",
-		Tables: []string{"document"},
+		Tables: []string{"document", "document_folder"},
 		// internal/comment reads document for the same reason it reads ticket (LAM-99): a comment
 		// is only written against a live document in the caller's workspace.
 		// internal/ticket reads document to link to it (same workspace as the ticket) and to list a
